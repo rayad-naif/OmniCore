@@ -30,7 +30,7 @@ const {
   GetObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { pool }  = require('../../server');
+const { pool }  = require('../lib/db');
 const logger    = require('../utils/logger');
 
 // ─── R2 / S3 client ───────────────────────────────────────────────────────────

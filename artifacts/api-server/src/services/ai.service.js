@@ -22,7 +22,7 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { pool } = require('../../server');
+const { pool } = require('../lib/db');
 
 // ---------------------------------------------------------------------------
 // Client initialisation

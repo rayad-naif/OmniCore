@@ -15,7 +15,7 @@
  */
 
 const { Server }   = require('socket.io');
-const { pool }     = require('../../server');   // shared pg Pool
+const { pool }     = require('../lib/db');
 
 // ---------------------------------------------------------------------------
 // In-memory typing registry  { conversationId -> { agentId, displayName, expiresAt } }

@@ -18,7 +18,7 @@
  * (defaults to 8 hours if not configured in widget_config_json).
  */
 
-const { pool } = require('../../server');
+const { pool } = require('../lib/db');
 
 // ---------------------------------------------------------------------------
 // Constants

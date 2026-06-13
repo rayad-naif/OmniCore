@@ -29,7 +29,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { pool } = require('../../server');
+const { pool } = require('../lib/db');
 const logger   = require('../utils/logger');   // pino singleton
 
 // ─── Lemon Squeezy API wrapper ────────────────────────────────────────────────

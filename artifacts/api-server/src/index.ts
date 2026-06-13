@@ -1,4 +1,4 @@
-import app from "./app";
+import { createAppServer } from "./app";
 import { logger } from "./lib/logger";
 
 const rawPort = process.env["PORT"];
@@ -15,11 +15,13 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+const server = createAppServer();
 
+server.listen(port, () => {
   logger.info({ port }, "Server listening");
+});
+
+server.on("error", (err: Error) => {
+  logger.error({ err }, "HTTP server error");
+  process.exit(1);
 });

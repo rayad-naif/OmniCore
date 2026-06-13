@@ -30,7 +30,7 @@
 
 const cheerio      = require('cheerio');
 const { URL }      = require('url');
-const { pool }     = require('../../server');
+const { pool }     = require('../lib/db');
 const aiService    = require('../services/ai.service');
 
 // ---------------------------------------------------------------------------
