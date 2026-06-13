@@ -1,0 +1,37 @@
+Role: Senior QA Engineer & Security Auditor.
+
+Task: Perform a comprehensive Static Analysis (Code Audit) on the entire Atelier OmniCore codebase. I have already generated 10 phases of code. Please scan the current project files and verify the following against the 'Atelier OmniCore Master Technical Specification' document.
+
+Please categorize your response into these 4 Audit Pillars:
+
+1. Security & Hygiene Audit:
+
+Check for hardcoded API keys/secrets: Flag any instances where placeholders or keys might be accidentally committed.
+
+Verify Input Hygiene: Confirm that all DB queries use parameterized inputs (no string interpolation).
+
+Verify CORS: Review server.js and cors middleware implementation. Does it enforce the allowed_domains_array from the DB?
+
+Verify Auth: Does the AuthContext / Middleware have a fallback for expired tokens/401 handling?
+
+2. Edge-Case & Error Resilience Audit:
+
+Check File Handling: Does the R2 upload logic verify file extensions (e.g., blocking .exe/.sh) before requesting a pre-signed URL?
+
+Check Crawler/RAG: If the AI crawler hits a 404 or a non-text site, does the system gracefully catch the error without crashing the BullMQ worker?
+
+Check Webhook Integrity: Does the Lemon Squeezy webhook verify signatures via HMAC before processing the payload?
+
+3. Data & Storage Integrity Audit:
+
+Verify Isolation: Scan the Conversations and Messages query logic. Is the tenant_id filter hardcoded in every single SELECT/INSERT/UPDATE query?
+
+Verify Vector Storage: Confirm the pgvector logic uses brand_id as an index-filter prefix in the SQL queries.
+
+4. Performance & Logic Audit:
+
+Check Socket Resilience: Does the socket logic handle 'reconnect' events by re-authenticating the JWT automatically?
+
+Check Email Webhooks: Verify the 'Quote Stripping' Regex chains. Are there any edge cases (like multi-language email signatures) that might break the parser?
+
+Output: Provide a Summary Report. For every potential issue you find, categorize it as [CRITICAL], [WARNING], or [OPTIMIZATION]. Do not just say 'it looks good'; look for specific lines of code that could fail under high load.
