@@ -266,6 +266,7 @@ function ChatPanel({
   conversation, messages, msgLoading,
   visitorTyping, socket, onMessageSent,
   onAiRephrase, aiRephrasing,
+  onExport, exporting,
 }) {
   const [draft, setDraft]         = useState('');
   const [isInternal, setInternal] = useState(false);
@@ -369,7 +370,28 @@ function ChatPanel({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {/* Export PDF */}
+          <button
+            onClick={() => onExport?.(conversation?.id)}
+            disabled={exporting || !conversation?.id}
+            title="Export conversation as PDF"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-50
+                       disabled:cursor-not-allowed transition-colors"
+          >
+            {exporting ? (
+              <svg className="animate-spin w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 text-slate-500">
+                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+              </svg>
+            )}
+            {exporting ? 'Exporting…' : 'Export PDF'}
+          </button>
           {/* Close conversation */}
           <button className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600
                              bg-slate-100 hover:bg-slate-200 transition-colors">
@@ -740,6 +762,30 @@ export default function Inbox() {
     });
   }, []);
 
+  // ── Export conversation as PDF ───────────────────────────────────────────────
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async (conversationId) => {
+    if (!conversationId || exporting) return;
+    setExporting(true);
+    try {
+      const res  = await authFetch(`${API_URL}/conversations/${conversationId}/export`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.downloadUrl) {
+        // Open presigned R2 URL in a new tab — browser triggers download
+        window.open(data.downloadUrl, '_blank', 'noopener');
+      } else if (data.error) {
+        throw new Error(data.error);
+      }
+    } catch (err) {
+      console.error('[Inbox] export failed', err);
+      alert('Export failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
+    }
+  }, [authFetch, exporting]);
+
   // ── AI Rephrase ──────────────────────────────────────────────────────────────
   const handleAiRephrase = useCallback(async (draft) => {
     setAIR(true);
@@ -781,6 +827,8 @@ export default function Inbox() {
           onMessageSent={handleMessageSent}
           onAiRephrase={handleAiRephrase}
           aiRephrasing={aiRephrasing}
+          onExport={handleExport}
+          exporting={exporting}
         />
       </div>
 
