@@ -211,16 +211,19 @@ async function assignAgent({
 /**
  * unassignAgent
  * Removes the assigned agent from a conversation and clears sla_breach_at.
+ * tenantId is required — enforces cross-tenant isolation.
  */
-async function unassignAgent({ conversationId, io = null }) {
+async function unassignAgent({ conversationId, tenantId, io = null }) {
+  if (!tenantId) throw new Error('tenantId is required in unassignAgent');
   const { rows } = await pool.query(
     `UPDATE conversations
      SET assigned_agent_id = NULL,
          sla_breach_at     = NULL,
          updated_at        = NOW()
      WHERE id = $1
+       AND tenant_id = $2
      RETURNING id, status, updated_at`,
-    [conversationId]
+    [conversationId, tenantId]
   );
   if (!rows.length) return { error: 'CONVERSATION_NOT_FOUND' };
 

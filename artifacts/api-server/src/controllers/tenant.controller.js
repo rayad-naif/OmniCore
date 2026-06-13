@@ -5,10 +5,28 @@
  * CRUD for Tenants and Brands.
  * All queries use parameterised values — no string interpolation.
  * req.db is the pg.Pool injected by server.js middleware.
+ *
+ * Auth guards:
+ *  - All /api/tenants routes require a valid JWT (requireAuth).
+ *  - Tenant CRUD (list-all, delete) requires role 'superadmin'.
+ *  - Brand sub-routes under /:tenantId require only 'admin' so tenant admins
+ *    can manage their own brands without superadmin elevation.
+ *  - Logo upload presigned-URL endpoint requires 'admin'.
  */
 
-const { Router } = require('express');
+const { Router }   = require('express');
+const {
+  S3Client,
+  PutObjectCommand,
+}                  = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { requireAuth, requireRole } = require('../middleware/auth');
+const logger       = require('../utils/logger');
+
 const router = Router();
+
+// All tenant routes require a valid JWT
+router.use(requireAuth);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,9 +45,9 @@ function created(res, data) {
 
 /**
  * GET /api/tenants
- * List all tenants (admin use; add auth middleware in production).
+ * List all tenants — superadmin only.
  */
-router.get('/', async (req, res, next) => {
+router.get('/', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
       `SELECT id, company_name, subscription_status,
@@ -63,7 +81,7 @@ router.get('/:tenantId', async (req, res, next) => {
  * POST /api/tenants
  * Body: { company_name, lemon_squeezy_customer_id? }
  */
-router.post('/', async (req, res, next) => {
+router.post('/', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { company_name, lemon_squeezy_customer_id = null } = req.body;
 
@@ -87,7 +105,7 @@ router.post('/', async (req, res, next) => {
  * Allowed: company_name, subscription_status, lemon_squeezy_customer_id,
  *          lemon_squeezy_subscription_id, grace_period_ends_at
  */
-router.patch('/:tenantId', async (req, res, next) => {
+router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
     const allowed = [
       'company_name',
@@ -121,7 +139,7 @@ router.patch('/:tenantId', async (req, res, next) => {
  * DELETE /api/tenants/:tenantId
  * Cascades to brands, agents, visitors, conversations, messages (FK ON DELETE CASCADE).
  */
-router.delete('/:tenantId', async (req, res, next) => {
+router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { rowCount } = await req.db.query(
       'DELETE FROM tenants WHERE id = $1',
@@ -271,5 +289,108 @@ router.delete('/:tenantId/brands/:brandId', async (req, res, next) => {
     res.status(204).end();
   } catch (err) { next(err); }
 });
+
+// ---------------------------------------------------------------------------
+// LOGO UPLOAD  — presigned R2 PUT URL
+// ---------------------------------------------------------------------------
+
+const ALLOWED_LOGO_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const ALLOWED_LOGO_EXT  = /\.(png|jpg|jpeg|webp)$/i;
+const MAX_LOGO_BYTES    = 5 * 1024 * 1024;   // 5 MB
+
+function getR2Client() {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  if (!accountId) throw Object.assign(new Error('R2_ACCOUNT_ID not set'), { status: 503 });
+  return new S3Client({
+    region:   'auto',
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId:     process.env.R2_ACCESS_KEY_ID     || '',
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    },
+  });
+}
+
+/**
+ * POST /api/tenants/:tenantId/brands/:brandId/logo-upload-url
+ * Body: { contentType: "image/png"|"image/jpeg"|"image/webp", filename: string, size: number }
+ * Returns: { uploadUrl: string, objectKey: string, expiresIn: 300 }
+ *
+ * The client must:
+ *  1. PUT the file bytes directly to uploadUrl with the matching Content-Type header.
+ *  2. After a successful PUT, PATCH the brand's logo_url to the public object URL.
+ */
+router.post(
+  '/:tenantId/brands/:brandId/logo-upload-url',
+  requireRole('admin'),
+  async (req, res, next) => {
+    try {
+      const { tenantId, brandId } = req.params;
+      const { contentType, filename, size } = req.body || {};
+
+      // ── Validate caller owns this brand ─────────────────────────────────
+      const { rows } = await req.db.query(
+        'SELECT id FROM brands WHERE id = $1 AND tenant_id = $2',
+        [brandId, tenantId]
+      );
+      if (!rows.length) return notFound(res, 'Brand');
+
+      // ── MIME type guard ───────────────────────────────────────────────────
+      if (!contentType || !ALLOWED_LOGO_MIME.has(contentType)) {
+        return res.status(400).json({
+          error: `contentType must be one of: ${[...ALLOWED_LOGO_MIME].join(', ')}`,
+        });
+      }
+
+      // ── File extension guard ──────────────────────────────────────────────
+      if (filename && !ALLOWED_LOGO_EXT.test(filename)) {
+        return res.status(400).json({
+          error: 'Filename extension must be .png, .jpg, .jpeg, or .webp',
+        });
+      }
+
+      // ── Size guard (client-declared; enforced again server-side via Content-Length) ─
+      if (size !== undefined && (typeof size !== 'number' || size > MAX_LOGO_BYTES)) {
+        return res.status(400).json({
+          error: `File size must not exceed ${MAX_LOGO_BYTES / 1024 / 1024} MB`,
+        });
+      }
+
+      // ── Build object key ──────────────────────────────────────────────────
+      const ext       = contentType.split('/')[1];   // 'png' | 'jpeg' | 'webp'
+      const objectKey = `logos/tenant-${tenantId}/brand-${brandId}/logo-${Date.now()}.${ext}`;
+      const bucket    = process.env.R2_BUCKET_NAME;
+      if (!bucket) return res.status(503).json({ error: 'R2_BUCKET_NAME not set' });
+
+      // ── Issue presigned PUT URL (5-min TTL) ───────────────────────────────
+      const TTL_SECONDS = 300;
+      const r2          = getR2Client();
+
+      const uploadUrl = await getSignedUrl(
+        r2,
+        new PutObjectCommand({
+          Bucket:        bucket,
+          Key:           objectKey,
+          ContentType:   contentType,
+          ContentLength: size || undefined,
+          // Prevent stored XSS: force download disposition for anything served directly
+          ContentDisposition: 'inline',
+          Metadata: {
+            'omnicore-tenant': String(tenantId),
+            'omnicore-brand':  String(brandId),
+            'omnicore-type':   'logo',
+          },
+        }),
+        { expiresIn: TTL_SECONDS }
+      );
+
+      logger.info({ tenantId, brandId, objectKey }, 'logo_upload_url_issued');
+
+      return res.json({ uploadUrl, objectKey, expiresIn: TTL_SECONDS });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 module.exports = router;

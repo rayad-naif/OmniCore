@@ -50,6 +50,53 @@ const SKIP_EXTENSIONS = /\.(pdf|zip|png|jpg|jpeg|gif|svg|mp4|mp3|css|js|xml|json
 const SKIP_PROTOCOLS  = /^(mailto:|tel:|javascript:|#)/i;
 
 // ---------------------------------------------------------------------------
+// SSRF protection — private / loopback / link-local IP ranges
+// ---------------------------------------------------------------------------
+const PRIVATE_HOST_RE = new RegExp(
+  [
+    '^localhost$',
+    '^127\\.',                          // 127.0.0.0/8  loopback
+    '^10\\.',                           // 10.0.0.0/8   private
+    '^172\\.(1[6-9]|2[0-9]|3[01])\\.',// 172.16-31.x  private
+    '^192\\.168\\.',                    // 192.168.0.0/16 private
+    '^169\\.254\\.',                    // 169.254.0.0/16 link-local (AWS IMDS etc.)
+    '^::1$',                            // IPv6 loopback
+    '^fc00:',                           // IPv6 unique local
+    '^fe80:',                           // IPv6 link-local
+    '^0\\.0\\.0\\.0$',                  // unspecified
+  ].join('|'),
+  'i'
+);
+
+/**
+ * assertPublicUrl(rawUrl)
+ *
+ * Throws if:
+ *  - The protocol is not http: or https:
+ *  - The hostname matches any private/loopback/link-local range
+ *
+ * @param {string} rawUrl
+ * @throws {Error} with a descriptive message
+ */
+function assertPublicUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`SSRF_INVALID_URL: "${rawUrl}" is not a valid URL`);
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`SSRF_PROTOCOL: only http/https allowed, got "${parsed.protocol}"`);
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (PRIVATE_HOST_RE.test(host)) {
+    throw new Error(`SSRF_PRIVATE_HOST: crawling "${host}" is not permitted`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP fetch with timeout
 // ---------------------------------------------------------------------------
 async function fetchPage(url) {
@@ -218,6 +265,9 @@ async function crawlSite({
   let   crawled   = 0;
   let   vectorised = 0;
 
+  // SSRF guard — validate the seed URL before any network activity
+  assertPublicUrl(startUrl);
+
   // BFS queue: { url, depth }
   const queue = [{ url: startUrl, depth: 0 }];
 
@@ -370,5 +420,6 @@ module.exports = {
   enqueueCrawl,
   extractText,
   extractInternalLinks,
+  assertPublicUrl,
   chunkText: aiService.chunkText,
 };

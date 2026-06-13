@@ -61,11 +61,13 @@ async function authMiddleware(socket, next) {
 }
 
 // ---------------------------------------------------------------------------
-// JWT stub — replace with real verification in production
+// JWT verification — hard-fails if JWT_SECRET is absent
 // ---------------------------------------------------------------------------
 function verifyAgentJwt(token) {
-  const jwt = require('jsonwebtoken');
-  return jwt.verify(token, process.env.JWT_SECRET || 'CHANGE_ME');
+  const jwt    = require('jsonwebtoken');
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not configured');
+  return jwt.verify(token, secret);
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,14 @@ app.use(cors({
     : '*',
   credentials: true,
 }));
+// Raw-body capture for Lemon Squeezy webhook HMAC verification.
+// Must be mounted BEFORE express.json() so the raw bytes are available.
+app.use(
+  '/api/webhooks/lemonsqueezy',
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => { req.rawBody = req.body; next(); }
+);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(attachDb);
