@@ -23,6 +23,9 @@ const aiRouter: IRouter = require("../routes/ai.router");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const billingRouter: IRouter = require("../routes/billing.router");
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const widgetRouter: IRouter = require("../controllers/widget.controller");
+
 // Email webhook — exposes `router` and `setIo` to allow socket injection
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const emailWebhook: { router: IRouter; setIo: (io: unknown) => void } =
@@ -35,6 +38,9 @@ router.use(healthRouter);
 
 // ── Auth (no token required) ─────────────────────────────────────────────────
 router.use("/auth", authRouter);
+
+// ── Widget — unauthenticated, CORS * (embedded on customer sites) ─────────────
+router.use("/widget", widgetRouter);
 
 // ── Core domain routes (requireAuth enforced inside each sub-router) ──────────
 router.use("/tenants",       tenantRouter);
