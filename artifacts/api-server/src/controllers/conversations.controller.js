@@ -30,7 +30,7 @@ function tenantId(req) { return req.agent.tenantId; }
 router.get('/', async (req, res, next) => {
   try {
     const tid    = tenantId(req);
-    const status = req.query.status;          // 'open'|'closed'|'ai_handling' or omit
+    const status = req.query.status;
     const page   = Math.max(1, parseInt(req.query.page) || 1);
     const limit  = Math.min(100, parseInt(req.query.limit) || PAGE_LIMIT);
     const offset = (page - 1) * limit;
@@ -51,9 +51,9 @@ router.get('/', async (req, res, next) => {
            c.id, c.status, c.channel, c.priority, c.subject,
            c.created_at, c.updated_at, c.sla_breach_at,
            c.assigned_agent_id,
-           v.email    AS visitor_email,
-           v.name     AS visitor_name,
-           a.name     AS agent_name,
+           v.email                                          AS visitor_email,
+           COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
+           a.name                                           AS agent_name,
            b.brand_name
          FROM conversations c
          LEFT JOIN visitors v ON v.id = c.visitor_id
@@ -84,9 +84,9 @@ router.get('/:id', async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT
          c.*,
-         v.email    AS visitor_email,
-         v.name     AS visitor_name,
-         a.name     AS agent_name,
+         v.email                                          AS visitor_email,
+         COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
+         a.name                                           AS agent_name,
          b.brand_name
        FROM conversations c
        LEFT JOIN visitors v ON v.id = c.visitor_id
@@ -131,7 +131,6 @@ router.patch('/:id', async (req, res, next) => {
 // ─── GET /api/conversations/:id/messages ─────────────────────────────────────
 router.get('/:id/messages', async (req, res, next) => {
   try {
-    // Ownership check
     const { rows: convRows } = await pool.query(
       'SELECT id FROM conversations WHERE id = $1 AND tenant_id = $2',
       [req.params.id, tenantId(req)]
@@ -142,9 +141,10 @@ router.get('/:id/messages', async (req, res, next) => {
       `SELECT
          m.id, m.conversation_id, m.sender_type, m.message_body,
          m.is_internal_note, m.attachments_json, m.created_at,
-         a.name AS sender_name
+         COALESCE(ag.name, vis.display_name, vis.email, m.sender_type) AS sender_name
        FROM messages m
-       LEFT JOIN agents a ON a.id = m.sender_agent_id
+       LEFT JOIN agents   ag  ON (m.sender_type IN ('agent','bot') AND ag.id  = m.sender_id)
+       LEFT JOIN visitors vis ON (m.sender_type = 'visitor'         AND vis.id = m.sender_id)
        WHERE m.conversation_id = $1
        ORDER BY m.created_at ASC`,
       [req.params.id]
@@ -163,7 +163,6 @@ router.post('/:id/messages', async (req, res, next) => {
       return res.status(400).json({ error: 'message body is required' });
     }
 
-    // Ownership check + status guard
     const { rows: convRows } = await pool.query(
       `SELECT id, status, tenant_id FROM conversations
        WHERE id = $1 AND tenant_id = $2`,
@@ -176,14 +175,17 @@ router.post('/:id/messages', async (req, res, next) => {
 
     const { rows: newMsg } = await pool.query(
       `INSERT INTO messages
-         (conversation_id, sender_type, sender_agent_id, message_body, is_internal_note)
+         (conversation_id, sender_type, sender_id, message_body, is_internal_note)
        VALUES ($1, 'agent', $2, $3, $4)
        RETURNING id, conversation_id, sender_type, message_body,
                  is_internal_note, created_at`,
       [req.params.id, req.agent.id, messageBody.trim(), Boolean(isInternalNote)]
     );
 
-    // Touch conversation updated_at
+    // Attach sender_name for the response
+    const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [req.agent.id]);
+    const result = { ...newMsg[0], sender_name: agentRow.rows[0]?.name ?? 'Agent' };
+
     await pool.query(
       'UPDATE conversations SET updated_at = NOW() WHERE id = $1',
       [req.params.id]
@@ -194,7 +196,7 @@ router.post('/:id/messages', async (req, res, next) => {
       'agent_message_sent'
     );
 
-    return res.status(201).json(newMsg[0]);
+    return res.status(201).json(result);
   } catch (err) { next(err); }
 });
 

@@ -125,6 +125,7 @@ function scheduleTypingExpiry(io, conversationId) {
 // ---------------------------------------------------------------------------
 function attachSocketServer(httpServer) {
   const io = new Server(httpServer, {
+    path: '/api/socket.io',   // must be under /api so the proxy routes it to this service
     cors: {
       origin: process.env.ALLOWED_ORIGINS?.split(',') ?? '*',
       credentials: true,

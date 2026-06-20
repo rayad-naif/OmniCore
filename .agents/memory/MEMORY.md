@@ -1,0 +1,1 @@
+- [OmniCore stack decisions](omnicore-stack.md) — socket.io path, schema quirks, seed UUIDs, demo credentials
