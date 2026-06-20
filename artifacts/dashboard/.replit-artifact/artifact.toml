@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/dashboard/"
+title = "Atelier OmniCore Dashboard"
+version = "1.0.0"
+id = "dash_OmniCore_2026_v001"
+
+[[services]]
+localPort = 5174
+name = "Dashboard"
+paths = ["/dashboard"]
+
+[services.development]
+run = "pnpm --filter @workspace/dashboard run dev"
+
+[services.production]
+
+[services.production.build]
+args = ["pnpm", "--filter", "@workspace/dashboard", "run", "build"]
+
+[services.production.build.env]
+NODE_ENV = "production"
+
+[services.production.run]
+args = ["npx", "serve", "-s", "artifacts/dashboard/dist", "-l", "5174"]
+
+[services.production.run.env]
+PORT = "5174"
+NODE_ENV = "production"
+
+[services.production.health.startup]
+path = "/dashboard/"
