@@ -1051,6 +1051,7 @@ function SettingsSection() {
   )
 }
 
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 const NAV: { section: Section; icon: React.ReactNode; label: string }[] = [
   { section: 'conversations', icon: <MessageSquare size={17} />, label: 'Conversations' },
