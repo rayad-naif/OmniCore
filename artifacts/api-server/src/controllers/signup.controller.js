@@ -24,17 +24,15 @@ router.post('/', async (req, res, next) => {
     await client.query('BEGIN');
 
     const { rows: [tenant] } = await client.query(
-      `INSERT INTO tenants (tenant_name, plan, plan_status)
-       VALUES ($1, 'free', 'active')
-       RETURNING id`,
+      `INSERT INTO tenants (company_name) VALUES ($1) RETURNING id`,
       [companyName],
     );
 
     const passwordHash = await bcrypt.hash(password, 12);
 
     await client.query(
-      `INSERT INTO agents (tenant_id, name, email, password_hash, role, is_active)
-       VALUES ($1, $2, $3, $4, 'admin', TRUE)`,
+      `INSERT INTO agents (tenant_id, name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4, 'admin')`,
       [tenant.id, adminName, adminEmail, passwordHash],
     );
 

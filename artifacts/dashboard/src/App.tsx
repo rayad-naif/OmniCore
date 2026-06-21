@@ -5,50 +5,48 @@ import {
   Inbox, Sparkles, LogOut, Bell, RefreshCw,
   AlertTriangle, CheckCircle2, Clock, Circle,
   ChevronRight, Hash, Mail, Globe, Zap, MoreHorizontal,
-  Eye, EyeOff, Wifi, WifiOff,
+  Eye, EyeOff, Wifi, WifiOff, Copy, Check, ArrowLeft,
+  UserPlus, Building, Lock,
 } from 'lucide-react'
 // @ts-ignore — JSX context file, types come from React
 import { useAuth } from './context/AuthContext'
 import { io, type Socket } from 'socket.io-client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Status = 'open' | 'closed' | 'pending' | 'ai_handling'
-type Channel = 'email' | 'widget' | 'api'
-type Priority = 'low' | 'normal' | 'high' | 'urgent'
-type Sender = 'agent' | 'visitor' | 'bot' | 'system'
-type Section = 'conversations' | 'brands' | 'billing' | 'settings'
+type Status      = 'open' | 'closed' | 'pending' | 'ai_handling'
+type Channel     = 'email' | 'widget' | 'api'
+type Priority    = 'low' | 'normal' | 'high' | 'urgent'
+type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
+type Section     = 'conversations' | 'brands' | 'billing' | 'settings'
 type StatusFilter = 'all' | Status
+type AuthView    = 'login' | 'signup'
 
 interface Conversation {
-  id: string
-  subject: string | null
-  status: Status
-  channel: Channel
-  priority: Priority
-  visitor_name: string
-  visitor_email: string | null
-  agent_name?: string | null
-  brand_name: string
-  updated_at: string
-  sla_breach_at?: string | null
-  unread?: number
+  id: string; subject: string | null; status: Status; channel: Channel
+  priority: Priority; visitor_name: string; visitor_email: string | null
+  agent_name?: string | null; brand_name: string; updated_at: string
+  sla_breach_at?: string | null; unread?: number
 }
 
 interface Message {
-  id: string
-  conversation_id: string
-  sender_type: Sender
-  sender_name: string
-  message_body: string
-  is_internal_note: boolean
+  id: string; conversation_id: string; sender_type: Sender
+  sender_name: string; message_body: string; is_internal_note: boolean
   created_at: string
+}
+
+interface Brand {
+  id: string; brand_name: string; website_url: string | null
+  support_email: string | null; widget_enabled: boolean
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
 const API = '/api'
 
 function useApi() {
-  const { authFetch } = useAuth() as { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }
+  const { authFetch, agent } = useAuth() as {
+    authFetch: (url: string, opts?: RequestInit) => Promise<Response>
+    agent: { id: string; name: string; email: string; tenantId: string; role: string } | null
+  }
   return useCallback(() => ({
     listConversations: async (): Promise<Conversation[]> => {
       const r = await authFetch(`${API}/conversations`)
@@ -63,16 +61,14 @@ function useApi() {
     },
     sendMessage: async (id: string, body: string): Promise<Message> => {
       const r = await authFetch(`${API}/conversations/${id}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ body }),
+        method: 'POST', body: JSON.stringify({ body }),
       })
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message>
     },
     patchConversation: async (id: string, patch: Record<string, string>): Promise<Conversation> => {
       const r = await authFetch(`${API}/conversations/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
+        method: 'PATCH', body: JSON.stringify(patch),
       })
       return r.json() as Promise<Conversation>
     },
@@ -82,7 +78,22 @@ function useApi() {
       const d = await r.json() as { url: string }
       return d.url
     },
-  }), [authFetch])()
+    listBrands: async (): Promise<Brand[]> => {
+      if (!agent?.tenantId) return []
+      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands`)
+      if (!r.ok) return []
+      const d = await r.json() as Brand[] | { brands: Brand[] }
+      return Array.isArray(d) ? d : (d.brands ?? [])
+    },
+    rephraseText: async (draft: string, tone = 'professional'): Promise<string> => {
+      const r = await authFetch(`${API}/ai/rephrase`, {
+        method: 'POST', body: JSON.stringify({ draft, tone }),
+      })
+      if (!r.ok) throw new Error('AI unavailable')
+      const d = await r.json() as { rephrased: string }
+      return d.rephrased
+    },
+  }), [authFetch, agent?.tenantId])()
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -103,33 +114,145 @@ function slaColor(breachAt?: string | null): string {
   return 'text-slate-400'
 }
 
-// ─── Login Page ───────────────────────────────────────────────────────────────
-function LoginPage() {
-  const { login, error, clearError } = useAuth() as {
-    login: (creds: { email: string; password: string }) => Promise<void>
-    error: string | null
-    clearError: () => void
-  }
-  const [email, setEmail]         = useState('admin@omnicore.test')
-  const [password, setPassword]   = useState('Admin123!')
-  const [showPw, setShowPw]       = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+// ─── Logo ─────────────────────────────────────────────────────────────────────
+function OmniLogo({ size = 'md' }: { size?: 'sm' | 'md' }) {
+  const s = size === 'sm' ? 'w-7 h-7' : 'w-9 h-9'
+  const i = size === 'sm' ? 14 : 18
+  return (
+    <div className={`${s} bg-sky-500 rounded-xl flex items-center justify-center shadow-lg shadow-sky-500/30`}>
+      <Sparkles size={i} className="text-white" />
+    </div>
+  )
+}
+
+// ─── Signup Page ──────────────────────────────────────────────────────────────
+function SignupPage({ onGoLogin }: { onGoLogin: (successMsg?: string) => void }) {
+  const [form, setForm] = useState({ companyName: '', adminName: '', adminEmail: '', password: '' })
+  const [showPw, setShowPw]     = useState(false)
+  const [submitting, setSub]    = useState(false)
+  const [error, setError]       = useState<string | null>(null)
+
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm(f => ({ ...f, [k]: e.target.value }))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    clearError()
-    setSubmitting(true)
-    try { await login({ email, password }) } finally { setSubmitting(false) }
+    setError(null)
+    setSub(true)
+    try {
+      const res = await fetch(`${API}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const data = await res.json() as { error?: string; tenantId?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Signup failed')
+      onGoLogin('Account created! Sign in below.')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSub(false)
+    }
   }
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="flex items-center gap-3 mb-8 justify-center">
-          <div className="w-9 h-9 bg-sky-500 rounded-xl flex items-center justify-center shadow-lg shadow-sky-500/30">
-            <Sparkles size={18} className="text-white" />
+          <OmniLogo />
+          <div>
+            <p className="text-white font-bold tracking-wide">OmniCore</p>
+            <p className="text-slate-500 text-xs">Atelier — Create your account</p>
           </div>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+          <h1 className="text-slate-100 text-lg font-semibold mb-1">Start for free</h1>
+          <p className="text-slate-500 text-xs mb-5">Set up your team workspace in seconds</p>
+
+          {error && (
+            <div className="mb-4 p-3 bg-red-950/50 border border-red-900 rounded-lg text-xs text-red-400 flex items-center gap-2">
+              <AlertTriangle size={13} className="shrink-0" /> {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <span className="inline-flex items-center gap-1.5"><Building size={11} /> Company name</span>
+              </label>
+              <input type="text" value={form.companyName} onChange={set('companyName')} required
+                placeholder="Acme Inc."
+                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <span className="inline-flex items-center gap-1.5"><User size={11} /> Your name</span>
+              </label>
+              <input type="text" value={form.adminName} onChange={set('adminName')} required
+                placeholder="Alex Johnson"
+                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <span className="inline-flex items-center gap-1.5"><Mail size={11} /> Work email</span>
+              </label>
+              <input type="email" value={form.adminEmail} onChange={set('adminEmail')} required
+                placeholder="alex@acme.com"
+                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                <span className="inline-flex items-center gap-1.5"><Lock size={11} /> Password</span>
+              </label>
+              <div className="relative">
+                <input type={showPw ? 'text' : 'password'} value={form.password} onChange={set('password')} required
+                  placeholder="Min 8 characters"
+                  className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
+                <button type="button" onClick={() => setShowPw(p => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" disabled={submitting}
+              className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 mt-1">
+              {submitting ? <><RefreshCw size={13} className="animate-spin" /> Creating account…</> : <><UserPlus size={14} /> Create free account</>}
+            </button>
+          </form>
+        </div>
+
+        <button onClick={() => onGoLogin()} className="mt-4 w-full flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+          <ArrowLeft size={12} /> Already have an account? Sign in
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Login Page ───────────────────────────────────────────────────────────────
+function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; successMsg?: string }) {
+  const { login, error, clearError } = useAuth() as {
+    login: (creds: { email: string; password: string }) => Promise<void>
+    error: string | null
+    clearError: () => void
+  }
+  const [email, setEmail]       = useState('')
+  const [password, setPassword] = useState('')
+  const [showPw, setShowPw]     = useState(false)
+  const [submitting, setSub]    = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); clearError(); setSub(true)
+    try { await login({ email, password }) } finally { setSub(false) }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-8 justify-center">
+          <OmniLogo />
           <div>
             <p className="text-white font-bold tracking-wide">OmniCore</p>
             <p className="text-slate-500 text-xs">Atelier — Agent Dashboard</p>
@@ -138,57 +261,54 @@ function LoginPage() {
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Sign in</h1>
-          <p className="text-slate-500 text-xs mb-5">Agent credentials required</p>
+          <p className="text-slate-500 text-xs mb-5">Enter your agent credentials</p>
 
+          {successMsg && (
+            <div className="mb-4 p-3 bg-emerald-950/60 border border-emerald-800 rounded-lg text-xs text-emerald-400 flex items-center gap-2">
+              <CheckCircle2 size={13} className="shrink-0" /> {successMsg}
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-red-950/50 border border-red-900 rounded-lg text-xs text-red-400 flex items-center gap-2">
-              <AlertTriangle size={13} className="shrink-0" />
-              {error}
+              <AlertTriangle size={13} className="shrink-0" /> {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all"
-              />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
+                placeholder="you@company.com"
+                className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
               <div className="relative">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  required
-                  className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(p => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                >
+                <input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
+                  placeholder="••••••••"
+                  className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
+                <button type="button" onClick={() => setShowPw(p => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                   {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
             </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-            >
+            <button type="submit" disabled={submitting}
+              className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
               {submitting && <RefreshCw size={13} className="animate-spin" />}
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+
+          <div className="mt-4 pt-4 border-t border-slate-800 text-center">
+            <button onClick={onGoSignup}
+              className="text-xs text-sky-500 hover:text-sky-400 transition-colors">
+              New to OmniCore? Create a free account →
+            </button>
+          </div>
         </div>
 
-        <p className="text-center text-xs text-slate-600 mt-4">
+        <p className="text-center text-xs text-slate-700 mt-4">
           Demo: admin@omnicore.test / Admin123!
         </p>
       </div>
@@ -227,10 +347,8 @@ function ChannelIcon({ channel }: { channel: Channel }) {
 function ConversationRow({ conv, isActive, onClick }: { conv: Conversation; isActive: boolean; onClick: () => void }) {
   const breached = conv.sla_breach_at && new Date(conv.sla_breach_at).getTime() < Date.now()
   return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-4 py-3 border-b border-slate-100 transition-colors ${isActive ? 'bg-slate-50 border-l-2 border-l-sky-500' : 'hover:bg-slate-50/70 border-l-2 border-l-transparent'}`}
-    >
+    <button onClick={onClick}
+      className={`w-full text-left px-4 py-3 border-b border-slate-100 transition-colors ${isActive ? 'bg-slate-50 border-l-2 border-l-sky-500' : 'hover:bg-slate-50/70 border-l-2 border-l-transparent'}`}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <PriorityDot priority={conv.priority} />
@@ -252,8 +370,7 @@ function ConversationRow({ conv, isActive, onClick }: { conv: Conversation; isAc
           <ChannelIcon channel={conv.channel} />
           {conv.sla_breach_at && (
             <span className={`text-[10px] flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}>
-              {breached && <AlertTriangle size={9} />}
-              SLA
+              {breached && <AlertTriangle size={9} />} SLA
             </span>
           )}
         </div>
@@ -296,11 +413,9 @@ function ConversationsList({ convs, activeId, onSelect }: { convs: Conversation[
         </div>
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text" placeholder="Search conversations…" value={query}
+          <input type="text" placeholder="Search conversations…" value={query}
             onChange={e => setQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-md text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all"
-          />
+            className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-md text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" />
           {query && <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={12} /></button>}
         </div>
       </div>
@@ -329,10 +444,10 @@ function ConversationsList({ convs, activeId, onSelect }: { convs: Conversation[
 
 // ─── Message Bubble ───────────────────────────────────────────────────────────
 function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string }) {
-  const isAgent   = msg.sender_type === 'agent'
-  const isBot     = msg.sender_type === 'bot'
-  const isNote    = msg.is_internal_note
-  const name      = msg.sender_name || (isAgent ? 'Agent' : isBot ? 'AI' : visitorName)
+  const isAgent = msg.sender_type === 'agent'
+  const isBot   = msg.sender_type === 'bot'
+  const isNote  = msg.is_internal_note
+  const name    = msg.sender_name || (isAgent ? 'Agent' : isBot ? 'AI' : visitorName)
 
   if (isNote) {
     return (
@@ -370,14 +485,14 @@ function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string
 function ChatPanel({
   conv, messages, onSend, onStatusChange, socketConnected,
 }: {
-  conv: Conversation
-  messages: Message[]
+  conv: Conversation; messages: Message[]
   onSend: (body: string) => Promise<void>
   onStatusChange: (status: Status) => void
   socketConnected: boolean
 }) {
   const [draft, setDraft]         = useState('')
   const [sending, setSending]     = useState(false)
+  const [rephrasing, setRephrase] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const bottomRef   = useRef<HTMLDivElement>(null)
@@ -397,6 +512,21 @@ function ChatPanel({
     setDraft(''); setSending(true)
     try { await onSend(body) } catch { showToast('error', 'Failed to send') } finally { setSending(false) }
     textareaRef.current?.focus()
+  }
+
+  const handleRephrase = async () => {
+    const body = draft.trim()
+    if (!body || rephrasing) return
+    setRephrase(true)
+    try {
+      const improved = await api.rephraseText(body)
+      setDraft(improved)
+    } catch {
+      showToast('error', 'AI rephrase unavailable')
+    } finally {
+      setRephrase(false)
+      textareaRef.current?.focus()
+    }
   }
 
   const handleExport = async () => {
@@ -428,7 +558,7 @@ function ChatPanel({
           <div className="flex items-center gap-2 mb-0.5">
             <h3 className="text-sm font-semibold text-slate-900 truncate">{conv.subject || '(No subject)'}</h3>
             <StatusBadge status={conv.status} />
-            <span title={socketConnected ? 'Real-time connected' : 'Real-time disconnected'}>
+            <span title={socketConnected ? 'Real-time connected' : 'Reconnecting…'}>
               {socketConnected ? <Wifi size={11} className="text-emerald-400" /> : <WifiOff size={11} className="text-slate-300" />}
             </span>
           </div>
@@ -445,10 +575,8 @@ function ChatPanel({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {nextStatus[conv.status] && (
-            <button
-              onClick={() => onStatusChange(nextStatus[conv.status]!)}
-              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all"
-            >
+            <button onClick={() => onStatusChange(nextStatus[conv.status]!)}
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">
               {statusActionLabel[conv.status]}
             </button>
           )}
@@ -486,16 +614,16 @@ function ChatPanel({
       {/* Compose */}
       <div className="px-4 py-3 bg-white border-t border-slate-200 shrink-0">
         <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
-          <textarea
-            ref={textareaRef} rows={2} value={draft}
+          <textarea ref={textareaRef} rows={2} value={draft}
             onChange={e => setDraft(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Reply… (Enter to send, Shift+Enter for newline)"
             className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none leading-relaxed"
-            disabled={conv.status === 'closed'}
-          />
+            disabled={conv.status === 'closed'} />
           <div className="flex items-center gap-1.5 shrink-0 pb-0.5">
-            <button className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors" title="AI Rephrase">
-              <Sparkles size={14} />
+            <button onClick={handleRephrase} disabled={!draft.trim() || rephrasing || conv.status === 'closed'}
+              title="AI rephrase (improve draft)"
+              className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              {rephrasing ? <RefreshCw size={14} className="animate-spin text-violet-500" /> : <Sparkles size={14} />}
             </button>
             <button onClick={handleSend} disabled={!draft.trim() || sending || conv.status === 'closed'}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
@@ -525,44 +653,113 @@ function EmptyChat() {
   )
 }
 
+// ─── Copy Snippet button ──────────────────────────────────────────────────────
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handle = async () => {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <button onClick={handle}
+      className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 transition-colors rounded">
+      {copied ? <><Check size={10} className="text-emerald-400" /> Copied</> : <><Copy size={10} /> Copy</>}
+    </button>
+  )
+}
+
 // ─── Brands Section ───────────────────────────────────────────────────────────
 function BrandsSection() {
-  const brands = [
-    { name: 'Acme Help Center', domain: 'help.acme.com', widget: true, email: 'support@acme.com', convs: 42 },
-    { name: 'DevCo Support', domain: 'support.devco.com', widget: false, email: 'help@devco.com', convs: 18 },
-  ]
+  const api = useApi()
+  const [brands, setBrands]   = useState<Brand[]>([])
+  const [loading, setLoading] = useState(true)
+  const origin = window.location.origin
+
+  useEffect(() => {
+    api.listBrands()
+      .then(list => { setBrands(list); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="flex-1 overflow-auto p-6 bg-slate-50">
       <div className="max-w-2xl">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Brands</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Manage branded help centers and widget configs</p>
+            <p className="text-xs text-slate-500 mt-0.5">Manage branded help centers and embed your widget</p>
           </div>
-          <button className="px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">+ Add Brand</button>
+          <button className="px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">
+            + Add Brand
+          </button>
         </div>
-        <div className="space-y-3">
-          {brands.map(b => (
-            <div key={b.name} className="bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 transition-colors">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-8 h-8 bg-gradient-to-br from-sky-400 to-sky-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">{b.name[0]}</div>
-                    <span className="text-sm font-semibold text-slate-800">{b.name}</span>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm">
+            <RefreshCw size={16} className="animate-spin" /> Loading…
+          </div>
+        ) : brands.length === 0 ? (
+          <div className="text-center py-12 text-slate-400 text-sm">No brands found</div>
+        ) : (
+          <div className="space-y-4">
+            {brands.map(b => {
+              const snippet = `<script\n  src="${origin}/api/widget/widget.js"\n  data-brand-id="${b.id}"\n  data-label="${b.brand_name}"\n  defer\n></script>`
+              return (
+                <div key={b.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
+                  <div className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-8 h-8 bg-gradient-to-br from-sky-400 to-sky-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
+                            {b.brand_name[0]}
+                          </div>
+                          <span className="text-sm font-semibold text-slate-800">{b.brand_name}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-slate-500 ml-10">
+                          {b.website_url && <span className="flex items-center gap-1"><Globe size={10} />{b.website_url}</span>}
+                          {b.support_email && <span className="flex items-center gap-1"><Mail size={10} />{b.support_email}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {b.widget_enabled && (
+                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded">
+                            Widget active
+                          </span>
+                        )}
+                        <button className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-md px-2.5 py-1 hover:bg-slate-50 transition-colors">
+                          Edit
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500 ml-10">
-                    <span className="flex items-center gap-1"><Globe size={10} />{b.domain}</span>
-                    <span className="flex items-center gap-1"><Mail size={10} />{b.email}</span>
-                    <span className="flex items-center gap-1"><MessageSquare size={10} />{b.convs} conversations</span>
+
+                  {/* Embed snippet */}
+                  <div className="border-t border-slate-100 bg-slate-950 mx-0">
+                    <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
+                      <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">Widget embed</span>
+                      <CopyButton text={snippet} />
+                    </div>
+                    <pre className="px-4 pb-3 text-[11px] text-sky-300 overflow-x-auto leading-relaxed">
+                      {snippet}
+                    </pre>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {b.widget && <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded">Widget active</span>}
-                  <button className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-md px-2.5 py-1 hover:bg-slate-50 transition-colors">Edit</button>
-                </div>
-              </div>
-            </div>
-          ))}
+              )
+            })}
+          </div>
+        )}
+
+        {/* Widget demo link */}
+        <div className="mt-6 p-4 bg-violet-50 border border-violet-200 rounded-xl flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-violet-900">Test the widget live</p>
+            <p className="text-xs text-violet-600 mt-0.5">Open the demo page to see the chat bubble in action</p>
+          </div>
+          <a href="/api/widget/demo" target="_blank" rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-md hover:bg-violet-700 transition-colors whitespace-nowrap">
+            Open demo →
+          </a>
         </div>
       </div>
     </div>
@@ -634,12 +831,13 @@ function SettingsSection() {
         <p className="text-xs text-slate-500 mb-6">Workspace and account preferences</p>
         <div className="space-y-3">
           {[
-            { label: 'Team Members', desc: '2 active agents', icon: <User size={14} /> },
-            { label: 'Notifications', desc: 'Email + in-app alerts enabled', icon: <Bell size={14} /> },
-            { label: 'API & Webhooks', desc: '0 webhooks configured', icon: <Zap size={14} /> },
-            { label: 'Security & SSO', desc: 'Password auth · 2FA off', icon: <Settings size={14} /> },
+            { label: 'Team Members',   desc: '2 active agents',            icon: <User size={14} /> },
+            { label: 'Notifications',  desc: 'Email + in-app alerts',      icon: <Bell size={14} /> },
+            { label: 'API & Webhooks', desc: '0 webhooks configured',      icon: <Zap size={14} /> },
+            { label: 'Security & SSO', desc: 'Password auth · 2FA off',    icon: <Settings size={14} /> },
           ].map(item => (
-            <button key={item.label} className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 transition-colors text-left">
+            <button key={item.label}
+              className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 transition-colors text-left">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-600">{item.icon}</div>
                 <div>
@@ -666,15 +864,13 @@ const NAV: { section: Section; icon: React.ReactNode; label: string }[] = [
 
 function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
   active: Section; onNavigate: (s: Section) => void; unread: number
-  agent: { name: string; email: string } | null; onLogout: () => void
+  agent: { name: string; email: string; role: string } | null; onLogout: () => void
 }) {
   return (
     <nav className="flex flex-col w-56 bg-slate-900 h-full shrink-0">
       <div className="px-5 py-5 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 bg-sky-500 rounded-lg flex items-center justify-center">
-            <Sparkles size={14} className="text-white" />
-          </div>
+          <OmniLogo size="sm" />
           <div>
             <p className="text-xs font-bold text-white tracking-wide">OmniCore</p>
             <p className="text-[10px] text-slate-500">Atelier</p>
@@ -697,6 +893,11 @@ function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
         })}
       </div>
       <div className="px-3 py-3 border-t border-slate-800">
+        {agent?.role === 'admin' && (
+          <div className="px-2 py-1 mb-2">
+            <span className="text-[10px] font-semibold text-sky-500 bg-sky-500/10 px-2 py-0.5 rounded uppercase tracking-wide">Admin</span>
+          </div>
+        )}
         <button onClick={onLogout} className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-800 cursor-pointer transition-colors group">
           <div className="w-7 h-7 bg-sky-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
             {agent?.name?.[0]?.toUpperCase() ?? 'A'}
@@ -721,24 +922,22 @@ function Dashboard() {
   }
   const api = useApi()
 
-  const [section, setSection]       = useState<Section>('conversations')
-  const [convs, setConvs]           = useState<Conversation[]>([])
-  const [activeId, setActiveId]     = useState<string | null>(null)
-  const [messages, setMessages]     = useState<Record<string, Message[]>>({})
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState<string | null>(null)
-  const [sidebarOpen, setSidebar]   = useState(false)
-  const [socketOk, setSocketOk]     = useState(false)
-  const socketRef                   = useRef<Socket | null>(null)
+  const [section, setSection]     = useState<Section>('conversations')
+  const [convs, setConvs]         = useState<Conversation[]>([])
+  const [activeId, setActiveId]   = useState<string | null>(null)
+  const [messages, setMessages]   = useState<Record<string, Message[]>>({})
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState<string | null>(null)
+  const [sidebarOpen, setSidebar] = useState(false)
+  const [socketOk, setSocketOk]   = useState(false)
+  const socketRef                 = useRef<Socket | null>(null)
 
-  // Load conversations
   useEffect(() => {
     api.listConversations()
       .then(list => { setConvs(list); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Socket.io
   useEffect(() => {
     if (!accessToken) return
     const socket: Socket = io({
@@ -748,11 +947,9 @@ function Dashboard() {
       reconnectionAttempts: 5,
     })
     socketRef.current = socket
-
-    socket.on('connect',    () => setSocketOk(true))
-    socket.on('disconnect', () => setSocketOk(false))
+    socket.on('connect',       () => setSocketOk(true))
+    socket.on('disconnect',    () => setSocketOk(false))
     socket.on('connect_error', () => setSocketOk(false))
-
     socket.on('server:new_message', (msg: Message) => {
       setMessages(prev => {
         const existing = prev[msg.conversation_id] ?? []
@@ -763,28 +960,23 @@ function Dashboard() {
         c.id === msg.conversation_id ? { ...c, updated_at: msg.created_at } : c
       ))
     })
-
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 
-  // Join socket room on conversation select
   useEffect(() => {
     if (activeId && socketRef.current?.connected) {
       socketRef.current.emit('join:conversation', { conversationId: activeId })
     }
   }, [activeId])
 
-  // Load messages lazily
   useEffect(() => {
     if (!activeId || messages[activeId] !== undefined) return
     api.getMessages(activeId)
       .then(msgs => setMessages(prev => ({ ...prev, [activeId]: msgs })))
       .catch(() => setMessages(prev => ({ ...prev, [activeId]: [] })))
-    // Clear unread
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, unread: 0 } : c))
   }, [activeId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Send message
   const handleSend = useCallback(async (body: string) => {
     if (!activeId) return
     const msg = await api.sendMessage(activeId, body)
@@ -796,7 +988,6 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, updated_at: msg.created_at } : c))
   }, [activeId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Status change
   const handleStatusChange = useCallback(async (status: Status) => {
     if (!activeId) return
     await api.patchConversation(activeId, { status })
@@ -808,7 +999,6 @@ function Dashboard() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
@@ -817,21 +1007,17 @@ function Dashboard() {
           </div>
         </div>
       )}
-
-      {/* Desktop sidebar */}
       <div className="hidden lg:flex">
         <Sidebar active={section} onNavigate={setSection} unread={totalUnread} agent={agent} onLogout={logout} />
       </div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Mobile top bar */}
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">
           <button onClick={() => setSidebar(true)} className="text-slate-500 hover:text-slate-800"><Menu size={20} /></button>
           <span className="text-sm font-semibold text-slate-800 capitalize">{section}</span>
           {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">{totalUnread}</span>}
         </div>
 
-        {/* Content */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {section === 'conversations' && (
             loading ? (
@@ -868,6 +1054,11 @@ function Dashboard() {
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth() as { isAuthenticated: boolean; isLoading: boolean }
+  const [view, setView]         = useState<AuthView>('login')
+  const [successMsg, setSuccess] = useState<string | undefined>()
+
+  const goSignup = () => { setSuccess(undefined); setView('signup') }
+  const goLogin  = (msg?: string) => { setSuccess(msg); setView('login') }
 
   if (isLoading) {
     return (
@@ -882,5 +1073,9 @@ export default function App() {
     )
   }
 
-  return isAuthenticated ? <Dashboard /> : <LoginPage />
+  if (isAuthenticated) return <Dashboard />
+
+  return view === 'signup'
+    ? <SignupPage onGoLogin={goLogin} />
+    : <LoginPage onGoSignup={goSignup} successMsg={successMsg} />
 }

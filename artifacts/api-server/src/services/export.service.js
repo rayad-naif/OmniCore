@@ -322,7 +322,7 @@ async function presignGetUrl(key, ttlSeconds = 900) {
 async function exportConversation(conversationId, tenantId) {
   // 1. Load conversation (ownership check via tenant_id)
   const { rows: convRows } = await pool.query(
-    `SELECT c.*, b.name AS brand_name
+    `SELECT c.*, b.brand_name
      FROM conversations c
      LEFT JOIN brands b ON b.tenant_id = c.tenant_id
      WHERE c.id = $1 AND c.tenant_id = $2`,
@@ -335,7 +335,7 @@ async function exportConversation(conversationId, tenantId) {
   const { rows: messages } = await pool.query(
     `SELECT m.*, a.name AS sender_name
      FROM messages m
-     LEFT JOIN agents a ON a.id = m.sender_agent_id
+     LEFT JOIN agents a ON a.id = m.sender_id
      WHERE m.conversation_id = $1
      ORDER BY m.created_at ASC`,
     [conversationId]
@@ -397,7 +397,7 @@ async function handleExportRequest(req, res) {
 async function streamPdfDirect(req, res, conversationId, tenantId) {
   try {
     const { rows: convRows } = await pool.query(
-      `SELECT c.*, b.name AS brand_name FROM conversations c
+      `SELECT c.*, b.brand_name FROM conversations c
        LEFT JOIN brands b ON b.tenant_id = c.tenant_id
        WHERE c.id = $1 AND c.tenant_id = $2`,
       [conversationId, tenantId]
@@ -406,7 +406,7 @@ async function streamPdfDirect(req, res, conversationId, tenantId) {
 
     const { rows: messages } = await pool.query(
       `SELECT m.*, a.name AS sender_name FROM messages m
-       LEFT JOIN agents a ON a.id = m.sender_agent_id
+       LEFT JOIN agents a ON a.id = m.sender_id
        WHERE m.conversation_id = $1 ORDER BY m.created_at ASC`,
       [conversationId]
     );
