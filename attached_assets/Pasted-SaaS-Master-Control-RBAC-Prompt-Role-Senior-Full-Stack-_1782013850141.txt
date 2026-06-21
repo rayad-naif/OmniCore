@@ -1,0 +1,52 @@
+SaaS Master Control & RBAC" Prompt
+"Role: Senior Full-Stack Architect.
+
+Task: Finalize the SaaS management layer for Atelier OmniCore. Remove all 'coming soon' placeholders, implement full CRUD for Brands and Agents, build a Super Admin panel, and enforce Role-Based Access Control (RBAC).
+
+Part 1: Functional Settings & Widget Customization
+
+Replace the 'Coming Soon' placeholder in the Settings view with two functional components: ProfileSettings.jsx and WorkspaceSettings.jsx.
+
+ProfileSettings: Form to update the logged-in agent's Name and Password via PATCH /api/agents/me.
+
+WorkspaceSettings: Form to update company_name, default_timezone, and toggle ai_auto_reply_enabled via PATCH /api/tenants/settings.
+
+Part 2: Full Brands CRUD (Dashboard & API)
+
+Update the Brands component: Make the 'Edit' button open a modal to update name, website_url, support_email, and widget_color (saving to widget_config_json) via PATCH /api/brands/:id.
+
+Add a 'Delete' button with a confirmation modal triggering DELETE /api/brands/:id.
+
+Part 3: Team Management (Tenant Admin)
+
+Create a new Team.jsx view in the dashboard.
+
+Build a data table fetching GET /api/agents to list all staff for the tenant.
+
+Add an 'Invite Agent' button (creates a new agent with a default password via POST /api/agents).
+
+Add a 'Remove' button to delete agents via DELETE /api/agents/:id.
+
+Part 4: Super Admin Panel & Auth (The God View)
+
+Create a protected route: /super-admin. Access is strictly limited to users whose email matches process.env.SUPER_ADMIN_EMAIL.
+
+Build a UI table listing all Tenants via GET /api/super-admin/tenants. Include: Company Name, Active Agents count, Plan, and Status.
+
+Add an 'Actions' dropdown to toggle a tenant's status (Active/Suspended) via PATCH /api/super-admin/tenants/:id/status. Suspended tenants must be blocked at the authentication middleware layer.
+
+Part 5: Role-Based Access Control (RBAC)
+
+Modify conversations.controller.js to enforce data isolation:
+
+If req.user.role === 'admin', return all conversations.
+
+If req.user.role === 'agent', return ONLY conversations where assigned_agent_id = req.user.id OR status = 'unassigned'.
+
+In Inbox.jsx, conditionally hide the 'Reassign' dropdown, 'Settings', 'Brands', and 'Team' sidebar links if the user is an agent.
+
+Rules:
+
+Provide the exact React component code (Tailwind/Lucide) and Express controller logic.
+
+No mocked data; everything must connect to the PostgreSQL database.
