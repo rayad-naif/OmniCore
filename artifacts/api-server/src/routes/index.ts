@@ -12,6 +12,9 @@ import healthRouter from "./health";
 const authRouter: IRouter = require("../controllers/auth.controller");
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const signupRouter: IRouter = require("../controllers/signup.controller");
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const tenantRouter: IRouter = require("../controllers/tenant.controller");
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -38,6 +41,9 @@ router.use(healthRouter);
 
 // ── Auth (no token required) ─────────────────────────────────────────────────
 router.use("/auth", authRouter);
+
+// ── Signup (unauthenticated, public) ─────────────────────────────────────────
+router.use("/auth/signup", signupRouter);
 
 // ── Widget — unauthenticated, CORS * (embedded on customer sites) ─────────────
 router.use("/widget", widgetRouter);

@@ -1,3 +1,7 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { verifyEnv } = require("./lib/env");
+verifyEnv();
+
 import { createAppServer } from "./app";
 import { logger } from "./lib/logger";
 
