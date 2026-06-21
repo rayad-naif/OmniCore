@@ -235,8 +235,8 @@ function buildDom(){
     '</div>'+
     '<div id="omni-msgs"><div id="omni-ldr"><div class="om-spin"></div>Loading\u2026</div></div>'+
     '<div id="omni-cmp">'+
-      '<textarea id="omni-inp" rows="1" placeholder="Type a message\u2026" disabled></textarea>'+
-      '<button id="omni-snd" disabled aria-label="Send">'+ICO_SEND+'</button>'+
+      '<textarea id="omni-inp" rows="1" placeholder="Type a message\u2026"></textarea>'+
+      '<button id="omni-snd" aria-label="Send">'+ICO_SEND+'</button>'+
     '</div>'+
     '<div id="omni-ft">Powered by <strong>OmniCore</strong></div>'
   );
@@ -252,7 +252,7 @@ function buildDom(){
   els.inp.addEventListener('input',function(){
     this.style.height='auto';
     this.style.height=Math.min(this.scrollHeight,100)+'px';
-    els.snd.disabled=!this.value.trim()||!state.connected;
+    els.snd.disabled=!this.value.trim();
   });
   els.inp.addEventListener('keydown',function(e){
     if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
@@ -318,6 +318,15 @@ function loadSio(){
   d.head.appendChild(s);
 }
 
+var msgQueue=[];
+
+function flushQueue(){
+  var q=msgQueue.splice(0);
+  q.forEach(function(body){
+    state.socket.emit('client:send_message',{conversationId:state.conversationId,body:body});
+  });
+}
+
 function initSio(){
   var sk=w.io(API_ORIGIN,{
     path:'/api/socket.io',
@@ -328,14 +337,13 @@ function initSio(){
   state.socket=sk;
   sk.on('connect',function(){
     state.connected=true;setSt('Online',true);
-    if(els.inp){els.inp.disabled=false;els.snd.disabled=!els.inp.value.trim();}
     sk.emit('join:conversation',{conversationId:state.conversationId});
+    flushQueue();
   });
   sk.on('disconnect',function(){
     state.connected=false;setSt('Reconnecting\u2026',false);
-    if(els.inp){els.inp.disabled=true;els.snd.disabled=true;}
   });
-  sk.on('connect_error',function(){setSt('Offline',false);});
+  sk.on('connect_error',function(){setSt('Offline — retrying\u2026',false);});
   sk.on('server:new_message',function(msg){
     if(msg.is_internal_note)return;
     state.messages.push(msg);
@@ -390,10 +398,15 @@ function hideTyping(){if(typingEl){typingEl.remove();typingEl=null;}}
 
 function send(){
   var body=els.inp.value.trim();
-  if(!body||!state.socket||!state.conversationId)return;
+  if(!body||!state.conversationId)return;
   els.inp.value='';els.inp.style.height='auto';els.snd.disabled=true;
   appendMsg({id:'opt_'+Date.now(),sender_type:'visitor',message_body:body,is_internal_note:false,created_at:new Date().toISOString()},false);
-  state.socket.emit('client:send_message',{conversationId:state.conversationId,body:body});
+  if(state.socket&&state.connected){
+    state.socket.emit('client:send_message',{conversationId:state.conversationId,body:body});
+  } else {
+    // Socket not yet connected — queue the message and flush on connect
+    msgQueue.push(body);
+  }
 }
 
 function scrollBot(){if(els.msgs)els.msgs.scrollTop=els.msgs.scrollHeight;}
@@ -448,16 +461,16 @@ router.get('/demo', (_req, res) => {
   <div class="embed">
     <pre>&lt;script
   src="https://YOUR_DOMAIN/api/widget/widget.js"
-  data-brand-id="22222222-2222-2222-2222-222222222221"
-  data-label="Acme Help Center"
+  data-brand-id="22222222-2222-2222-2222-222222222222"
+  data-label="OmniCore Support"
   defer
 &gt;&lt;/script&gt;</pre>
   </div>
 </div>
 <script
   src="/api/widget/widget.js"
-  data-brand-id="22222222-2222-2222-2222-222222222221"
-  data-label="Acme Help Center"
+  data-brand-id="22222222-2222-2222-2222-222222222222"
+  data-label="OmniCore Support"
   data-color="#0284c7"
 ></script>
 </body>
@@ -465,9 +478,10 @@ router.get('/demo', (_req, res) => {
 });
 
 router.get('/widget.js', (_req, res) => {
-  res.setHeader('Content-Type',  'application/javascript; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type',                  'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control',                 'public, max-age=3600');
+  res.setHeader('Access-Control-Allow-Origin',   '*');
+  res.setHeader('Cross-Origin-Resource-Policy',  'cross-origin');  // allows GoHighLevel / external sites to inject
   res.send(WIDGET_JS.trimStart());
 });
 

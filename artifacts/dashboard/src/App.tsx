@@ -1317,6 +1317,51 @@ function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
   )
 }
 
+// ─── Toast Notification Types ─────────────────────────────────────────────────
+interface InboxToast {
+  id: string
+  convId: string
+  visitorName: string
+  preview: string
+  createdAt: number
+}
+
+// ─── Toast Notification Stack ─────────────────────────────────────────────────
+function ToastStack({ toasts, onDismiss, onOpen }: {
+  toasts: InboxToast[]
+  onDismiss: (id: string) => void
+  onOpen: (convId: string) => void
+}) {
+  return (
+    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style={{ maxWidth: 320 }}>
+      {toasts.map(t => (
+        <div key={t.id}
+          className="pointer-events-auto flex items-start gap-3 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl px-4 py-3 animate-in slide-in-from-right-4"
+          style={{ animation: 'slideInRight 0.2s ease-out' }}
+        >
+          <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">
+            {t.visitorName[0]?.toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-slate-100 truncate">{t.visitorName}</p>
+            <p className="text-xs text-slate-400 truncate mt-0.5">{t.preview}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => { onOpen(t.convId); onDismiss(t.id) }}
+              className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-colors px-1.5 py-1 rounded hover:bg-sky-500/10">
+              View
+            </button>
+            <button onClick={() => onDismiss(t.id)}
+              className="text-slate-600 hover:text-slate-300 transition-colors p-1 rounded">
+              <X size={11} />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Dashboard (authenticated) ────────────────────────────────────────────────
 function Dashboard() {
   const { accessToken, agent, logout } = useAuth() as {
@@ -1334,7 +1379,11 @@ function Dashboard() {
   const [error, setError]         = useState<string | null>(null)
   const [sidebarOpen, setSidebar] = useState(false)
   const [socketOk, setSocketOk]   = useState(false)
+  const [toasts, setToasts]       = useState<InboxToast[]>([])
   const socketRef                 = useRef<Socket | null>(null)
+  const activeIdRef               = useRef<string | null>(null)
+
+  useEffect(() => { activeIdRef.current = activeId }, [activeId])
 
   useEffect(() => {
     api.listConversations()
@@ -1350,12 +1399,36 @@ function Dashboard() {
     socket.on('disconnect',    () => setSocketOk(false))
     socket.on('connect_error', () => setSocketOk(false))
     socket.on('server:new_message', (msg: Message) => {
+      if (msg.is_internal_note) return
       setMessages(prev => {
         const existing = prev[msg.conversation_id] ?? []
         if (existing.some(m => m.id === msg.id)) return prev
         return { ...prev, [msg.conversation_id]: [...existing, msg] }
       })
-      setConvs(prev => prev.map(c => c.id === msg.conversation_id ? { ...c, updated_at: msg.created_at, unread: (c.unread ?? 0) + 1 } : c))
+      setConvs(prev => prev.map(c => {
+        if (c.id !== msg.conversation_id) return c
+        const isActive = activeIdRef.current === c.id
+        return { ...c, updated_at: msg.created_at, unread: isActive ? (c.unread ?? 0) : (c.unread ?? 0) + 1 }
+      }))
+      // Show toast only for incoming (non-agent) messages on conversations not currently open
+      if (msg.sender_type !== 'agent' && msg.sender_type !== 'system') {
+        setConvs(prev => {
+          const conv = prev.find(c => c.id === msg.conversation_id)
+          if (!conv) return prev
+          if (activeIdRef.current === msg.conversation_id) return prev
+          const toastId = `${msg.id}-toast`
+          const toast: InboxToast = {
+            id: toastId,
+            convId: msg.conversation_id,
+            visitorName: conv.visitor_name,
+            preview: msg.message_body.slice(0, 80),
+            createdAt: Date.now(),
+          }
+          setToasts(t => [...t.slice(-4), toast]) // keep max 5 toasts
+          setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
+          return prev
+        })
+      }
     })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
@@ -1399,8 +1472,15 @@ function Dashboard() {
   const totalUnread = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const activeConv  = convs.find(c => c.id === activeId)
 
+  const dismissToast = useCallback((id: string) => setToasts(t => t.filter(x => x.id !== id)), [])
+  const openToastConv = useCallback((convId: string) => {
+    handleSelectConversation(convId)
+    setSection('conversations')
+  }, [handleSelectConversation])
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      <ToastStack toasts={toasts} onDismiss={dismissToast} onOpen={openToastConv} />
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
