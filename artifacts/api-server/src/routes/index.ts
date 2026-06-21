@@ -29,6 +29,12 @@ const billingRouter: IRouter = require("../routes/billing.router");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const widgetRouter: IRouter = require("../controllers/widget.controller");
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const agentsRouter: IRouter = require("../controllers/agents.controller");
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const superAdminRouter: IRouter = require("../controllers/super-admin.controller");
+
 // Email webhook — exposes `router` and `setIo` to allow socket injection
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const emailWebhook: { router: IRouter; setIo: (io: unknown) => void } =
@@ -52,6 +58,8 @@ router.use("/widget", widgetRouter);
 router.use("/tenants",       tenantRouter);
 router.use("/conversations", conversationsRouter);
 router.use("/ai",            aiRouter);
+router.use("/agents",        agentsRouter);
+router.use("/super-admin",   superAdminRouter);
 
 // ── Billing + checkout + LS webhook (mounted at /api level) ──────────────────
 // billing.router.js handles: /checkout, /billing/*, /webhooks/lemonsqueezy

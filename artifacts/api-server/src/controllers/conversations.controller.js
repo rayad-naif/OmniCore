@@ -38,6 +38,14 @@ router.get('/', async (req, res, next) => {
     const conditions = ['c.tenant_id = $1'];
     const values     = [tid];
 
+    // RBAC: agents only see their own conversations or unassigned ones
+    if (req.agent.role === 'agent') {
+      conditions.push(
+        `(c.assigned_agent_id = $${values.length + 1} OR c.assigned_agent_id IS NULL)`
+      );
+      values.push(req.agent.id);
+    }
+
     if (status) {
       conditions.push(`c.status = $${values.length + 1}`);
       values.push(status);

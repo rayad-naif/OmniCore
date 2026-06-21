@@ -151,6 +151,36 @@ router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) =>
 });
 
 // ---------------------------------------------------------------------------
+// WORKSPACE SETTINGS  PATCH /api/tenants/settings
+// ---------------------------------------------------------------------------
+
+/**
+ * PATCH /api/tenants/settings
+ * Body: { company_name?, default_timezone?, ai_auto_reply_enabled? }
+ * Admin only — updates the caller's own tenant.
+ */
+router.patch('/settings', requireRole('admin'), async (req, res, next) => {
+  try {
+    const allowed = ['company_name', 'default_timezone', 'ai_auto_reply_enabled'];
+    const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+    if (!fields.length) {
+      return res.status(400).json({ error: 'No valid fields provided' });
+    }
+    const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values     = fields.map(f => req.body[f]);
+    values.push(req.agent.tenantId);
+    const { rows } = await req.db.query(
+      `UPDATE tenants SET ${setClauses}, updated_at = NOW()
+       WHERE id = $${values.length}
+       RETURNING id, company_name, default_timezone, ai_auto_reply_enabled, updated_at`,
+      values
+    );
+    if (!rows.length) return notFound(res, 'Tenant');
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------
 // BRANDS  (nested under /api/tenants/:tenantId/brands)
 // ---------------------------------------------------------------------------
 

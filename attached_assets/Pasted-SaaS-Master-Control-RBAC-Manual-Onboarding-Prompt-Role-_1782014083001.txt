@@ -1,0 +1,64 @@
+SaaS Master Control, RBAC & Manual Onboarding" Prompt
+"Role: Senior Full-Stack Architect.
+
+Task: Finalize the SaaS management layer for Atelier OmniCore. Remove 'coming soon' placeholders, implement full CRUD for Brands/Agents, build a Super Admin panel with deep data control, enforce RBAC, and replace the automated billing flow with a manual upgrade request system.
+
+Part 1: Functional Settings & Widget Customization
+
+Replace the 'Coming Soon' placeholder in Settings with ProfileSettings.jsx and WorkspaceSettings.jsx.
+
+ProfileSettings: Form to update the agent's Name/Password via PATCH /api/agents/me.
+
+WorkspaceSettings: Form to update company_name, default_timezone, and toggle ai_auto_reply_enabled via PATCH /api/tenants/settings.
+
+Part 2: Full Brands CRUD (Dashboard & API)
+
+Update Brands.jsx: Make the 'Edit' button open a modal to update name, website_url, support_email, and widget_color (saving to widget_config_json) via PATCH /api/brands/:id.
+
+Add a 'Delete' button with a confirmation modal triggering DELETE /api/brands/:id.
+
+Part 3: Team Management (Tenant Admin)
+
+Create a Team.jsx view. Fetch GET /api/agents to list staff.
+
+Add an 'Invite Agent' button (creates agent with a default password via POST /api/agents).
+
+Add a 'Remove' button to delete agents via DELETE /api/agents/:id.
+
+Part 4: Manual Billing & Upgrade Requests (Replacing LemonSqueezy)
+
+In the Billing dashboard tab, remove the LemonSqueezy checkout redirect.
+
+Replace it with an 'Upgrade/Contact Sales' button that opens a form modal (capturing requested plan and company details).
+
+Submit this form to POST /api/billing/upgrade-request. Save these requests to a new upgrade_requests database table.
+
+Part 5: Super Admin Panel & Deep Control (The God View)
+
+Create protected route /super-admin. Strict access: only for users where email === process.env.SUPER_ADMIN_EMAIL.
+
+Build a UI table listing all Tenants via GET /api/super-admin/tenants and a second table for pending Upgrade Requests.
+
+Super Admin Actions Dropdown:
+
+Toggle Access: Suspend/Activate tenant via PATCH /api/super-admin/tenants/:id/status.
+
+Manage Billing: Manually update their plan status (Active/Paused/Revoked) via PATCH /api/super-admin/tenants/:id/billing.
+
+Purge Data: A hard-delete button with a strict confirmation check (e.g., typing the tenant name) that triggers DELETE /api/super-admin/tenants/:id/purge. This must execute a SQL cascade delete removing the tenant, their agents, brands, and all conversation history.
+
+Part 6: Role-Based Access Control (RBAC)
+
+Modify conversations.controller.js for data isolation:
+
+admin role: Returns all tenant conversations.
+
+agent role: Returns ONLY conversations where assigned_agent_id = req.user.id OR status = 'unassigned'.
+
+In Inbox.jsx, conditionally hide the 'Reassign' dropdown, 'Settings', 'Brands', 'Team', and 'Billing' sidebar links if the user is an agent.
+
+Rules:
+
+Provide the exact React component code (Tailwind/Lucide) and Express controller logic.
+
+Ensure the Super Admin purge endpoint uses a database transaction to prevent orphaned rows.

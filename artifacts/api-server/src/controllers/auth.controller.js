@@ -43,10 +43,11 @@ function getSecret() {
 function signAccess(agent) {
   return jwt.sign(
     {
-      tenantId: agent.tenant_id,
-      role:     agent.role,
-      email:    agent.email,
-      name:     agent.name,
+      tenantId:     agent.tenant_id,
+      role:         agent.role,
+      email:        agent.email,
+      name:         agent.name,
+      isSuperAdmin: !!(process.env.SUPER_ADMIN_EMAIL && agent.email === process.env.SUPER_ADMIN_EMAIL),
     },
     getSecret(),
     { subject: String(agent.id), expiresIn: ACCESS_TTL }
@@ -63,11 +64,12 @@ function signRefresh(agentId, tenantId) {
 
 function safeAgent(row) {
   return {
-    id:       row.id,
-    tenantId: row.tenant_id,
-    role:     row.role,
-    email:    row.email,
-    name:     row.name,
+    id:           row.id,
+    tenantId:     row.tenant_id,
+    role:         row.role,
+    email:        row.email,
+    name:         row.name,
+    isSuperAdmin: !!(process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL),
   };
 }
 
