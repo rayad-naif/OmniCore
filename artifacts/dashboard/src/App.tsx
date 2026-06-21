@@ -6,7 +6,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, Circle,
   ChevronRight, Hash, Mail, Globe, Zap, MoreHorizontal,
   Eye, EyeOff, Wifi, WifiOff, Copy, Check, ArrowLeft,
-  UserPlus, Building, Lock,
+  UserPlus, Building, Lock, Plus,
 } from 'lucide-react'
 // @ts-ignore — JSX context file, types come from React
 import { useAuth } from './context/AuthContext'
@@ -35,8 +35,10 @@ interface Message {
 }
 
 interface Brand {
-  id: string; brand_name: string; website_url: string | null
-  support_email: string | null; widget_enabled: boolean
+  id: string; brand_name: string
+  widget_config_json?: { website_url?: string; support_email?: string; color?: string } | null
+  allowed_domains_array?: string[]; inbound_email_prefix?: string | null
+  created_at?: string
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
@@ -74,9 +76,14 @@ function useApi() {
     },
     exportPdf: async (id: string): Promise<string> => {
       const r = await authFetch(`${API}/conversations/${id}/export`)
-      if (!r.ok) throw new Error('Export failed — R2 not configured yet')
-      const d = await r.json() as { url: string }
-      return d.url
+      if (!r.ok) throw new Error('Export failed')
+      const ct = r.headers.get('content-type') || ''
+      if (ct.includes('application/pdf')) {
+        const blob = await r.blob()
+        return URL.createObjectURL(blob)
+      }
+      const d = await r.json() as { downloadUrl?: string; url?: string }
+      return d.downloadUrl ?? d.url ?? ''
     },
     listBrands: async (): Promise<Brand[]> => {
       if (!agent?.tenantId) return []
@@ -84,6 +91,24 @@ function useApi() {
       if (!r.ok) return []
       const d = await r.json() as Brand[] | { brands: Brand[] }
       return Array.isArray(d) ? d : (d.brands ?? [])
+    },
+    createBrand: async (name: string, websiteUrl: string, supportEmail: string): Promise<Brand> => {
+      if (!agent?.tenantId) throw new Error('Not authenticated')
+      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands`, {
+        method: 'POST',
+        body: JSON.stringify({
+          brand_name: name,
+          widget_config_json: {
+            website_url: websiteUrl || undefined,
+            support_email: supportEmail || undefined,
+          },
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json() as { error?: string }
+        throw new Error(err.error ?? 'Failed to create brand')
+      }
+      return r.json() as Promise<Brand>
     },
     rephraseText: async (draft: string, tone = 'professional'): Promise<string> => {
       const r = await authFetch(`${API}/ai/rephrase`, {
@@ -278,14 +303,14 @@ function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; success
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
-                placeholder="you@company.com"
+                placeholder="you@company.com" autoComplete="email"
                 className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
               <div className="relative">
                 <input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required
-                  placeholder="••••••••"
+                  placeholder="••••••••" autoComplete="current-password"
                   className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
                 <button type="button" onClick={() => setShowPw(p => !p)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
@@ -481,6 +506,59 @@ function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string
   )
 }
 
+// ─── Visitor Info Panel ───────────────────────────────────────────────────────
+function VisitorInfoPanel({ conv }: { conv: Conversation }) {
+  const ext = conv as Conversation & { ip_address?: string; current_page_url?: string }
+  return (
+    <div className="w-56 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
+      <div className="px-4 py-3 border-b border-slate-100">
+        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Visitor</p>
+      </div>
+      <div className="px-4 py-3 space-y-3">
+        <div>
+          <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Name</p>
+          <p className="text-xs text-slate-800 font-medium">{conv.visitor_name}</p>
+        </div>
+        {conv.visitor_email && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Email</p>
+            <p className="text-xs text-slate-700 break-all">{conv.visitor_email}</p>
+          </div>
+        )}
+        {ext.ip_address && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">IP Address</p>
+            <p className="text-xs text-slate-700 font-mono">{ext.ip_address}</p>
+          </div>
+        )}
+        {ext.current_page_url && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Current Page</p>
+            <a href={ext.current_page_url} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-sky-600 hover:underline break-all">{ext.current_page_url}</a>
+          </div>
+        )}
+        <div>
+          <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Channel</p>
+          <p className="text-xs text-slate-700 capitalize">{conv.channel}</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Brand</p>
+          <p className="text-xs text-slate-700">{conv.brand_name}</p>
+        </div>
+        {conv.sla_breach_at && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">SLA</p>
+            <p className={`text-xs ${slaColor(conv.sla_breach_at)}`}>
+              {new Date(conv.sla_breach_at).getTime() < Date.now() ? 'Breached' : `Due ${timeAgo(conv.sla_breach_at)}`}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
 function ChatPanel({
   conv, messages, onSend, onStatusChange, socketConnected,
@@ -503,7 +581,7 @@ function ChatPanel({
 
   const showToast = (type: 'success' | 'error', msg: string) => {
     setToast({ type, msg })
-    setTimeout(() => setToast(null), 4000)
+    setTimeout(() => setToast(null), 5000)
   }
 
   const handleSend = async () => {
@@ -533,7 +611,10 @@ function ChatPanel({
     setExporting(true)
     try {
       const url = await api.exportPdf(conv.id)
-      showToast('success', `PDF ready — <a href="${url}" target="_blank" class="underline">Download</a>`)
+      if (url) {
+        window.open(url, '_blank')
+        showToast('success', 'PDF export opened in new tab')
+      }
     } catch (e) {
       showToast('error', (e as Error).message || 'Export unavailable')
     } finally { setExporting(false) }
@@ -563,7 +644,7 @@ function ChatPanel({
             </span>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-slate-400">
-            <span>{conv.visitor_name}</span>
+            <span className="font-medium text-slate-600">{conv.visitor_name}</span>
             {conv.visitor_email && <><span>·</span><span>{conv.visitor_email}</span></>}
             <span>·</span><span className="capitalize">{conv.channel}</span>
             {conv.sla_breach_at && (
@@ -595,20 +676,25 @@ function ChatPanel({
       {toast && (
         <div className={`mx-4 mt-3 p-3 rounded-lg text-xs flex items-center gap-2 ${toast.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
           {toast.type === 'success' ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" /> : <AlertTriangle size={14} className="text-red-500 shrink-0" />}
-          <span dangerouslySetInnerHTML={{ __html: toast.msg }} />
+          <span>{toast.msg}</span>
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <MessageSquare size={32} className="text-slate-200 mb-2" />
-            <p className="text-sm text-slate-400">No messages yet</p>
-            <p className="text-xs text-slate-300">Start the conversation below</p>
-          </div>
-        ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} />)}
-        <div ref={bottomRef} />
+      <div className="flex flex-1 min-h-0">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <MessageSquare size={32} className="text-slate-200 mb-2" />
+              <p className="text-sm text-slate-400">No messages yet</p>
+              <p className="text-xs text-slate-300">Start the conversation below</p>
+            </div>
+          ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} />)}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Visitor info sidebar */}
+        <VisitorInfoPanel conv={conv} />
       </div>
 
       {/* Compose */}
@@ -616,7 +702,7 @@ function ChatPanel({
         <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
           <textarea ref={textareaRef} rows={2} value={draft}
             onChange={e => setDraft(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Reply… (Enter to send, Shift+Enter for newline)"
+            placeholder={conv.status === 'closed' ? 'Conversation closed — reopen to reply' : 'Reply… (Enter to send, Shift+Enter for newline)'}
             className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none leading-relaxed"
             disabled={conv.status === 'closed'} />
           <div className="flex items-center gap-1.5 shrink-0 pb-0.5">
@@ -632,9 +718,6 @@ function ChatPanel({
             </button>
           </div>
         </div>
-        {conv.status === 'closed' && (
-          <p className="text-[10px] text-slate-400 mt-1 px-1">Conversation is closed — reopen to reply</p>
-        )}
       </div>
     </div>
   )
@@ -648,7 +731,7 @@ function EmptyChat() {
         <MessageSquare size={24} className="text-slate-400" />
       </div>
       <h3 className="text-sm font-semibold text-slate-700 mb-1">Select a conversation</h3>
-      <p className="text-xs text-slate-400 max-w-xs">Choose from the list to start replying</p>
+      <p className="text-xs text-slate-400 max-w-xs">Choose a conversation from the list to start replying</p>
     </div>
   )
 }
@@ -669,11 +752,86 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+// ─── Add Brand Modal ──────────────────────────────────────────────────────────
+function AddBrandModal({ onClose, onCreated }: { onClose: () => void; onCreated: (b: Brand) => void }) {
+  const api = useApi()
+  const [form, setForm] = useState({ name: '', website: '', email: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault()
+    if (!form.name.trim()) { setError('Brand name is required'); return }
+    setSaving(true); setError(null)
+    try {
+      const brand = await api.createBrand(form.name.trim(), form.website.trim(), form.email.trim())
+      onCreated(brand)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold text-slate-900">Add Brand</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 flex items-center gap-2">
+            <AlertTriangle size={12} className="shrink-0" /> {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Brand Name *</label>
+            <input type="text" value={form.name} onChange={set('name')} required
+              placeholder="Acme Help Center"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Website URL</label>
+            <input type="url" value={form.website} onChange={set('website')}
+              placeholder="https://acme.com"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Support Email</label>
+            <input type="email" value={form.email} onChange={set('email')}
+              placeholder="support@acme.com"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center gap-1.5">
+              {saving ? <><RefreshCw size={11} className="animate-spin" /> Creating…</> : <><Plus size={11} /> Create Brand</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Brands Section ───────────────────────────────────────────────────────────
 function BrandsSection() {
   const api = useApi()
-  const [brands, setBrands]   = useState<Brand[]>([])
-  const [loading, setLoading] = useState(true)
+  const [brands, setBrands]       = useState<Brand[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [showModal, setShowModal] = useState(false)
   const origin = window.location.origin
 
   useEffect(() => {
@@ -682,92 +840,114 @@ function BrandsSection() {
       .catch(() => setLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleBrandCreated = (b: Brand) => {
+    setBrands(prev => [...prev, b])
+    setShowModal(false)
+  }
+
   return (
-    <div className="flex-1 overflow-auto p-6 bg-slate-50">
-      <div className="max-w-2xl">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Brands</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Manage branded help centers and embed your widget</p>
-          </div>
-          <button className="px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">
-            + Add Brand
-          </button>
-        </div>
+    <>
+      {showModal && <AddBrandModal onClose={() => setShowModal(false)} onCreated={handleBrandCreated} />}
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm">
-            <RefreshCw size={16} className="animate-spin" /> Loading…
+      <div className="flex-1 overflow-auto p-6 bg-slate-50">
+        <div className="max-w-2xl">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Brands</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Manage branded help centers and embed your widget</p>
+            </div>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">
+              <Plus size={13} /> Add Brand
+            </button>
           </div>
-        ) : brands.length === 0 ? (
-          <div className="text-center py-12 text-slate-400 text-sm">No brands found</div>
-        ) : (
-          <div className="space-y-4">
-            {brands.map(b => {
-              const snippet = `<script\n  src="${origin}/api/widget/widget.js"\n  data-brand-id="${b.id}"\n  data-label="${b.brand_name}"\n  defer\n></script>`
-              return (
-                <div key={b.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-                  <div className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-8 h-8 bg-gradient-to-br from-sky-400 to-sky-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
-                            {b.brand_name[0]}
+
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm">
+              <RefreshCw size={16} className="animate-spin" /> Loading…
+            </div>
+          ) : brands.length === 0 ? (
+            <div className="text-center py-12 text-slate-400">
+              <Building2 size={32} className="mx-auto mb-3 text-slate-300" />
+              <p className="text-sm">No brands yet</p>
+              <p className="text-xs mt-1">Click "Add Brand" to create your first brand</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {brands.map(b => {
+                const snippet = `<script\n  src="${origin}/api/widget/widget.js"\n  data-brand-id="${b.id}"\n  data-label="${b.brand_name}"\n  defer\n></script>`
+                return (
+                  <div key={b.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
+                    <div className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="w-8 h-8 bg-gradient-to-br from-sky-400 to-sky-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
+                              {b.brand_name[0]}
+                            </div>
+                            <span className="text-sm font-semibold text-slate-800">{b.brand_name}</span>
                           </div>
-                          <span className="text-sm font-semibold text-slate-800">{b.brand_name}</span>
+                          <div className="flex items-center gap-3 text-xs text-slate-500 ml-10">
+                            {b.widget_config_json?.website_url && <span className="flex items-center gap-1"><Globe size={10} />{b.widget_config_json.website_url}</span>}
+                            {b.widget_config_json?.support_email && <span className="flex items-center gap-1"><Mail size={10} />{b.widget_config_json.support_email}</span>}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-slate-500 ml-10">
-                          {b.website_url && <span className="flex items-center gap-1"><Globe size={10} />{b.website_url}</span>}
-                          {b.support_email && <span className="flex items-center gap-1"><Mail size={10} />{b.support_email}</span>}
+                        <div className="flex items-center gap-2">
+                          {b.widget_config_json && (
+                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded">
+                              Widget active
+                            </span>
+                          )}
+                          <button className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-md px-2.5 py-1 hover:bg-slate-50 transition-colors">
+                            Edit
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {b.widget_enabled && (
-                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded">
-                            Widget active
-                          </span>
-                        )}
-                        <button className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-md px-2.5 py-1 hover:bg-slate-50 transition-colors">
-                          Edit
-                        </button>
+                    </div>
+
+                    {/* Embed snippet */}
+                    <div className="border-t border-slate-100 bg-slate-950 mx-0">
+                      <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
+                        <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">Widget embed</span>
+                        <CopyButton text={snippet} />
                       </div>
+                      <pre className="px-4 pb-3 text-[11px] text-sky-300 overflow-x-auto leading-relaxed">
+                        {snippet}
+                      </pre>
                     </div>
                   </div>
+                )
+              })}
+            </div>
+          )}
 
-                  {/* Embed snippet */}
-                  <div className="border-t border-slate-100 bg-slate-950 mx-0">
-                    <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
-                      <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">Widget embed</span>
-                      <CopyButton text={snippet} />
-                    </div>
-                    <pre className="px-4 pb-3 text-[11px] text-sky-300 overflow-x-auto leading-relaxed">
-                      {snippet}
-                    </pre>
-                  </div>
-                </div>
-              )
-            })}
+          {/* Widget demo link */}
+          <div className="mt-6 p-4 bg-violet-50 border border-violet-200 rounded-xl flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-violet-900">Test the widget live</p>
+              <p className="text-xs text-violet-600 mt-0.5">Open the demo page to see the chat bubble in action</p>
+            </div>
+            <a href="/api/widget/demo" target="_blank" rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-md hover:bg-violet-700 transition-colors whitespace-nowrap">
+              Open demo →
+            </a>
           </div>
-        )}
-
-        {/* Widget demo link */}
-        <div className="mt-6 p-4 bg-violet-50 border border-violet-200 rounded-xl flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-violet-900">Test the widget live</p>
-            <p className="text-xs text-violet-600 mt-0.5">Open the demo page to see the chat bubble in action</p>
-          </div>
-          <a href="/api/widget/demo" target="_blank" rel="noopener noreferrer"
-            className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-md hover:bg-violet-700 transition-colors whitespace-nowrap">
-            Open demo →
-          </a>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
 // ─── Billing Section ──────────────────────────────────────────────────────────
 function BillingSection() {
+  const handleUpgrade = () => {
+    window.open('https://app.lemonsqueezy.com', '_blank')
+  }
+  const handleManageBilling = () => {
+    window.open('https://app.lemonsqueezy.com/billing', '_blank')
+  }
+
   return (
     <div className="flex-1 overflow-auto p-6 bg-slate-50">
       <div className="max-w-2xl">
@@ -798,8 +978,8 @@ function BillingSection() {
             ))}
           </div>
           <div className="flex gap-2 mt-4">
-            <button className="px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">Upgrade Plan</button>
-            <button className="px-3 py-1.5 text-slate-600 border border-slate-200 text-xs font-medium rounded-md hover:bg-slate-50 transition-colors">Manage Billing</button>
+            <button onClick={handleUpgrade} className="px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors">Upgrade Plan</button>
+            <button onClick={handleManageBilling} className="px-3 py-1.5 text-slate-600 border border-slate-200 text-xs font-medium rounded-md hover:bg-slate-50 transition-colors">Manage Billing</button>
           </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-5">
@@ -811,7 +991,8 @@ function BillingSection() {
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-500">{inv.amount}</span>
                   <span className="bg-emerald-50 text-emerald-700 text-[10px] font-semibold px-2 py-0.5 rounded">Paid</span>
-                  <button className="text-[11px] text-sky-600 hover:underline">PDF</button>
+                  <button onClick={() => alert('Invoice PDF download requires Lemon Squeezy integration')}
+                    className="text-[11px] text-sky-600 hover:underline">PDF</button>
                 </div>
               </div>
             ))}
@@ -824,19 +1005,24 @@ function BillingSection() {
 
 // ─── Settings Section ─────────────────────────────────────────────────────────
 function SettingsSection() {
+  const [activePanel, setActivePanel] = useState<string | null>(null)
+
+  const panels: { label: string; desc: string; icon: React.ReactNode; key: string }[] = [
+    { key: 'team',          label: 'Team Members',   desc: '2 active agents',            icon: <User size={14} /> },
+    { key: 'notifications', label: 'Notifications',  desc: 'Email + in-app alerts',      icon: <Bell size={14} /> },
+    { key: 'api',           label: 'API & Webhooks', desc: '0 webhooks configured',      icon: <Zap size={14} /> },
+    { key: 'security',      label: 'Security & SSO', desc: 'Password auth · 2FA off',    icon: <Settings size={14} /> },
+  ]
+
   return (
     <div className="flex-1 overflow-auto p-6 bg-slate-50">
       <div className="max-w-2xl">
         <h2 className="text-base font-semibold text-slate-900 mb-1">Settings</h2>
         <p className="text-xs text-slate-500 mb-6">Workspace and account preferences</p>
         <div className="space-y-3">
-          {[
-            { label: 'Team Members',   desc: '2 active agents',            icon: <User size={14} /> },
-            { label: 'Notifications',  desc: 'Email + in-app alerts',      icon: <Bell size={14} /> },
-            { label: 'API & Webhooks', desc: '0 webhooks configured',      icon: <Zap size={14} /> },
-            { label: 'Security & SSO', desc: 'Password auth · 2FA off',    icon: <Settings size={14} /> },
-          ].map(item => (
-            <button key={item.label}
+          {panels.map(item => (
+            <button key={item.key}
+              onClick={() => setActivePanel(prev => prev === item.key ? null : item.key)}
               className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 transition-colors text-left">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-600">{item.icon}</div>
@@ -845,10 +1031,21 @@ function SettingsSection() {
                   <p className="text-xs text-slate-400">{item.desc}</p>
                 </div>
               </div>
-              <ChevronRight size={14} className="text-slate-400" />
+              <ChevronRight size={14} className={`text-slate-400 transition-transform ${activePanel === item.key ? 'rotate-90' : ''}`} />
             </button>
           ))}
         </div>
+        {activePanel && (
+          <div className="mt-4 p-4 bg-white border border-slate-200 rounded-xl">
+            <p className="text-xs text-slate-500 text-center">
+              {activePanel === 'team' && 'Team management panel — invite agents, set roles, and manage access.'}
+              {activePanel === 'notifications' && 'Configure email and in-app notification preferences.'}
+              {activePanel === 'api' && 'Generate API keys and configure webhook endpoints.'}
+              {activePanel === 'security' && 'Manage password policy, two-factor auth, and SSO providers.'}
+              {' '}(Coming soon)
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -932,12 +1129,14 @@ function Dashboard() {
   const [socketOk, setSocketOk]   = useState(false)
   const socketRef                 = useRef<Socket | null>(null)
 
+  // ── Load conversations on mount ───────────────────────────────────────────
   useEffect(() => {
     api.listConversations()
       .then(list => { setConvs(list); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Socket.io connection ──────────────────────────────────────────────────
   useEffect(() => {
     if (!accessToken) return
     const socket: Socket = io({
@@ -957,25 +1156,37 @@ function Dashboard() {
         return { ...prev, [msg.conversation_id]: [...existing, msg] }
       })
       setConvs(prev => prev.map(c =>
-        c.id === msg.conversation_id ? { ...c, updated_at: msg.created_at } : c
+        c.id === msg.conversation_id
+          ? { ...c, updated_at: msg.created_at, unread: (c.unread ?? 0) + 1 }
+          : c
       ))
     })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 
+  // ── Join conversation room when active conversation changes ───────────────
   useEffect(() => {
     if (activeId && socketRef.current?.connected) {
       socketRef.current.emit('join:conversation', { conversationId: activeId })
     }
   }, [activeId])
 
+  // ── Fetch messages for newly selected conversation ────────────────────────
   useEffect(() => {
     if (!activeId || messages[activeId] !== undefined) return
     api.getMessages(activeId)
       .then(msgs => setMessages(prev => ({ ...prev, [activeId]: msgs })))
       .catch(() => setMessages(prev => ({ ...prev, [activeId]: [] })))
+    // Clear unread badge
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, unread: 0 } : c))
   }, [activeId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Select conversation and navigate to conversations section ─────────────
+  const handleSelectConversation = useCallback((id: string) => {
+    setActiveId(id)
+    setSection('conversations')
+    setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
+  }, [])
 
   const handleSend = useCallback(async (body: string) => {
     if (!activeId) return
@@ -1034,7 +1245,7 @@ function Dashboard() {
               </div>
             ) : (
               <>
-                <ConversationsList convs={convs} activeId={activeId} onSelect={setActiveId} />
+                <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} />
                 {activeConv
                   ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} socketConnected={socketOk} />
                   : <EmptyChat />

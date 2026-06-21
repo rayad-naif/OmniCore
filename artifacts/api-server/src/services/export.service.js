@@ -35,15 +35,16 @@ const logger    = require('../utils/logger');
 
 // ─── R2 / S3 client ───────────────────────────────────────────────────────────
 function getR2Client() {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  if (!accountId) throw new Error('R2_ACCOUNT_ID not set');
+  const endpoint = process.env.R2_ENDPOINT;
+  if (!endpoint) throw new Error('R2_ENDPOINT not set');
   return new S3Client({
     region:   'auto',
-    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    endpoint,
     credentials: {
       accessKeyId:     process.env.R2_ACCESS_KEY_ID     || '',
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
     },
+    forcePathStyle: false,
   });
 }
 
@@ -324,7 +325,7 @@ async function exportConversation(conversationId, tenantId) {
   const { rows: convRows } = await pool.query(
     `SELECT c.*, b.brand_name
      FROM conversations c
-     LEFT JOIN brands b ON b.tenant_id = c.tenant_id
+     LEFT JOIN brands b ON b.id = c.brand_id
      WHERE c.id = $1 AND c.tenant_id = $2`,
     [conversationId, tenantId]
   );
@@ -374,7 +375,7 @@ async function handleExportRequest(req, res) {
   if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
 
   // Check R2 config before doing any work
-  if (!process.env.R2_ACCOUNT_ID || !process.env.R2_BUCKET_NAME) {
+  if (!process.env.R2_ENDPOINT || !process.env.R2_BUCKET_NAME) {
     logger.warn('R2 not configured — returning inline PDF instead');
     // Fallback: stream PDF directly to response (no persistent storage)
     return streamPdfDirect(req, res, conversationId, tenantId);
