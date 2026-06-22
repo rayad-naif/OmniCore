@@ -1,0 +1,43 @@
+SaaS 3-Tier Architecture, Tickets & Real-Time Sync" Prompt
+Copy and paste this directly into your Replit AI Agent:
+
+"Role: Senior Full-Stack Architect.
+
+Task: You failed to implement the strict 3-tier SaaS architecture, the real-time message sync is broken, the widget double-sends, and the Ticket Panel is completely missing. Fix all of these immediately without generating placeholders.
+
+Part 1: The 3-Tier SaaS Architecture & Permissions
+Structure the app with strict database isolation and RBAC:
+
+Tier 1 (Super Admin): Matched via process.env.SUPER_ADMIN_EMAIL. Has a dedicated /super-admin view. Can see ALL tenants, manage tenant billing/status, and configure the Global Custom Domain for the widget CDN.
+
+Tier 2 (Tenant Admin): The business owner. Can manage their specific Brands, connect a Custom SMTP for their tenant (to send email notifications for tickets), and create/manage Tier 2 Admins and Tier 3 Agents for their workspace ONLY. Cannot create Super Admins.
+
+Tier 3 (Agent): Support staff. Can ONLY see chats/tickets assigned to them or unassigned. Can assign conversations to other agents. Cannot access Team, Billing, or Brand settings.
+
+Login Flow: Ensure the auth controller attaches these specific roles. If role === 'superadmin', automatically route them to the Super Admin dashboard on login.
+
+Part 2: Fix Core Chat Bugs (Double Send & Real-Time Refresh)
+
+Widget Double-Send: In omnicore-widget.js, fix the event listeners. Pressing 'Enter' fires the send function twice. Use e.preventDefault() properly so a message is only emitted once per enter key press.
+
+Omnicore-to-Widget Sync (No Refresh): Currently, messages sent by the Agent via Omnicore require the widget to refresh to be seen. Fix this: In the backend POST /api/conversations/:id/messages controller, you MUST emit a Socket.io broadcast (server:new_message) to the specific conversation room immediately after saving the message to the database, so the widget receives it in real-time.
+
+Part 3: Build the Ticket System & Assignment
+
+Tickets Tab: Add a 'Tickets' tab to the dashboard sidebar. Fetch and display conversations where is_ticket = true. (Add an is_ticket boolean to the schema if missing).
+
+Convert to Ticket: In the active Chat/Ticket panel, add a 'Convert to Ticket' button. This calls a PATCH endpoint to set is_ticket: true.
+
+Agent Assignment: In the top header of the chat/ticket panel, add an 'Assign To' dropdown. It must fetch GET /api/agents (for that tenant) and allow the user to assign the chat/ticket to a specific agent (updating assigned_agent_id).
+
+Part 4: Live Widget Page Tracking
+
+Widget Side: Update omnicore-widget.js to track page navigation. Emit a Socket.io event (visitor:page_change) sending window.location.href whenever the URL changes or the widget loads.
+
+Dashboard Side: In the right-hand 'Visitor Info' panel of the dashboard, listen for this socket event and dynamically update a 'Current Page' UI field so the agent knows exactly what page the visitor is currently viewing in real-time.
+
+Rules:
+
+Output the exact, corrected code for the frontend components and backend controllers.
+
+Focus strictly on making the 3-tier architecture, the widget sync, and the tickets work flawlessly.
