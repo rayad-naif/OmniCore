@@ -35,7 +35,10 @@ Replit's managed PostgreSQL does not have pgvector extension. The `ai_embeddings
 AuthContext is a `.jsx` file. Dashboard tsconfig has `allowJs: true` to import it from TypeScript. The context uses in-memory access tokens + httpOnly refresh cookie `omnicore_rt` with `path: /api/auth`.
 
 # Schema must be applied manually
-No migration runner — apply via executeSql (code_execution sandbox). Schema file at `artifacts/api-server/schema.sql` but skip the `ai_embeddings` / pgvector block. Super-admin.controller.js auto-migrates `upgrade_requests` table and extra tenant columns (`account_status`, `default_timezone`, `ai_auto_reply_enabled`, `plan`) on startup.
+No migration runner. Schema file at `artifacts/api-server/schema.sql` but skip pgvector extension and `ai_embeddings` table. Run seed script from `artifacts/api-server/` directory using `bcryptjs` (not `bcrypt`). Extra tenant columns (`account_status`, `default_timezone`, `ai_auto_reply_enabled`, `plan`, `smtp_config_json`, `max_brands_allowed`, `max_agents_allowed`, `ai_feature_enabled`, `smtp_feature_enabled`, `conversation_limit`, `custom_domain`) are all included directly in the CREATE TABLE — no separate ALTER needed. `visitors` table needs `timezone TEXT` column. `messages` table needs `updated_at` column. `upgrade_requests` table must be in base schema (not auto-migrated).
+
+# Notes (internal notes) send chain
+Frontend sends `{ body, isInternalNote }` (camelCase) to POST /conversations/:id/messages. The API reads `isInternalNote` from req.body. The `EmailComposeBox.onSend` signature is `(body: string, isInternalNote?: boolean) => Promise<void>`. `handleSend` in Dashboard passes `isInternalNote` through to `api.sendMessage(activeId, body, isInternalNote)`. Do NOT use snake_case `is_internal_note` in the frontend JSON body.
 
 # RBAC
 Agents (role=agent) only see conversations assigned to them OR unassigned (assigned_agent_id IS NULL). Applied in conversations.controller.js GET /conversations. Sidebar nav is RBAC-aware: agents see Conversations + Settings only; admins add Brands, Team, Billing; super admins add Super Admin panel.

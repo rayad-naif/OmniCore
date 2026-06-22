@@ -98,9 +98,9 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message[]>
     },
-    sendMessage: async (id: string, body: string): Promise<Message> => {
+    sendMessage: async (id: string, body: string, isInternalNote = false): Promise<Message> => {
       const r = await authFetch(`${API}/conversations/${id}/messages`, {
-        method: 'POST', body: JSON.stringify({ body }),
+        method: 'POST', body: JSON.stringify({ body, isInternalNote }),
       })
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message>
@@ -612,7 +612,7 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
 // ─── Email-style Compose Box ──────────────────────────────────────────────────
 function EmailComposeBox({ conv, onSend, disabled }: {
   conv: Conversation
-  onSend: (body: string) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   disabled?: boolean
 }) {
   const [draft, setDraft]         = useState('')
@@ -626,7 +626,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     const body = draft.trim()
     if (!body || sending) return
     setDraft(''); setSending(true)
-    try { await onSend(body) } catch { /* ignore */ } finally { setSending(false) }
+    try { await onSend(body, isNote) } catch { /* ignore */ } finally { setSending(false) }
     textareaRef.current?.focus()
   }
 
@@ -702,7 +702,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
 function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected }: {
   conv: Conversation; messages: Message[]
-  onSend: (body: string) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
@@ -1707,7 +1707,7 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, onS
   tickets: Conversation[]; activeId: string | null; agents: AgentRow[]
   messages: Record<string, Message[]>; visitorPages: Record<string, string>
   onSelect: (id: string) => void
-  onSend: (body: string) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
@@ -1934,9 +1934,9 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
   }, [])
 
-  const handleSend = useCallback(async (body: string) => {
+  const handleSend = useCallback(async (body: string, isInternalNote = false) => {
     if (!activeId) return
-    const msg = await api.sendMessage(activeId, body)
+    const msg = await api.sendMessage(activeId, body, isInternalNote)
     setMessages(prev => {
       const existing = prev[activeId] ?? []
       if (existing.some(m => m.id === msg.id)) return prev
