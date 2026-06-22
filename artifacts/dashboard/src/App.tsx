@@ -49,7 +49,8 @@ interface AgentRow {
 
 interface SANTenant {
   id: string; company_name: string; account_status: string
-  subscription_status: string; plan: string; created_at: string; agent_count: number
+  subscription_status: string; plan: string; created_at: string
+  agent_count: number; max_brands_allowed: number
 }
 
 interface UpgradeRequest {
@@ -186,15 +187,6 @@ function useApi() {
         throw new Error(err.error ?? 'Failed to update profile')
       }
     },
-    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean }): Promise<void> => {
-      const r = await authFetch(`${API}/tenants/settings`, {
-        method: 'PATCH', body: JSON.stringify(patch),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to update workspace')
-      }
-    },
     createUpgradeRequest: async (requested_plan: string, company_size: string, notes: string): Promise<void> => {
       const r = await authFetch(`${API}/billing/upgrade-request`, {
         method: 'POST', body: JSON.stringify({ requested_plan, company_size, notes }),
@@ -233,6 +225,24 @@ function useApi() {
       if (!r.ok) {
         const err = await r.json() as { error?: string }
         throw new Error(err.error ?? 'Purge failed')
+      }
+    },
+    patchTenantLimits: async (id: string, max_brands_allowed: number): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, {
+        method: 'PATCH', body: JSON.stringify({ max_brands_allowed }),
+      })
+      if (!r.ok) {
+        const err = await r.json() as { error?: string }
+        throw new Error(err.error ?? 'Failed to update limits')
+      }
+    },
+    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object }): Promise<void> => {
+      const r = await authFetch(`${API}/tenants/settings`, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      })
+      if (!r.ok) {
+        const err = await r.json() as { error?: string }
+        throw new Error(err.error ?? 'Failed to update workspace')
       }
     },
   }), [authFetch, agent?.tenantId])()
@@ -918,15 +928,19 @@ function BillingSection() {
 function SettingsSection() {
   const api = useApi()
   const { agent } = useAuth() as { agent: { name: string; email: string; role: string } | null }
-  const [panel, setPanel] = useState<'profile' | 'workspace' | null>(null)
+  const [panel, setPanel] = useState<'profile' | 'workspace' | 'smtp' | null>(null)
 
   const [profileForm, setProfile] = useState({ name: agent?.name ?? '', password: '', confirm: '' })
   const [profileSaving, setPS] = useState(false)
   const [profileMsg, setPMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const [wsForm, setWs] = useState({ company_name: '', default_timezone: 'UTC', ai_auto_reply_enabled: false })
+  const [wsForm, setWs] = useState({ company_name: '', default_timezone: 'UTC', ai_auto_reply_enabled: false, custom_domain: '' })
   const [wsSaving, setWS] = useState(false)
   const [wsMsg, setWsMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const [smtpForm, setSmtp] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', enabled: false })
+  const [smtpSaving, setSmtpSaving] = useState(false)
+  const [smtpMsg, setSmtpMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault(); setPMsg(null)
@@ -942,14 +956,42 @@ function SettingsSection() {
 
   const handleWsSave = async (e: React.FormEvent) => {
     e.preventDefault(); setWsMsg(null); setWS(true)
-    try { await api.updateWorkspace(wsForm); setWsMsg({ ok: true, text: 'Workspace settings saved.' }) }
+    try {
+      await api.updateWorkspace({
+        company_name: wsForm.company_name || undefined,
+        default_timezone: wsForm.default_timezone,
+        ai_auto_reply_enabled: wsForm.ai_auto_reply_enabled,
+        custom_domain: wsForm.custom_domain || undefined,
+      })
+      setWsMsg({ ok: true, text: 'Workspace settings saved.' })
+    }
     catch (err) { setWsMsg({ ok: false, text: (err as Error).message }) }
     finally { setWS(false) }
   }
 
-  const panels: { key: 'profile' | 'workspace'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
-    { key: 'profile',   label: 'Profile',            desc: 'Update your name and password',         icon: <User size={14} /> },
-    { key: 'workspace', label: 'Workspace Settings', desc: 'Company name, timezone, AI auto-reply', icon: <Building size={14} />, adminOnly: true },
+  const handleSmtpSave = async (e: React.FormEvent) => {
+    e.preventDefault(); setSmtpMsg(null); setSmtpSaving(true)
+    try {
+      await api.updateWorkspace({
+        smtp_config_json: {
+          host: smtpForm.host.trim(),
+          port: parseInt(smtpForm.port, 10) || 587,
+          user: smtpForm.user.trim(),
+          pass: smtpForm.pass,
+          from_email: smtpForm.from_email.trim(),
+          enabled: smtpForm.enabled,
+        }
+      })
+      setSmtpMsg({ ok: true, text: 'SMTP configuration saved. Status-change emails will now use these settings.' })
+    }
+    catch (err) { setSmtpMsg({ ok: false, text: (err as Error).message }) }
+    finally { setSmtpSaving(false) }
+  }
+
+  const panels: { key: 'profile' | 'workspace' | 'smtp'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+    { key: 'profile',   label: 'Profile',            desc: 'Update your name and password',                     icon: <User size={14} /> },
+    { key: 'workspace', label: 'Workspace Settings', desc: 'Company name, timezone, custom domain, AI reply',  icon: <Building size={14} />, adminOnly: true },
+    { key: 'smtp',      label: 'SMTP / Email Config',desc: 'Send ticket alerts via your own mail server',       icon: <Mail size={14} />, adminOnly: true },
   ]
 
   return (
@@ -986,6 +1028,7 @@ function SettingsSection() {
                   {wsMsg && <div className={`mb-3 p-2 rounded text-xs ${wsMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{wsMsg.text}</div>}
                   <form onSubmit={handleWsSave} className="space-y-3">
                     <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Name</label><input type="text" value={wsForm.company_name} onChange={e => setWs(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Inc." className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Custom Domain <span className="text-slate-400 font-normal">(e.g. support.acme.com)</span></label><input type="text" value={wsForm.custom_domain} onChange={e => setWs(f => ({ ...f, custom_domain: e.target.value }))} placeholder="support.acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1.5">Default Timezone</label>
                       <select value={wsForm.default_timezone} onChange={e => setWs(f => ({ ...f, default_timezone: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
@@ -997,6 +1040,27 @@ function SettingsSection() {
                       <button type="button" onClick={() => setWs(f => ({ ...f, ai_auto_reply_enabled: !f.ai_auto_reply_enabled }))} className={`${wsForm.ai_auto_reply_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{wsForm.ai_auto_reply_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
                     </div>
                     <button type="submit" disabled={wsSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{wsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Settings'}</button>
+                  </form>
+                </div>
+              )}
+
+              {panel === 'smtp' && item.key === 'smtp' && (
+                <div className="mt-2 p-5 bg-white border border-slate-200 rounded-xl">
+                  <p className="text-xs text-slate-500 mb-4">Configure your outbound SMTP server. OmniCore will use these credentials to send ticket status-change alerts to visitors.</p>
+                  {smtpMsg && <div className={`mb-3 p-2 rounded text-xs ${smtpMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{smtpMsg.text}</div>}
+                  <form onSubmit={handleSmtpSave} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Host</label><input type="text" value={smtpForm.host} onChange={e => setSmtp(f => ({ ...f, host: e.target.value }))} placeholder="smtp.sendgrid.net" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                      <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Port</label><input type="number" value={smtpForm.port} onChange={e => setSmtp(f => ({ ...f, port: e.target.value }))} placeholder="587" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    </div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={smtpForm.user} onChange={e => setSmtp(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={smtpForm.pass} onChange={e => setSmtp(f => ({ ...f, pass: e.target.value }))} placeholder="••••••••••••" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={smtpForm.from_email} onChange={e => setSmtp(f => ({ ...f, from_email: e.target.value }))} placeholder="support@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email on ticket status changes</p></div>
+                      <button type="button" onClick={() => setSmtp(f => ({ ...f, enabled: !f.enabled }))} className={`${smtpForm.enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{smtpForm.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+                    </div>
+                    <button type="submit" disabled={smtpSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{smtpSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save SMTP Config'}</button>
                   </form>
                 </div>
               )}
@@ -1120,6 +1184,10 @@ function SuperAdminSection() {
   const [billingTarget, setBilling] = useState<SANTenant | null>(null)
   const [billingForm, setBForm]     = useState({ plan: 'free', subscription_status: 'active' })
   const [saving, setSaving]         = useState(false)
+  const [limitsTarget, setLimits]   = useState<SANTenant | null>(null)
+  const [limitsForm, setLimitsForm] = useState({ max_brands_allowed: 3 })
+  const [limitsSaving, setLSaving]  = useState(false)
+  const [limitsErr, setLimitsErr]   = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([api.listSANTenants(), api.listUpgradeRequests()])
@@ -1144,6 +1212,19 @@ function SuperAdminSection() {
     finally { setSaving(false) }
   }
 
+  const handleLimitsSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!limitsTarget) return
+    setLimitsErr(null); setLSaving(true)
+    try {
+      await api.patchTenantLimits(limitsTarget.id, limitsForm.max_brands_allowed)
+      setTenants(prev => prev.map(x => x.id === limitsTarget.id ? { ...x, max_brands_allowed: limitsForm.max_brands_allowed } : x))
+      setLimits(null)
+    }
+    catch (err) { setLimitsErr((err as Error).message) }
+    finally { setLSaving(false) }
+  }
+
   const handlePurge = async () => {
     if (!purgeTarget) return
     setPurgeErr(null); setPurging(true)
@@ -1156,6 +1237,24 @@ function SuperAdminSection() {
 
   return (
     <>
+      {limitsTarget && (
+        <Modal onClose={() => { setLimits(null); setLimitsErr(null) }}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-sm font-semibold text-slate-900">Brand Limits — {limitsTarget.company_name}</h2><button onClick={() => setLimits(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <form onSubmit={handleLimitsSave} className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Max Brands Allowed</label>
+              <input type="number" min={1} max={1000} value={limitsForm.max_brands_allowed} onChange={e => setLimitsForm({ max_brands_allowed: parseInt(e.target.value, 10) || 1 })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
+              <p className="mt-1 text-[11px] text-slate-400">Controls how many brands this tenant can create. Starter=1, Pro=5, Enterprise=unlimited.</p>
+            </div>
+            {limitsErr && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{limitsErr}</div>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setLimits(null)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={limitsSaving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{limitsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {billingTarget && (
         <Modal onClose={() => setBilling(null)}>
           <div className="flex items-center justify-between mb-5"><h2 className="text-sm font-semibold text-slate-900">Manage Billing — {billingTarget.company_name}</h2><button onClick={() => setBilling(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
@@ -1213,7 +1312,7 @@ function SuperAdminSection() {
           ) : tab === 'tenants' ? (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <table className="w-full text-xs">
-                <thead><tr className="border-b border-slate-100 bg-slate-50">{['Company', 'Plan', 'Billing', 'Account', 'Agents', 'Created', 'Actions'].map(h => <th key={h} className="text-left px-4 py-2.5 text-slate-500 font-semibold">{h}</th>)}</tr></thead>
+                <thead><tr className="border-b border-slate-100 bg-slate-50">{['Company', 'Plan', 'Billing', 'Account', 'Agents', 'Brand Limit', 'Created', 'Actions'].map(h => <th key={h} className="text-left px-4 py-2.5 text-slate-500 font-semibold">{h}</th>)}</tr></thead>
                 <tbody>
                   {tenants.map((t, i) => (
                     <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${i === tenants.length - 1 ? 'border-0' : ''}`}>
@@ -1222,6 +1321,12 @@ function SuperAdminSection() {
                       <td className="px-4 py-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor(t.subscription_status)}`}>{t.subscription_status}</span></td>
                       <td className="px-4 py-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor(t.account_status)}`}>{t.account_status}</span></td>
                       <td className="px-4 py-3 text-slate-600">{t.agent_count}</td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed ?? 3 }); setLimitsErr(null) }} className="flex items-center gap-1 text-slate-600 hover:text-sky-600 transition-colors" title="Edit brand limit">
+                          <span className="font-semibold">{t.max_brands_allowed ?? 3}</span>
+                          <Pencil size={10} className="text-slate-400" />
+                        </button>
+                      </td>
                       <td className="px-4 py-3 text-slate-400">{new Date(t.created_at).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
@@ -1398,6 +1503,12 @@ function Dashboard() {
     socket.on('connect',       () => setSocketOk(true))
     socket.on('disconnect',    () => setSocketOk(false))
     socket.on('connect_error', () => setSocketOk(false))
+    socket.on('conversation:created', (conv: Conversation) => {
+      setConvs(prev => {
+        if (prev.some(c => c.id === conv.id)) return prev
+        return [{ ...conv, unread: 0 }, ...prev]
+      })
+    })
     socket.on('server:new_message', (msg: Message) => {
       if (msg.is_internal_note) return
       setMessages(prev => {

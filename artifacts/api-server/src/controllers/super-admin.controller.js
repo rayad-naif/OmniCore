@@ -8,6 +8,7 @@
  * GET    /api/super-admin/upgrade-requests            — list pending upgrade requests
  * PATCH  /api/super-admin/tenants/:id/status          — suspend / activate
  * PATCH  /api/super-admin/tenants/:id/billing         — manually set plan / status
+ * PATCH  /api/super-admin/tenants/:id/limits          — adjust max_brands_allowed
  * DELETE /api/super-admin/tenants/:id/purge           — hard cascade delete
  */
 
@@ -33,14 +34,17 @@ function requireSuperAdmin(req, res, next) {
 
 router.use(requireSuperAdmin);
 
-// ─── Ensure required columns exist (idempotent migrations) ───────────────────
+// ─── Idempotent migrations ────────────────────────────────────────────────────
 (async () => {
   try {
     await pool.query(`
       ALTER TABLE tenants
-        ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active',
-        ADD COLUMN IF NOT EXISTS default_timezone TEXT NOT NULL DEFAULT 'UTC',
-        ADD COLUMN IF NOT EXISTS ai_auto_reply_enabled BOOLEAN NOT NULL DEFAULT false
+        ADD COLUMN IF NOT EXISTS account_status       TEXT    NOT NULL DEFAULT 'active',
+        ADD COLUMN IF NOT EXISTS default_timezone     TEXT    NOT NULL DEFAULT 'UTC',
+        ADD COLUMN IF NOT EXISTS ai_auto_reply_enabled BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS max_brands_allowed   INTEGER NOT NULL DEFAULT 3,
+        ADD COLUMN IF NOT EXISTS custom_domain        TEXT,
+        ADD COLUMN IF NOT EXISTS smtp_config_json     JSONB
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS upgrade_requests (
@@ -67,6 +71,7 @@ router.get('/tenants', async (req, res, next) => {
       SELECT
         t.id, t.company_name, t.account_status,
         t.subscription_status, t.plan,
+        t.max_brands_allowed,
         t.created_at,
         COUNT(DISTINCT a.id)::int AS agent_count
       FROM tenants t
@@ -134,6 +139,26 @@ router.patch('/tenants/:id/billing', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ─── PATCH /api/super-admin/tenants/:id/limits ───────────────────────────────
+router.patch('/tenants/:id/limits', async (req, res, next) => {
+  try {
+    const { max_brands_allowed } = req.body || {};
+    const val = parseInt(max_brands_allowed, 10);
+    if (isNaN(val) || val < 1 || val > 1000) {
+      return res.status(400).json({ error: 'max_brands_allowed must be an integer between 1 and 1000' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE tenants SET max_brands_allowed = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, company_name, max_brands_allowed`,
+      [val, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
+    logger.info({ tenantId: req.params.id, max_brands_allowed: val, by: req.agent.id }, 'tenant_limits_updated');
+    return res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
 // ─── DELETE /api/super-admin/tenants/:id/purge ───────────────────────────────
 router.delete('/tenants/:id/purge', async (req, res, next) => {
   const client = await pool.connect();
@@ -156,7 +181,6 @@ router.delete('/tenants/:id/purge', async (req, res, next) => {
     }
 
     await client.query('DELETE FROM tenants WHERE id = $1', [req.params.id]);
-
     await client.query('COMMIT');
     logger.warn({ tenantId: req.params.id, by: req.agent.id }, 'tenant_purged');
     return res.status(204).end();

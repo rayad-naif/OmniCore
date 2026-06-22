@@ -4,14 +4,14 @@
  * tenant.controller.js
  * CRUD for Tenants and Brands.
  * All queries use parameterised values — no string interpolation.
- * req.db is the pg.Pool injected by server.js middleware.
  *
  * Auth guards:
  *  - All /api/tenants routes require a valid JWT (requireAuth).
  *  - Tenant CRUD (list-all, delete) requires role 'superadmin'.
- *  - Brand sub-routes under /:tenantId require only 'admin' so tenant admins
- *    can manage their own brands without superadmin elevation.
- *  - Logo upload presigned-URL endpoint requires 'admin'.
+ *  - Brand sub-routes under /:tenantId require only 'admin'.
+ *  - PATCH /api/tenants/settings is admin-only, updates caller's own tenant.
+ *
+ * Brand creation enforces max_brands_allowed (Tier 2 limit).
  */
 
 const { Router }   = require('express');
@@ -24,8 +24,6 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const logger       = require('../utils/logger');
 
 const router = Router();
-
-// All tenant routes require a valid JWT
 router.use(requireAuth);
 
 // ---------------------------------------------------------------------------
@@ -43,10 +41,7 @@ function created(res, data) {
 // TENANTS
 // ---------------------------------------------------------------------------
 
-/**
- * GET /api/tenants
- * List all tenants — superadmin only.
- */
+/** GET /api/tenants — superadmin only */
 router.get('/', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
@@ -60,9 +55,7 @@ router.get('/', requireRole('superadmin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * GET /api/tenants/:tenantId
- */
+/** GET /api/tenants/:tenantId */
 router.get('/:tenantId', async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
@@ -77,18 +70,13 @@ router.get('/:tenantId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * POST /api/tenants
- * Body: { company_name, lemon_squeezy_customer_id? }
- */
+/** POST /api/tenants — superadmin only */
 router.post('/', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { company_name, lemon_squeezy_customer_id = null } = req.body;
-
     if (!company_name?.trim()) {
       return res.status(400).json({ error: 'company_name is required' });
     }
-
     const { rows } = await req.db.query(
       `INSERT INTO tenants (company_name, lemon_squeezy_customer_id)
        VALUES ($1, $2)
@@ -99,31 +87,21 @@ router.post('/', requireRole('superadmin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * PATCH /api/tenants/:tenantId
- * Partial update — only provided fields are changed.
- * Allowed: company_name, subscription_status, lemon_squeezy_customer_id,
- *          lemon_squeezy_subscription_id, grace_period_ends_at
- */
+/** PATCH /api/tenants/:tenantId — superadmin only */
 router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
     const allowed = [
-      'company_name',
-      'subscription_status',
-      'lemon_squeezy_customer_id',
-      'lemon_squeezy_subscription_id',
+      'company_name', 'subscription_status',
+      'lemon_squeezy_customer_id', 'lemon_squeezy_subscription_id',
       'grace_period_ends_at',
     ];
     const fields = Object.keys(req.body).filter(k => allowed.includes(k));
-
     if (!fields.length) {
       return res.status(400).json({ error: 'No valid fields provided for update' });
     }
-
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     const values     = fields.map(f => req.body[f]);
     values.push(req.params.tenantId);
-
     const { rows } = await req.db.query(
       `UPDATE tenants SET ${setClauses}
        WHERE id = $${values.length}
@@ -135,10 +113,7 @@ router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => 
   } catch (err) { next(err); }
 });
 
-/**
- * DELETE /api/tenants/:tenantId
- * Cascades to brands, agents, visitors, conversations, messages (FK ON DELETE CASCADE).
- */
+/** DELETE /api/tenants/:tenantId — superadmin only */
 router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
     const { rowCount } = await req.db.query(
@@ -156,26 +131,36 @@ router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) =>
 
 /**
  * PATCH /api/tenants/settings
- * Body: { company_name?, default_timezone?, ai_auto_reply_enabled? }
  * Admin only — updates the caller's own tenant.
+ * Allowed fields: company_name, default_timezone, ai_auto_reply_enabled,
+ *                 custom_domain, smtp_config_json
  */
 router.patch('/settings', requireRole('admin'), async (req, res, next) => {
   try {
-    const allowed = ['company_name', 'default_timezone', 'ai_auto_reply_enabled'];
+    const allowed = [
+      'company_name', 'default_timezone', 'ai_auto_reply_enabled',
+      'custom_domain', 'smtp_config_json',
+    ];
     const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
     if (!fields.length) {
       return res.status(400).json({ error: 'No valid fields provided' });
     }
+
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values     = fields.map(f => req.body[f]);
+    const values     = fields.map(f =>
+      f === 'smtp_config_json' ? JSON.stringify(req.body[f]) : req.body[f]
+    );
     values.push(req.agent.tenantId);
+
     const { rows } = await req.db.query(
       `UPDATE tenants SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length}
-       RETURNING id, company_name, default_timezone, ai_auto_reply_enabled, updated_at`,
+       RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
+                 custom_domain, updated_at`,
       values
     );
     if (!rows.length) return notFound(res, 'Tenant');
+    logger.info({ tenantId: req.agent.tenantId, fields }, 'workspace_settings_updated');
     res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -184,9 +169,7 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
 // BRANDS  (nested under /api/tenants/:tenantId/brands)
 // ---------------------------------------------------------------------------
 
-/**
- * GET /api/tenants/:tenantId/brands
- */
+/** GET /api/tenants/:tenantId/brands */
 router.get('/:tenantId/brands', async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
@@ -202,9 +185,7 @@ router.get('/:tenantId/brands', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * GET /api/tenants/:tenantId/brands/:brandId
- */
+/** GET /api/tenants/:tenantId/brands/:brandId */
 router.get('/:tenantId/brands/:brandId', async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
@@ -222,18 +203,26 @@ router.get('/:tenantId/brands/:brandId', async (req, res, next) => {
 
 /**
  * POST /api/tenants/:tenantId/brands
- * Body: {
- *   brand_name,
- *   widget_config_json?,
- *   allowed_domains_array?,
- *   inbound_email_prefix?,
- *   ai_system_prompt?,
- *   ai_confidence_threshold?,
- *   help_center_cname?
- * }
+ * Enforces max_brands_allowed for the tenant (Tier 2 limit).
  */
 router.post('/:tenantId/brands', async (req, res, next) => {
   try {
+    // ── Enforce brand limit ─────────────────────────────────────────────────
+    const { rows: limitRows } = await req.db.query(
+      `SELECT max_brands_allowed,
+              (SELECT COUNT(*) FROM brands WHERE tenant_id = $1)::int AS brand_count
+       FROM tenants WHERE id = $1`,
+      [req.params.tenantId]
+    );
+    if (limitRows.length) {
+      const { max_brands_allowed, brand_count } = limitRows[0];
+      if (brand_count >= max_brands_allowed) {
+        return res.status(403).json({
+          error: `Brand limit reached (${brand_count}/${max_brands_allowed}). Contact your admin to increase the limit.`,
+        });
+      }
+    }
+
     const {
       brand_name,
       widget_config_json      = {},
@@ -269,22 +258,15 @@ router.post('/:tenantId/brands', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * PATCH /api/tenants/:tenantId/brands/:brandId
- */
+/** PATCH /api/tenants/:tenantId/brands/:brandId */
 router.patch('/:tenantId/brands/:brandId', async (req, res, next) => {
   try {
     const allowed = [
-      'brand_name',
-      'widget_config_json',
-      'allowed_domains_array',
-      'inbound_email_prefix',
-      'ai_system_prompt',
-      'ai_confidence_threshold',
-      'help_center_cname',
+      'brand_name', 'widget_config_json', 'allowed_domains_array',
+      'inbound_email_prefix', 'ai_system_prompt',
+      'ai_confidence_threshold', 'help_center_cname',
     ];
     const fields = Object.keys(req.body).filter(k => allowed.includes(k));
-
     if (!fields.length) {
       return res.status(400).json({ error: 'No valid fields provided for update' });
     }
@@ -306,9 +288,7 @@ router.patch('/:tenantId/brands/:brandId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * DELETE /api/tenants/:tenantId/brands/:brandId
- */
+/** DELETE /api/tenants/:tenantId/brands/:brandId */
 router.delete('/:tenantId/brands/:brandId', async (req, res, next) => {
   try {
     const { rowCount } = await req.db.query(
@@ -323,10 +303,9 @@ router.delete('/:tenantId/brands/:brandId', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 // LOGO UPLOAD  — presigned R2 PUT URL
 // ---------------------------------------------------------------------------
-
 const ALLOWED_LOGO_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const ALLOWED_LOGO_EXT  = /\.(png|jpg|jpeg|webp)$/i;
-const MAX_LOGO_BYTES    = 5 * 1024 * 1024;   // 5 MB
+const MAX_LOGO_BYTES    = 5 * 1024 * 1024;
 
 function getR2Client() {
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -341,15 +320,6 @@ function getR2Client() {
   });
 }
 
-/**
- * POST /api/tenants/:tenantId/brands/:brandId/logo-upload-url
- * Body: { contentType: "image/png"|"image/jpeg"|"image/webp", filename: string, size: number }
- * Returns: { uploadUrl: string, objectKey: string, expiresIn: 300 }
- *
- * The client must:
- *  1. PUT the file bytes directly to uploadUrl with the matching Content-Type header.
- *  2. After a successful PUT, PATCH the brand's logo_url to the public object URL.
- */
 router.post(
   '/:tenantId/brands/:brandId/logo-upload-url',
   requireRole('admin'),
@@ -358,53 +328,36 @@ router.post(
       const { tenantId, brandId } = req.params;
       const { contentType, filename, size } = req.body || {};
 
-      // ── Validate caller owns this brand ─────────────────────────────────
       const { rows } = await req.db.query(
         'SELECT id FROM brands WHERE id = $1 AND tenant_id = $2',
         [brandId, tenantId]
       );
       if (!rows.length) return notFound(res, 'Brand');
 
-      // ── MIME type guard ───────────────────────────────────────────────────
       if (!contentType || !ALLOWED_LOGO_MIME.has(contentType)) {
         return res.status(400).json({
           error: `contentType must be one of: ${[...ALLOWED_LOGO_MIME].join(', ')}`,
         });
       }
-
-      // ── File extension guard ──────────────────────────────────────────────
       if (filename && !ALLOWED_LOGO_EXT.test(filename)) {
-        return res.status(400).json({
-          error: 'Filename extension must be .png, .jpg, .jpeg, or .webp',
-        });
+        return res.status(400).json({ error: 'Filename must be .png, .jpg, .jpeg, or .webp' });
       }
-
-      // ── Size guard (client-declared; enforced again server-side via Content-Length) ─
       if (size !== undefined && (typeof size !== 'number' || size > MAX_LOGO_BYTES)) {
-        return res.status(400).json({
-          error: `File size must not exceed ${MAX_LOGO_BYTES / 1024 / 1024} MB`,
-        });
+        return res.status(400).json({ error: `File must not exceed ${MAX_LOGO_BYTES / 1024 / 1024} MB` });
       }
 
-      // ── Build object key ──────────────────────────────────────────────────
-      const ext       = contentType.split('/')[1];   // 'png' | 'jpeg' | 'webp'
+      const ext       = contentType.split('/')[1];
       const objectKey = `logos/tenant-${tenantId}/brand-${brandId}/logo-${Date.now()}.${ext}`;
       const bucket    = process.env.R2_BUCKET_NAME;
       if (!bucket) return res.status(503).json({ error: 'R2_BUCKET_NAME not set' });
 
-      // ── Issue presigned PUT URL (5-min TTL) ───────────────────────────────
       const TTL_SECONDS = 300;
       const r2          = getR2Client();
-
       const uploadUrl = await getSignedUrl(
         r2,
         new PutObjectCommand({
-          Bucket:        bucket,
-          Key:           objectKey,
-          ContentType:   contentType,
-          ContentLength: size || undefined,
-          // Prevent stored XSS: force download disposition for anything served directly
-          ContentDisposition: 'inline',
+          Bucket: bucket, Key: objectKey, ContentType: contentType,
+          ContentLength: size || undefined, ContentDisposition: 'inline',
           Metadata: {
             'omnicore-tenant': String(tenantId),
             'omnicore-brand':  String(brandId),
@@ -415,11 +368,8 @@ router.post(
       );
 
       logger.info({ tenantId, brandId, objectKey }, 'logo_upload_url_issued');
-
       return res.json({ uploadUrl, objectKey, expiresIn: TTL_SECONDS });
-    } catch (err) {
-      next(err);
-    }
+    } catch (err) { next(err); }
   }
 );
 

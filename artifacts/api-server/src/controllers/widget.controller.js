@@ -12,10 +12,11 @@
  * from third-party websites, not from the dashboard.
  */
 
-const { Router }  = require('express');
-const crypto      = require('crypto');
-const { pool }    = require('../lib/db');
-const logger      = require('../utils/logger');
+const { Router }            = require('express');
+const crypto                = require('crypto');
+const { pool }              = require('../lib/db');
+const logger                = require('../utils/logger');
+const { broadcastToTenant } = require('../services/socket.service');
 
 const router = Router();
 
@@ -108,6 +109,26 @@ router.post('/session', async (req, res, next) => {
        VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
       [tenant_id, brandId, vNew[0].id]
     );
+
+    // Broadcast new conversation to all connected agents in this tenant
+    try {
+      broadcastToTenant(tenant_id, 'conversation:created', {
+        id: cNew[0].id,
+        status: 'open',
+        channel: 'widget',
+        priority: 'normal',
+        subject: null,
+        visitor_name: 'Visitor',
+        visitor_email: null,
+        agent_name: null,
+        brand_name,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        sla_breach_at: null,
+        assigned_agent_id: null,
+        unread: 0,
+      });
+    } catch { /* non-fatal */ }
 
     logger.info({ brandId, visitorId: vNew[0].id }, 'widget_session_created');
     return res.json({
@@ -319,6 +340,7 @@ function loadSio(){
 }
 
 var msgQueue=[];
+var isSending=false;
 
 function flushQueue(){
   var q=msgQueue.splice(0);
@@ -398,15 +420,17 @@ function hideTyping(){if(typingEl){typingEl.remove();typingEl=null;}}
 
 function send(){
   var body=els.inp.value.trim();
-  if(!body||!state.conversationId)return;
+  if(!body||!state.conversationId||isSending)return;
+  isSending=true;
   els.inp.value='';els.inp.style.height='auto';els.snd.disabled=true;
   appendMsg({id:'opt_'+Date.now(),sender_type:'visitor',message_body:body,is_internal_note:false,created_at:new Date().toISOString()},false);
   if(state.socket&&state.connected){
     state.socket.emit('client:send_message',{conversationId:state.conversationId,body:body});
   } else {
-    // Socket not yet connected — queue the message and flush on connect
     msgQueue.push(body);
   }
+  // Guard: reset after 600ms so rapid Enter/click can never double-fire
+  setTimeout(function(){isSending=false;},600);
 }
 
 function scrollBot(){if(els.msgs)els.msgs.scrollTop=els.msgs.scrollHeight;}

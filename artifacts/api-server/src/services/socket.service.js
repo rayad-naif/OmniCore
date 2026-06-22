@@ -2,16 +2,19 @@
 
 /**
  * socket.service.js
- * Atelier OmniCore — Section 5: Real-Time Telemetry & Socket Architecture
+ * Atelier OmniCore — Real-Time Socket Architecture
  *
  * Responsibilities:
  *  - Authenticate incoming connections (visitor session token OR agent JWT)
  *  - Room management: each conversation gets its own room
- *  - client:telemetry_update  — presence / read-receipts / custom analytics
+ *    Agents also auto-join a tenant-level room `tenant:{tenantId}` so
+ *    broadcasts like `conversation:created` reach all connected agents.
  *  - client:send_message      — visitor or agent sends a chat message
  *  - agent:is_typing          — collision-detection broadcast
  *  - Offline queue drain on reconnect
  *  - Graceful disconnect / cleanup
+ *  - broadcastToTenant(tenantId, event, data) — exported for use by other
+ *    controllers (e.g. widget session endpoint)
  */
 
 const { Server }   = require('socket.io');
@@ -19,10 +22,23 @@ const { pool }     = require('../lib/db');
 
 // ---------------------------------------------------------------------------
 // In-memory typing registry  { conversationId -> { agentId, displayName, expiresAt } }
-// Using memory is fine for a single-process; swap for Redis pub/sub when clustering.
 // ---------------------------------------------------------------------------
 const typingRegistry = new Map();
-const TYPING_TTL_MS  = 5_000;   // auto-clear if no heartbeat in 5 s
+const TYPING_TTL_MS  = 5_000;
+
+// ---------------------------------------------------------------------------
+// Module-level io reference so broadcastToTenant can be called externally
+// ---------------------------------------------------------------------------
+let _io = null;
+
+/**
+ * Broadcast an event to all agents connected to a tenant's room.
+ * Safe to call before the socket server is initialised (will be a no-op).
+ */
+function broadcastToTenant(tenantId, event, data) {
+  if (!_io) return;
+  _io.to(`tenant:${tenantId}`).emit(event, data);
+}
 
 // ---------------------------------------------------------------------------
 // Auth middleware
@@ -32,8 +48,7 @@ async function authMiddleware(socket, next) {
     const { sessionToken, agentToken } = socket.handshake.auth;
 
     if (agentToken) {
-      // Stub: replace with real JWT verification (jsonwebtoken)
-      const payload = verifyAgentJwt(agentToken);   // throws on invalid
+      const payload = verifyAgentJwt(agentToken);
       socket.data.actorType = 'agent';
       socket.data.agentId   = payload.sub;
       socket.data.tenantId  = payload.tenantId;
@@ -61,7 +76,7 @@ async function authMiddleware(socket, next) {
 }
 
 // ---------------------------------------------------------------------------
-// JWT verification — hard-fails if JWT_SECRET is absent
+// JWT verification
 // ---------------------------------------------------------------------------
 function verifyAgentJwt(token) {
   const jwt    = require('jsonwebtoken');
@@ -86,7 +101,7 @@ async function persistMessage({ conversationId, senderType, senderId, body, atta
 }
 
 // ---------------------------------------------------------------------------
-// Helper: update conversation updated_at (keeps SLA timer fresh)
+// Helper: update conversation updated_at
 // ---------------------------------------------------------------------------
 async function touchConversation(conversationId) {
   await pool.query(
@@ -125,7 +140,7 @@ function scheduleTypingExpiry(io, conversationId) {
 // ---------------------------------------------------------------------------
 function attachSocketServer(httpServer) {
   const io = new Server(httpServer, {
-    path: '/api/socket.io',   // must be under /api so the proxy routes it to this service
+    path: '/api/socket.io',
     cors: {
       origin: process.env.ALLOWED_ORIGINS?.split(',') ?? '*',
       credentials: true,
@@ -134,11 +149,18 @@ function attachSocketServer(httpServer) {
     pingInterval: 10_000,
   });
 
+  _io = io;
+
   io.use(authMiddleware);
 
   io.on('connection', (socket) => {
     const { actorType, tenantId } = socket.data;
-    console.log(`[socket] ${actorType} connected  sid=${socket.id}`);
+
+    // Agents auto-join the tenant room so they receive cross-conversation events
+    // (e.g. conversation:created from the widget session endpoint)
+    if (actorType === 'agent' && tenantId) {
+      socket.join(`tenant:${tenantId}`);
+    }
 
     // ── Join a conversation room ─────────────────────────────────────────────
     socket.on('join:conversation', async ({ conversationId }, ack) => {
@@ -151,13 +173,11 @@ function attachSocketServer(httpServer) {
 
         ack?.({ ok: true, conversationId });
       } catch (err) {
-        console.error('[socket] join:conversation error', err.message);
         ack?.({ error: 'SERVER_ERROR' });
       }
     });
 
     // ── client:send_message ─────────────────────────────────────────────────
-    // Payload: { conversationId, body, attachments? }
     socket.on('client:send_message', async (payload, ack) => {
       try {
         const { conversationId, body, attachments } = payload;
@@ -184,24 +204,20 @@ function attachSocketServer(httpServer) {
 
         await touchConversation(conversationId);
 
-        // Clear typing indicator for this agent (if any)
         if (actorType === 'agent') {
           typingRegistry.delete(conversationId);
           io.to(`conv:${conversationId}`).emit('agent:typing_stopped', { conversationId });
         }
 
-        // Broadcast to everyone in the room (including sender so client confirms delivery)
         io.to(`conv:${conversationId}`).emit('server:new_message', message);
 
         ack?.({ ok: true, messageId: message.id });
       } catch (err) {
-        console.error('[socket] client:send_message error', err.message);
         ack?.({ error: 'SERVER_ERROR' });
       }
     });
 
     // ── agent:is_typing  (collision detection) ──────────────────────────────
-    // Payload: { conversationId, isTyping: boolean }
     socket.on('agent:is_typing', ({ conversationId, isTyping }) => {
       if (actorType !== 'agent') return;
 
@@ -210,7 +226,6 @@ function attachSocketServer(httpServer) {
       if (isTyping) {
         const existing = typingRegistry.get(conversationId);
 
-        // Collision guard: another agent is already typing
         if (existing && existing.agentId !== socket.data.agentId) {
           socket.emit('agent:typing_collision', {
             conversationId,
@@ -226,7 +241,6 @@ function attachSocketServer(httpServer) {
           expiresAt:   Date.now() + TYPING_TTL_MS,
         });
 
-        // Broadcast to everyone in the room EXCEPT the typing agent
         socket.to(room).emit('agent:is_typing', {
           conversationId,
           agentId:     socket.data.agentId,
@@ -241,35 +255,16 @@ function attachSocketServer(httpServer) {
     });
 
     // ── client:telemetry_update ─────────────────────────────────────────────
-    // Payload: { conversationId, event, meta }
-    // Lightweight analytics ping — does NOT persist to DB by default.
     socket.on('client:telemetry_update', async ({ conversationId, event, meta }) => {
       try {
         if (!conversationId || !event) return;
-
-        // Broadcast to agents in the room for live presence
         socket.to(`conv:${conversationId}`).emit('server:telemetry', {
-          conversationId,
-          actorType,
-          event,
-          meta,
-          ts: new Date().toISOString(),
+          conversationId, actorType, event, meta, ts: new Date().toISOString(),
         });
-
-        // Optional: persist specific events (e.g. page_view, widget_open)
-        const PERSIST_EVENTS = new Set(['widget_open', 'page_view', 'read_receipt']);
-        if (PERSIST_EVENTS.has(event)) {
-          // Extend schema with a telemetry_events table for full storage
-          // Intentionally left as a hook — plug in your own table.
-        }
-      } catch (err) {
-        console.error('[socket] client:telemetry_update error', err.message);
-      }
+      } catch { /* ignore */ }
     });
 
     // ── Offline queue drain ─────────────────────────────────────────────────
-    // Client sends queued messages accumulated during a disconnect.
-    // Payload: { messages: [{ conversationId, body, queuedAt }] }
     socket.on('client:drain_queue', async ({ messages }, ack) => {
       if (!Array.isArray(messages) || !messages.length) return ack?.({ ok: true, saved: 0 });
 
@@ -284,9 +279,7 @@ function attachSocketServer(httpServer) {
 
           const msg = await persistMessage({
             conversationId: item.conversationId,
-            senderType,
-            senderId,
-            body: item.body.trim(),
+            senderType, senderId, body: item.body.trim(),
           });
           await touchConversation(item.conversationId);
           io.to(`conv:${item.conversationId}`).emit('server:new_message', msg);
@@ -297,10 +290,7 @@ function attachSocketServer(httpServer) {
     });
 
     // ── Disconnect ──────────────────────────────────────────────────────────
-    socket.on('disconnect', (reason) => {
-      console.log(`[socket] ${actorType} disconnected  sid=${socket.id}  reason=${reason}`);
-
-      // Clean up typing indicator if this agent was the active typer
+    socket.on('disconnect', () => {
       if (actorType === 'agent') {
         const convId = socket.data.activeConversation;
         if (convId) {
@@ -317,4 +307,4 @@ function attachSocketServer(httpServer) {
   return io;
 }
 
-module.exports = { attachSocketServer };
+module.exports = { attachSocketServer, broadcastToTenant };

@@ -1,0 +1,40 @@
+SaaS Architecture, Ticket Panel & Bug Fix" Master Prompt
+"Role: Senior Full-Stack Architect & Systems Engineer.
+
+Task: Fix core widget bugs, implement a full Ticket Panel, and re-engineer Atelier OmniCore into a strict 3-Tier Multi-Tenant SaaS hierarchy with database boundaries.
+
+Part 1: Fix Widget Double-Send & Conversation Reload
+
+In omnicore-widget.js, locate the message input keydown/submit event listeners. Fix the issue where pressing Enter fires the event twice by using a boolean flag or ensuring e.preventDefault() is correctly called on form submit instead of overlapping keydown and submit triggers.
+
+On the frontend dashboard side (Inbox.jsx / App.tsx), ensure the Socket.io client listens for conversation:created. When a visitor sends a message from a brand new conversation, the workspace conversation list must live-update and push the new conversation to the view automatically without a browser refresh.
+
+Part 2: Enforce the 3-Tier SaaS Model & Tier Limits
+
+Schema Update: Add max_brands_allowed (integer, default 3), custom_domain (text), and smtp_config_json (jsonb) to the Tenants table schema.
+
+Tier 1 (Super Admin): Accessible only if req.user.email === process.env.SUPER_ADMIN_EMAIL. Create a /super-admin control dashboard. Super Admin can view all tenants, adjust a tenant's max_brands_allowed, configure the global widget CDN domain, and review system logs.
+
+Tier 2 (Tenant Admin): An agent with role === 'admin'. They can use a new Team Management view to create or delete other admins and agents only within their own tenant_id. Prevent them from creating a brand if their current brand count equals or exceeds their tenant's max_brands_allowed.
+
+Tier 3 (Agent): An agent with role === 'agent'. In GET /api/conversations, filter data explicitly: agents can ONLY see conversations where assigned_agent_id = user.id OR status = 'unassigned'. Hide Settings, Team, and Brands tabs from their sidebar entirely.
+
+Part 3: Ticket Panel & Workspace Subcomponents
+
+Completely build out the center-right workspace area (TicketPanel.jsx).
+
+It must render the selected conversation's scrollable message log, a functional, non-disabled textarea to write answers, a 'Send' button matching POST /api/conversations/:id/messages, and a status transition toggle (Open / Resolved).
+
+Part 4: SMTP & Custom Domain Architecture (Tenant Settings)
+
+In WorkspaceSettings.jsx, add input forms for Tenant Admins to save their SMTP Configuration (Host, Port, User, Pass, From Email) and Custom Domain.
+
+Create an Express endpoint PATCH /api/tenants/settings to commit this data.
+
+Create a backend utility service using nodemailer that parses the tenant's saved smtp_config_json dynamically to send out email alerts whenever a ticket status changes.
+
+Rules:
+
+Provide the explicit full code blocks for modified React layouts and database controllers.
+
+Erase all 'coming soon' or mock states. Everything must securely pull and write to the PostgreSQL database with proper data isolation clauses (WHERE tenant_id = current_user.tenant_id).

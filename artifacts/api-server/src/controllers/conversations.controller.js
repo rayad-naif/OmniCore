@@ -4,9 +4,10 @@
  * conversations.controller.js
  * Atelier OmniCore — Conversations + Messages + Export
  *
- * GET    /api/conversations                  list (paginated, tenant-scoped)
+ * GET    /api/conversations                  list (paginated, tenant-scoped, RBAC)
  * GET    /api/conversations/:id              single conversation
  * PATCH  /api/conversations/:id             update status / priority / assignment
+ *                                            → triggers SMTP email on status change
  * GET    /api/conversations/:id/messages     message history
  * POST   /api/conversations/:id/messages     agent sends a message
  * GET    /api/conversations/:id/export       PDF → R2 presigned URL
@@ -16,6 +17,7 @@ const { Router }               = require('express');
 const { requireAuth }          = require('../middleware/auth');
 const { pool }                 = require('../lib/db');
 const { handleExportRequest }  = require('../services/export.service');
+const { sendStatusChangeEmail } = require('../services/email.service');
 const logger                   = require('../utils/logger');
 
 const router = Router();
@@ -23,7 +25,6 @@ router.use(requireAuth);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const PAGE_LIMIT = 25;
-
 function tenantId(req) { return req.agent.tenantId; }
 
 // ─── GET /api/conversations ───────────────────────────────────────────────────
@@ -38,7 +39,7 @@ router.get('/', async (req, res, next) => {
     const conditions = ['c.tenant_id = $1'];
     const values     = [tid];
 
-    // RBAC: agents only see their own conversations or unassigned ones
+    // RBAC: agents only see their own or unassigned conversations
     if (req.agent.role === 'agent') {
       conditions.push(
         `(c.assigned_agent_id = $${values.length + 1} OR c.assigned_agent_id IS NULL)`
@@ -108,7 +109,7 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ─── PATCH /api/conversations/:id ────────────────────────────────────────────
+// ─── PATCH /api/conversations/:id ─────────────────────────────────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
     const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject'];
@@ -117,6 +118,15 @@ router.patch('/:id', async (req, res, next) => {
     if (!fields.length) {
       return res.status(400).json({ error: 'No valid fields provided' });
     }
+
+    // Fetch old status before updating (needed for email alert)
+    const { rows: beforeRows } = await pool.query(
+      `SELECT status, visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, tenantId(req)]
+    );
+    if (!beforeRows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    const oldStatus    = beforeRows[0].status;
+    const oldVisitorId = beforeRows[0].visitor_id;
 
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     const values     = fields.map(f => req.body[f]);
@@ -132,6 +142,26 @@ router.patch('/:id', async (req, res, next) => {
 
     if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
     logger.info({ conversationId: req.params.id, fields }, 'conversation_patched');
+
+    // Fire-and-forget email alert on status change
+    const newStatus = rows[0].status;
+    if (fields.includes('status') && newStatus !== oldStatus) {
+      // Look up visitor email (async, non-blocking)
+      pool.query(
+        `SELECT email FROM visitors WHERE id = $1`,
+        [oldVisitorId]
+      ).then(({ rows: vRows }) => {
+        const visitorEmail = vRows[0]?.email;
+        sendStatusChangeEmail(
+          tenantId(req),
+          req.params.id,
+          oldStatus,
+          newStatus,
+          visitorEmail
+        );
+      }).catch(() => {});
+    }
+
     return res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -190,7 +220,6 @@ router.post('/:id/messages', async (req, res, next) => {
       [req.params.id, req.agent.id, messageBody.trim(), Boolean(isInternalNote)]
     );
 
-    // Attach sender_name for the response
     const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [req.agent.id]);
     const result = { ...newMsg[0], sender_name: agentRow.rows[0]?.name ?? 'Agent' };
 
