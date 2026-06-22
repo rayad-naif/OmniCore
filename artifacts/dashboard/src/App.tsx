@@ -210,7 +210,7 @@ function useApi() {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, { method: 'PATCH', body: JSON.stringify(limits) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update limits') }
     },
-    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object }): Promise<void> => {
+    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean }): Promise<void> => {
       const r = await authFetch(`${API}/tenants/settings`, { method: 'PATCH', body: JSON.stringify(patch) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update workspace') }
     },
@@ -1255,7 +1255,7 @@ function SettingsSection() {
   const [profileSaving, setPS]    = useState(false)
   const [profileMsg, setPMsg]     = useState<{ ok: boolean; text: string } | null>(null)
 
-  const [wsForm, setWs] = useState({ company_name: '', default_timezone: 'UTC', ai_auto_reply_enabled: false, custom_domain: '' })
+  const [wsForm, setWs] = useState({ company_name: '', default_timezone: 'UTC', ai_auto_reply_enabled: false, custom_domain: '', ai_feature_enabled: true, smtp_feature_enabled: true })
   const [wsSaving, setWS] = useState(false)
   const [wsMsg, setWsMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -1275,7 +1275,7 @@ function SettingsSection() {
   const handleWsSave = async (e: React.FormEvent) => {
     e.preventDefault(); setWsMsg(null); setWS(true)
     try {
-      await api.updateWorkspace({ company_name: wsForm.company_name || undefined, default_timezone: wsForm.default_timezone, ai_auto_reply_enabled: wsForm.ai_auto_reply_enabled, custom_domain: wsForm.custom_domain || undefined })
+      await api.updateWorkspace({ company_name: wsForm.company_name || undefined, default_timezone: wsForm.default_timezone, ai_auto_reply_enabled: wsForm.ai_auto_reply_enabled, custom_domain: wsForm.custom_domain || undefined, ai_feature_enabled: wsForm.ai_feature_enabled, smtp_feature_enabled: wsForm.smtp_feature_enabled })
       setWsMsg({ ok: true, text: 'Workspace settings saved.' })
     }
     catch (err) { setWsMsg({ ok: false, text: (err as Error).message }) }
@@ -1341,6 +1341,14 @@ function SettingsSection() {
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
                       <div><p className="text-xs font-medium text-slate-700">AI Auto-Reply</p><p className="text-[11px] text-slate-400">Automatically reply to new conversations with AI</p></div>
                       <button type="button" onClick={() => setWs(f => ({ ...f, ai_auto_reply_enabled: !f.ai_auto_reply_enabled }))} className={`${wsForm.ai_auto_reply_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{wsForm.ai_auto_reply_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <div><p className="text-xs font-medium text-slate-700">AI Features</p><p className="text-[11px] text-slate-400">Enable AI capabilities for your workspace</p></div>
+                      <button type="button" onClick={() => setWs(f => ({ ...f, ai_feature_enabled: !f.ai_feature_enabled }))} className={`${wsForm.ai_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{wsForm.ai_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <div><p className="text-xs font-medium text-slate-700">SMTP / Email Alerts</p><p className="text-[11px] text-slate-400">Allow custom SMTP for status-change notifications</p></div>
+                      <button type="button" onClick={() => setWs(f => ({ ...f, smtp_feature_enabled: !f.smtp_feature_enabled }))} className={`${wsForm.smtp_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{wsForm.smtp_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
                     </div>
                     <button type="submit" disabled={wsSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{wsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Settings'}</button>
                   </form>

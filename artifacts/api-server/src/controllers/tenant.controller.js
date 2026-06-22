@@ -87,6 +87,47 @@ router.post('/', requireRole('superadmin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ---------------------------------------------------------------------------
+// WORKSPACE SETTINGS  PATCH /api/tenants/settings  (must be before /:tenantId)
+// ---------------------------------------------------------------------------
+
+/**
+ * PATCH /api/tenants/settings
+ * Admin only — updates the caller's own tenant.
+ * Allowed fields: company_name, default_timezone, ai_auto_reply_enabled,
+ *                 custom_domain, smtp_config_json, ai_feature_enabled, smtp_feature_enabled
+ */
+router.patch('/settings', requireRole('admin'), async (req, res, next) => {
+  try {
+    const allowed = [
+      'company_name', 'default_timezone', 'ai_auto_reply_enabled',
+      'custom_domain', 'smtp_config_json',
+      'ai_feature_enabled', 'smtp_feature_enabled',
+    ];
+    const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+    if (!fields.length) {
+      return res.status(400).json({ error: 'No valid fields provided' });
+    }
+
+    const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values     = fields.map(f =>
+      f === 'smtp_config_json' ? JSON.stringify(req.body[f]) : req.body[f]
+    );
+    values.push(req.agent.tenantId);
+
+    const { rows } = await req.db.query(
+      `UPDATE tenants SET ${setClauses}, updated_at = NOW()
+       WHERE id = $${values.length}
+       RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
+                 ai_feature_enabled, smtp_feature_enabled, custom_domain, updated_at`,
+      values
+    );
+    if (!rows.length) return notFound(res, 'Tenant');
+    logger.info({ tenantId: req.agent.tenantId, fields }, 'workspace_settings_updated');
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
 /** PATCH /api/tenants/:tenantId — superadmin only */
 router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
@@ -122,46 +163,6 @@ router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) =>
     );
     if (!rowCount) return notFound(res, 'Tenant');
     res.status(204).end();
-  } catch (err) { next(err); }
-});
-
-// ---------------------------------------------------------------------------
-// WORKSPACE SETTINGS  PATCH /api/tenants/settings
-// ---------------------------------------------------------------------------
-
-/**
- * PATCH /api/tenants/settings
- * Admin only — updates the caller's own tenant.
- * Allowed fields: company_name, default_timezone, ai_auto_reply_enabled,
- *                 custom_domain, smtp_config_json
- */
-router.patch('/settings', requireRole('admin'), async (req, res, next) => {
-  try {
-    const allowed = [
-      'company_name', 'default_timezone', 'ai_auto_reply_enabled',
-      'custom_domain', 'smtp_config_json',
-    ];
-    const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
-    if (!fields.length) {
-      return res.status(400).json({ error: 'No valid fields provided' });
-    }
-
-    const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values     = fields.map(f =>
-      f === 'smtp_config_json' ? JSON.stringify(req.body[f]) : req.body[f]
-    );
-    values.push(req.agent.tenantId);
-
-    const { rows } = await req.db.query(
-      `UPDATE tenants SET ${setClauses}, updated_at = NOW()
-       WHERE id = $${values.length}
-       RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
-                 custom_domain, updated_at`,
-      values
-    );
-    if (!rows.length) return notFound(res, 'Tenant');
-    logger.info({ tenantId: req.agent.tenantId, fields }, 'workspace_settings_updated');
-    res.json(rows[0]);
   } catch (err) { next(err); }
 });
 
