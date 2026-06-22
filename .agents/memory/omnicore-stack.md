@@ -19,6 +19,14 @@ Messages table uses `sender_id` (not `sender_agent_id`). INSERT and JOIN queries
 # Demo credentials
 - admin@omnicore.test / Admin123! (role: admin, tenantId: 11111111-1111-1111-1111-111111111111)
 - sara@omnicore.test / Agent123! (role: agent)
+- superadmin@omnicore.test / SuperAdmin1! (role: admin, isSuperAdmin: true, UUID: 55555555-5555-5555-5555-555555555555)
+
+# Gemini model
+GEMINI_API_KEY works with `gemini-2.5-flash` only (gemini-1.5-flash and gemini-2.0-flash both 404). Set GENERATION_MODEL = 'gemini-2.5-flash' in ai.service.js.
+**Why:** The user's API key only has access to specific model versions in the v1beta endpoint.
+
+# Forgot-password flow
+password_reset_tokens table (id, agent_id, token, expires_at, used_at) added to DB manually. POST /api/auth/forgot-password returns reset_link in dev (NODE_ENV !== production). POST /api/auth/reset-password validates token + expiry. UI views: ForgotPasswordPage, ResetPasswordPage. Root App detects ?reset_token= param on load to auto-route to reset view.
 
 # Seed UUIDs (fixed for deterministic dev data)
 - Tenant: 11111111-1111-1111-1111-111111111111

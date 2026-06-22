@@ -24,7 +24,7 @@ type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
 type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat'
 type StatusFilter = 'all' | Status
-type AuthView    = 'login' | 'signup'
+type AuthView    = 'login' | 'signup' | 'forgot' | 'reset'
 
 interface Conversation {
   id: string; subject: string | null; status: Status; channel: Channel
@@ -318,8 +318,93 @@ function SignupPage({ onGoLogin }: { onGoLogin: (successMsg?: string) => void })
   )
 }
 
+// ─── Forgot Password Page ─────────────────────────────────────────────────────
+function ForgotPasswordPage({ onGoLogin }: { onGoLogin: (msg?: string) => void }) {
+  const [email, setEmail]     = useState('')
+  const [submitting, setSub]  = useState(false)
+  const [msg, setMsg]         = useState<{ ok: boolean; text: string; link?: string } | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); setSub(true); setMsg(null)
+    try {
+      const res = await fetch(`${API}/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+      const d = await res.json() as { ok?: boolean; message?: string; reset_link?: string; error?: string }
+      if (!res.ok) { setMsg({ ok: false, text: d.error ?? 'Request failed' }); return }
+      setMsg({ ok: true, text: d.message ?? 'Reset link sent.', link: d.reset_link })
+    } catch { setMsg({ ok: false, text: 'Network error. Please try again.' }) }
+    finally { setSub(false) }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Password Reset</p></div></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+          <h1 className="text-slate-100 text-lg font-semibold mb-1">Forgot password?</h1>
+          <p className="text-slate-500 text-xs mb-5">Enter your email and we'll send a reset link.</p>
+          {msg && (
+            <div className={`mb-4 p-3 rounded-lg text-xs flex flex-col gap-1.5 ${msg.ok ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-400' : 'bg-red-950/50 border border-red-900 text-red-400'}`}>
+              <span className="flex items-center gap-2">{msg.ok ? <CheckCircle2 size={13} className="shrink-0" /> : <AlertTriangle size={13} className="shrink-0" />}{msg.text}</span>
+              {msg.link && <a href={msg.link} className="underline text-sky-400 break-all mt-1 text-[11px]">Click here to reset password (dev mode)</a>}
+            </div>
+          )}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Email address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">{submitting && <RefreshCw size={13} className="animate-spin" />}{submitting ? 'Sending…' : 'Send reset link'}</button>
+          </form>
+        </div>
+        <button onClick={() => onGoLogin()} className="mt-4 w-full flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"><ArrowLeft size={12} /> Back to sign in</button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Reset Password Page ──────────────────────────────────────────────────────
+function ResetPasswordPage({ token, onGoLogin }: { token: string; onGoLogin: (msg?: string) => void }) {
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm]   = useState('')
+  const [showPw, setShowPw]     = useState(false)
+  const [submitting, setSub]    = useState(false)
+  const [msg, setMsg]           = useState<{ ok: boolean; text: string } | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (password !== confirm) { setMsg({ ok: false, text: 'Passwords do not match.' }); return }
+    if (password.length < 8) { setMsg({ ok: false, text: 'Password must be at least 8 characters.' }); return }
+    setSub(true); setMsg(null)
+    try {
+      const res = await fetch(`${API}/auth/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password }) })
+      const d = await res.json() as { ok?: boolean; message?: string; error?: string }
+      if (!res.ok) { setMsg({ ok: false, text: d.error ?? 'Reset failed' }); return }
+      onGoLogin(d.message ?? 'Password updated! Sign in with your new password.')
+    } catch { setMsg({ ok: false, text: 'Network error. Please try again.' }) }
+    finally { setSub(false) }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Set new password</p></div></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+          <h1 className="text-slate-100 text-lg font-semibold mb-1">Set new password</h1>
+          <p className="text-slate-500 text-xs mb-5">Choose a strong password (min 8 characters).</p>
+          {msg && <div className={`mb-4 p-3 rounded-lg text-xs flex items-center gap-2 ${msg.ok ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-400' : 'bg-red-950/50 border border-red-900 text-red-400'}`}>{msg.ok ? <CheckCircle2 size={13} className="shrink-0" /> : <AlertTriangle size={13} className="shrink-0" />}{msg.text}</div>}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">New password</label>
+              <div className="relative"><input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required placeholder="Min 8 characters" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /><button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button></div>
+            </div>
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Confirm password</label><input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required placeholder="Repeat password" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">{submitting && <RefreshCw size={13} className="animate-spin" />}{submitting ? 'Updating…' : 'Update password'}</button>
+          </form>
+        </div>
+        <button onClick={() => onGoLogin()} className="mt-4 w-full flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"><ArrowLeft size={12} /> Back to sign in</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Login Page ───────────────────────────────────────────────────────────────
-function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; successMsg?: string }) {
+function LoginPage({ onGoSignup, onGoForgot, successMsg }: { onGoSignup: () => void; onGoForgot: () => void; successMsg?: string }) {
   const { login, error, clearError } = useAuth() as { login: (creds: { email: string; password: string }) => Promise<void>; error: string | null; clearError: () => void }
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
@@ -342,7 +427,11 @@ function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; success
           {error && <div className="mb-4 p-3 bg-red-950/50 border border-red-900 rounded-lg text-xs text-red-400 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {error}</div>}
           <form onSubmit={handleSubmit} className="space-y-3">
             <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
-            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-slate-400">Password</label>
+                <button type="button" onClick={onGoForgot} className="text-[11px] text-sky-500 hover:text-sky-400 transition-colors">Forgot password?</button>
+              </div>
               <div className="relative"><input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" autoComplete="current-password" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /><button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button></div>
             </div>
             <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">{submitting && <RefreshCw size={13} className="animate-spin" />}{submitting ? 'Signing in…' : 'Sign in'}</button>
@@ -1020,6 +1109,16 @@ function BrandsSection() {
                       <code className="text-[10px] text-emerald-400 font-mono break-all leading-relaxed flex-1">{snippet}</code>
                       <CopyButton text={snippet} />
                     </div>
+                    {brand.inbound_email_prefix && (
+                      <div className="mt-3 pt-3 border-t border-slate-100">
+                        <p className="text-[11px] font-medium text-slate-500 mb-1.5 flex items-center gap-1"><Mail size={11} /> Inbound email webhook</p>
+                        <div className="bg-slate-900 rounded-lg p-3 flex items-start justify-between gap-2 mb-1.5">
+                          <code className="text-[10px] text-sky-400 font-mono break-all leading-relaxed flex-1">{`POST ${origin}/api/webhooks/inbound-mail`}</code>
+                          <CopyButton text={`${origin}/api/webhooks/inbound-mail`} />
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">Point your email provider's inbound parse webhook (SendGrid, Mailgun, Postmark) to this URL. Emails with prefix <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600">{brand.inbound_email_prefix}</code> will open or thread conversations automatically.</p>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -2036,11 +2135,19 @@ function Dashboard() {
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth() as { isAuthenticated: boolean; isLoading: boolean }
-  const [view, setView]     = useState<AuthView>('login')
+  const [view, setView]     = useState<AuthView>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('reset_token') ? 'reset' : 'login'
+  })
   const [successMsg, setSuccess] = useState<string | undefined>()
+  const [resetToken, setResetToken] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('reset_token') ?? ''
+  })
 
   const goSignup = () => { setSuccess(undefined); setView('signup') }
-  const goLogin  = (msg?: string) => { setSuccess(msg); setView('login') }
+  const goLogin  = (msg?: string) => { setSuccess(msg); setView('login'); history.replaceState({}, '', window.location.pathname) }
+  const goForgot = () => { setSuccess(undefined); setView('forgot') }
 
   if (isLoading) return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -2053,5 +2160,8 @@ export default function App() {
 
   if (isAuthenticated) return <Dashboard />
 
-  return view === 'signup' ? <SignupPage onGoLogin={goLogin} /> : <LoginPage onGoSignup={goSignup} successMsg={successMsg} />
+  if (view === 'signup') return <SignupPage onGoLogin={goLogin} />
+  if (view === 'forgot') return <ForgotPasswordPage onGoLogin={goLogin} />
+  if (view === 'reset')  return <ResetPasswordPage token={resetToken} onGoLogin={goLogin} />
+  return <LoginPage onGoSignup={goSignup} onGoForgot={goForgot} successMsg={successMsg} />
 }

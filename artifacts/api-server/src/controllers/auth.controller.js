@@ -2,20 +2,17 @@
 
 /**
  * auth.controller.js
- * Atelier OmniCore — Agent authentication
- *
- * POST /api/auth/login    → { accessToken, agent }  +  httpOnly refresh cookie
- * POST /api/auth/refresh  → { accessToken, agent }     (reads refresh cookie)
- * POST /api/auth/logout   → clears cookie
- *
- * Token design:
- *  Access token  — JWT, 15 min,  in-memory on client
- *  Refresh token — JWT, 7 days,  httpOnly cookie  "omnicore_rt"
+ * POST /api/auth/login           → { accessToken, agent } + httpOnly refresh cookie
+ * POST /api/auth/refresh         → { accessToken, agent }
+ * POST /api/auth/logout          → clears cookie
+ * POST /api/auth/forgot-password → generates reset token, returns link (or emails if SMTP set)
+ * POST /api/auth/reset-password  → validates token, sets new password
  */
 
 const { Router } = require('express');
 const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
+const crypto     = require('crypto');
 const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
 
@@ -30,10 +27,9 @@ const COOKIE_OPTS = {
   secure:   process.env.NODE_ENV === 'production',
   sameSite: 'lax',
   path:     '/api/auth',
-  maxAge:   7 * 24 * 60 * 60 * 1000,   // 7 days ms
+  maxAge:   7 * 24 * 60 * 60 * 1000,
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 function getSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error('JWT_SECRET is not configured');
@@ -77,7 +73,6 @@ function safeAgent(row) {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
-
     if (!email?.trim() || !password) {
       return res.status(400).json({ error: 'email and password are required' });
     }
@@ -89,25 +84,17 @@ router.post('/login', async (req, res) => {
     );
 
     const agent = rows[0];
-    if (!agent) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    if (!agent.is_active) {
-      return res.status(403).json({ error: 'Account is deactivated' });
-    }
+    if (!agent) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!agent.is_active) return res.status(403).json({ error: 'Account is deactivated' });
 
     const valid = await bcrypt.compare(password, agent.password_hash);
-    if (!valid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
     const accessToken  = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
 
     res.cookie(COOKIE_NAME, refreshToken, COOKIE_OPTS);
     logger.info({ agentId: agent.id, tenantId: agent.tenant_id }, 'agent_login');
-
     return res.json({ accessToken, agent: safeAgent(agent) });
   } catch (err) {
     logger.error({ err }, 'login_error');
@@ -147,10 +134,7 @@ router.post('/refresh', async (req, res) => {
 
     const accessToken  = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
-
-    // Rotate refresh token
     res.cookie(COOKIE_NAME, refreshToken, COOKIE_OPTS);
-
     return res.json({ accessToken, agent: safeAgent(agent) });
   } catch (err) {
     logger.error({ err }, 'refresh_error');
@@ -162,6 +146,136 @@ router.post('/refresh', async (req, res) => {
 router.post('/logout', (req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTS, maxAge: 0 });
   return res.status(200).json({ ok: true });
+});
+
+// ─── POST /api/auth/forgot-password ──────────────────────────────────────────
+// Works for agents, admins, and super admin. Finds the agent by email,
+// creates a time-limited reset token (1 hour), and either:
+//   • Sends a reset email via the tenant's SMTP config (if configured), OR
+//   • Returns the reset link in the response body (dev/fallback mode).
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email?.trim()) {
+      return res.status(400).json({ error: 'email is required' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, tenant_id, name, email FROM agents WHERE email = $1 AND is_active = TRUE LIMIT 1`,
+      [email.trim().toLowerCase()]
+    );
+
+    // Always return 200 to avoid email enumeration
+    if (!rows.length) {
+      return res.json({ ok: true, message: 'If that email exists, a reset link has been sent.' });
+    }
+
+    const agent = rows[0];
+
+    // Expire any existing unused tokens for this agent
+    await pool.query(
+      `UPDATE password_reset_tokens SET used_at = NOW()
+       WHERE agent_id = $1 AND used_at IS NULL`,
+      [agent.id]
+    );
+
+    // Generate secure random token
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await pool.query(
+      `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [agent.id, rawToken, expiresAt]
+    );
+
+    // Build reset link
+    const appOrigin = process.env.REPLIT_DOMAINS
+      ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
+      : (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.headers.host}` : `http://${req.headers.host}`);
+    const resetLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
+
+    // Try to send via tenant SMTP
+    let emailSent = false;
+    try {
+      const { rows: tenantRows } = await pool.query(
+        `SELECT smtp_config_json FROM tenants WHERE id = $1`, [agent.tenant_id]
+      );
+      const cfg = tenantRows[0]?.smtp_config_json;
+      if (cfg?.enabled && cfg?.host && cfg?.user && cfg?.pass) {
+        const nodemailer = require('nodemailer');
+        const transporter = nodemailer.createTransport({
+          host: cfg.host, port: cfg.port || 587,
+          secure: Boolean(cfg.secure), auth: { user: cfg.user, pass: cfg.pass },
+        });
+        await transporter.sendMail({
+          from: cfg.from_email || cfg.user,
+          to: agent.email,
+          subject: 'Reset your OmniCore password',
+          text: `Hi ${agent.name},\n\nClick the link below to reset your password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, ignore this email.`,
+          html: `<p>Hi ${agent.name},</p><p>Click below to reset your password (valid for 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p><p>If you didn't request this, ignore this email.</p>`,
+        });
+        emailSent = true;
+      }
+    } catch (mailErr) {
+      logger.warn({ err: mailErr }, 'forgot_password_mail_error');
+    }
+
+    logger.info({ agentId: agent.id }, 'forgot_password_requested');
+
+    return res.json({
+      ok: true,
+      message: emailSent
+        ? 'Reset link sent to your email.'
+        : 'If that email exists, a reset link has been sent.',
+      // Only expose link in non-production (dev convenience)
+      ...(process.env.NODE_ENV !== 'production' && { reset_link: resetLink }),
+    });
+  } catch (err) {
+    logger.error({ err }, 'forgot_password_error');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── POST /api/auth/reset-password ───────────────────────────────────────────
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+    if (!token?.trim() || !password) {
+      return res.status(400).json({ error: 'token and password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT prt.id, prt.agent_id, prt.expires_at, a.email, a.name, a.tenant_id
+       FROM password_reset_tokens prt
+       JOIN agents a ON a.id = prt.agent_id
+       WHERE prt.token = $1 AND prt.used_at IS NULL`,
+      [token.trim()]
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({ error: 'Invalid or expired reset link' });
+    }
+
+    const row = rows[0];
+    if (new Date(row.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+
+    await pool.query(`UPDATE agents SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hash, row.agent_id]);
+    await pool.query(`UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`, [row.id]);
+
+    logger.info({ agentId: row.agent_id }, 'password_reset_success');
+    return res.json({ ok: true, message: 'Password updated. You can now sign in.' });
+  } catch (err) {
+    logger.error({ err }, 'reset_password_error');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 module.exports = router;
