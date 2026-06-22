@@ -2008,6 +2008,29 @@ function Dashboard() {
     socket.on('conversation:assigned', ({ conversationId, agentId, agentName }: { conversationId: string; agentId: string | null; agentName: string | null }) => {
       setConvs(prev => prev.map(c => c.id === conversationId ? { ...c, agent_name: agentName, assigned_agent_id: agentId } : c))
     })
+    // Tenant-level visitor message broadcast — keeps inbox live for ALL agents
+    // regardless of which conversation they're currently viewing.
+    socket.on('conversation:visitor_message', ({ conversationId, message: msg }: { conversationId: string; message: Message }) => {
+      if (msg.is_internal_note) return
+      // Update the conversation's position + unread badge in the sidebar
+      setConvs(prev => prev.map(c => {
+        if (c.id !== conversationId) return c
+        const isActive = activeIdRef.current === c.id
+        return { ...c, updated_at: msg.created_at, unread: isActive ? (c.unread ?? 0) : (c.unread ?? 0) + 1 }
+      }))
+      // Show toast for agents not currently viewing this conversation
+      if (activeIdRef.current !== conversationId) {
+        setConvs(prev => {
+          const conv = prev.find(c => c.id === conversationId)
+          if (!conv) return prev
+          const toastId = `${msg.id}-vm-toast`
+          const toast: InboxToast = { id: toastId, convId: conversationId, visitorName: conv.visitor_name, preview: (msg.message_body || '').slice(0, 80), createdAt: Date.now() }
+          setToasts(t => [...t.slice(-4), toast])
+          setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
+          return prev
+        })
+      }
+    })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 

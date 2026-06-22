@@ -194,13 +194,13 @@ router.post('/message', async (req, res, next) => {
     const visitor = vRows[0];
 
     const { rows: cRows } = await pool.query(
-      `SELECT id, status FROM conversations WHERE id = $1 AND visitor_id = $2`,
+      `SELECT id, status, tenant_id FROM conversations WHERE id = $1 AND visitor_id = $2`,
       [conversationId, visitor.id]
     );
     if (!cRows[0]) return res.status(404).json({ error: 'Conversation not found' });
     if (cRows[0].status === 'closed') return res.status(409).json({ error: 'Conversation is closed' });
 
-    const attachmentsJson = (attachments && attachments.length > 0) ? JSON.stringify(attachments) : null;
+    const attachmentsJson = (attachments && attachments.length > 0) ? JSON.stringify(attachments) : '[]';
     const { rows: newMsg } = await pool.query(
       `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body, is_internal_note, attachments_json)
        VALUES ($1, 'visitor', $2, $3, false, $4)
@@ -210,7 +210,16 @@ router.post('/message', async (req, res, next) => {
 
     const result = { ...newMsg[0], sender_name: visitor.display_name || visitor.email || 'Visitor' };
     await pool.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
+
+    // Notify agents currently viewing this conversation
     broadcastToConversation(conversationId, 'server:new_message', result);
+
+    // Notify ALL tenant agents so the inbox sidebar updates (unread count,
+    // conversation sort order, toast) even if they haven't opened this conversation.
+    try {
+      broadcastToTenant(cRows[0].tenant_id, 'conversation:visitor_message', { conversationId, message: result });
+    } catch { /* non-fatal */ }
+
     return res.status(201).json(result);
   } catch (err) { next(err); }
 });

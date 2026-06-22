@@ -99,13 +99,16 @@ function verifyAgentJwt(token) {
 // Helper: persist a message row and return it
 // ---------------------------------------------------------------------------
 async function persistMessage({ conversationId, senderType, senderId, body, attachments = [] }) {
+  const attJson = Array.isArray(attachments) && attachments.length > 0
+    ? JSON.stringify(attachments)
+    : '[]';
   const { rows } = await pool.query(
     `INSERT INTO messages
        (conversation_id, sender_type, sender_id, message_body, attachments_json)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id, conversation_id, sender_type, sender_id,
                message_body, attachments_json, created_at`,
-    [conversationId, senderType, senderId, body, JSON.stringify(attachments)]
+    [conversationId, senderType, senderId, body, attJson]
   );
   return rows[0];
 }
@@ -178,6 +181,13 @@ function attachSocketServer(httpServer) {
         const conv = await resolveConversation(conversationId, tenantId);
         if (!conv) return ack?.({ error: 'CONVERSATION_NOT_FOUND' });
 
+        // Leave the previous conversation room so agents never accumulate
+        // stale room memberships that cause duplicate event delivery.
+        const prev = socket.data.activeConversation;
+        if (prev && prev !== conversationId) {
+          socket.leave(`conv:${prev}`);
+        }
+
         await socket.join(`conv:${conversationId}`);
         socket.data.activeConversation = conversationId;
 
@@ -219,7 +229,31 @@ function attachSocketServer(httpServer) {
           io.to(`conv:${conversationId}`).emit('agent:typing_stopped', { conversationId });
         }
 
-        io.to(`conv:${conversationId}`).emit('server:new_message', message);
+        // Resolve sender display name for UI rendering
+        let senderName = actorType === 'agent' ? (socket.data.name || 'Agent') : 'Visitor';
+        if (actorType === 'visitor') {
+          try {
+            const { rows: vr } = await pool.query(
+              `SELECT display_name, email FROM visitors WHERE id = $1`,
+              [socket.data.visitorId]
+            );
+            senderName = vr[0]?.display_name || vr[0]?.email || 'Visitor';
+          } catch { /* non-fatal */ }
+        }
+        const enriched = { ...message, sender_name: senderName };
+
+        // Deliver to agents currently viewing this conversation
+        io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+
+        // Also notify ALL tenant agents so the sidebar (inbox) stays live:
+        // unread badge, position sort, and toast pop-up — even for agents
+        // who have never opened this conversation.
+        if (actorType === 'visitor') {
+          io.to(`tenant:${tenantId}`).emit('conversation:visitor_message', {
+            conversationId,
+            message: enriched,
+          });
+        }
 
         ack?.({ ok: true, messageId: message.id });
       } catch (err) {
