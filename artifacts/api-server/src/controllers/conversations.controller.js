@@ -147,7 +147,6 @@ router.get('/', async (req, res, next) => {
            c.csat_score, c.brand_id,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
-           v.timezone                                       AS visitor_timezone,
            a.name                                           AS agent_name,
            b.brand_name
          FROM conversations c
@@ -178,7 +177,6 @@ router.get('/:id', async (req, res, next) => {
          c.*,
          v.email                                          AS visitor_email,
          COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
-         v.timezone                                       AS visitor_timezone,
          a.name                                           AS agent_name,
          b.brand_name
        FROM conversations c
