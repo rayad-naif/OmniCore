@@ -66,8 +66,8 @@ app.use(
 );
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 
 // ── Cookie parser (for httpOnly refresh token) ────────────────────────────────
 app.use(cookieParser());

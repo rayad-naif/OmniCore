@@ -39,3 +39,4 @@ channel = "stable-25_05"
 [userenv.shared]
 JWT_SECRET = "66a10cf1886ab12095a289305752bbe10e9c209528c8cdf7c8a37e21b28a6884f64964834bb90a91550e020ea46e01ff"
 GEMINI_API_KEY = "AQ.Ab8RN6JfE7Oec86Asy9YfH4QrD-EyibuQJhf3mlCpzBYR-MaLQ"
+SUPER_ADMIN_EMAIL = "superadmin@omnicore.test"

@@ -29,6 +29,7 @@ interface Conversation {
   agent_name?: string | null; brand_name: string; updated_at: string
   sla_breach_at?: string | null; unread?: number
   is_ticket?: boolean; assigned_agent_id?: string | null
+  visitor_id?: string; visitor_timezone?: string | null
 }
 
 interface Message {
@@ -246,6 +247,21 @@ function useApi() {
         const err = await r.json() as { error?: string }
         throw new Error(err.error ?? 'Failed to update workspace')
       }
+    },
+    editMessage: async (convId: string, msgId: string, body: string): Promise<void> => {
+      const r = await authFetch(`${API}/conversations/${convId}/messages/${msgId}`, {
+        method: 'PATCH', body: JSON.stringify({ body }),
+      })
+      if (!r.ok) throw new Error('Failed to edit message')
+    },
+    deleteMessage: async (convId: string, msgId: string): Promise<void> => {
+      const r = await authFetch(`${API}/conversations/${convId}/messages/${msgId}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error('Failed to delete message')
+    },
+    visitorHistory: async (convId: string): Promise<Array<{ id: string; status: string; subject: string | null; created_at: string }>> => {
+      const r = await authFetch(`${API}/conversations/${convId}/visitor-history`)
+      if (!r.ok) return []
+      return r.json() as Promise<Array<{ id: string; status: string; subject: string | null; created_at: string }>>
     },
   }), [authFetch, agent?.tenantId])()
 }
@@ -491,11 +507,33 @@ function ConversationsList({ convs, activeId, onSelect }: { convs: Conversation[
 }
 
 // ─── Message Bubble ───────────────────────────────────────────────────────────
-function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string }) {
-  const isAgent = msg.sender_type === 'agent'
-  const isBot   = msg.sender_type === 'bot'
-  const isNote  = msg.is_internal_note
-  const name    = msg.sender_name || (isAgent ? 'Agent' : isBot ? 'AI' : visitorName)
+function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
+  msg: Message; visitorName: string
+  onEdit?: (msgId: string, newBody: string) => Promise<void>
+  onDelete?: (msgId: string) => Promise<void>
+}) {
+  const [hovering, setHovering] = useState(false)
+  const [editing, setEditing]   = useState(false)
+  const [editText, setEditText] = useState(msg.message_body)
+  const [saving, setSaving]     = useState(false)
+
+  const isAgent    = msg.sender_type === 'agent'
+  const isBot      = msg.sender_type === 'bot'
+  const isNote     = msg.is_internal_note
+  const name       = msg.sender_name || (isAgent ? 'Agent' : isBot ? 'AI' : visitorName)
+  const canModify  = isAgent && !!onEdit && !!onDelete
+
+  const handleSaveEdit = async () => {
+    if (!editText.trim() || saving) return
+    setSaving(true)
+    try { await onEdit!(msg.id, editText.trim()); setEditing(false) }
+    catch { /* noop */ } finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this message?')) return
+    try { await onDelete!(msg.id) } catch { /* noop */ }
+  }
 
   if (isNote) return (
     <div className="flex justify-center my-1">
@@ -506,13 +544,43 @@ function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string
   )
 
   return (
-    <div className={`flex items-end gap-2 ${isAgent ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div
+      className={`flex items-end gap-2 ${isAgent ? 'flex-row-reverse' : 'flex-row'}`}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+    >
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
         {isAgent ? <User size={13} /> : isBot ? <Bot size={13} /> : <span className="text-xs font-semibold">{name[0]?.toUpperCase()}</span>}
       </div>
-      <div className="max-w-sm lg:max-w-md xl:max-w-lg">
+      <div className="max-w-sm lg:max-w-md xl:max-w-lg relative">
         <div className={`text-[10px] mb-1 text-slate-400 ${isAgent ? 'text-right' : 'text-left'}`}>{name} · {timeAgo(msg.created_at)}</div>
-        <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${isAgent ? 'bg-sky-600 text-white rounded-br-sm' : isBot ? 'bg-violet-100 text-violet-900 border border-violet-200 rounded-bl-sm' : 'bg-white text-slate-800 border border-slate-200 shadow-sm rounded-bl-sm'}`}>{msg.message_body}</div>
+        {editing ? (
+          <div className="flex flex-col gap-1">
+            <textarea
+              className="px-3 py-2 rounded-2xl text-sm leading-relaxed border border-sky-400 outline-none resize-none w-full bg-white text-slate-800 min-w-[200px]"
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit() }
+                if (e.key === 'Escape') { setEditing(false); setEditText(msg.message_body) }
+              }}
+              rows={2}
+              autoFocus
+            />
+            <div className="flex gap-1 justify-end">
+              <button onClick={() => { setEditing(false); setEditText(msg.message_body) }} className="px-2 py-0.5 text-[10px] text-slate-500 hover:text-slate-700 rounded border border-slate-200">Cancel</button>
+              <button onClick={handleSaveEdit} disabled={saving} className="px-2 py-0.5 text-[10px] bg-sky-600 text-white rounded disabled:opacity-50">{saving ? '…' : 'Save'}</button>
+            </div>
+          </div>
+        ) : (
+          <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${isAgent ? 'bg-sky-600 text-white rounded-br-sm' : isBot ? 'bg-violet-100 text-violet-900 border border-violet-200 rounded-bl-sm' : 'bg-white text-slate-800 border border-slate-200 shadow-sm rounded-bl-sm'}`}>{msg.message_body}</div>
+        )}
+        {canModify && hovering && !editing && (
+          <div className={`absolute -top-6 ${isAgent ? 'right-0' : 'left-0'} flex gap-0 bg-white border border-slate-200 rounded-md shadow-sm z-10`}>
+            <button onClick={() => setEditing(true)} className="p-1.5 text-slate-400 hover:text-sky-600 transition-colors rounded-l-md hover:bg-slate-50" title="Edit"><Pencil size={11} /></button>
+            <button onClick={handleDelete} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors rounded-r-md hover:bg-slate-50 border-l border-slate-100" title="Delete"><Trash2 size={11} /></button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -520,35 +588,77 @@ function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string
 
 // ─── Visitor Info Panel ───────────────────────────────────────────────────────
 function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPage: string | null }) {
+  const api = useApi()
   const ext = conv as Conversation & { ip_address?: string }
+  const tz  = conv.visitor_timezone ?? null
+
+  const [history, setHistory] = useState<Array<{ id: string; status: string; subject: string | null; created_at: string }>>([])
+  const [tick, setTick]       = useState(0)
+
+  useEffect(() => {
+    api.visitorHistory(conv.id).then(setHistory).catch(() => {})
+  }, [conv.id]) // eslint-disable-line
+
+  useEffect(() => {
+    const t = setInterval(() => setTick(x => x + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+
+  const localTime = (tz && tick >= 0)
+    ? (() => { try { return new Date().toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' }) } catch { return null } })()
+    : null
+
   return (
-    <div className="w-56 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
+    <div className="w-60 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
       <div className="px-4 py-3 border-b border-slate-100"><p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Visitor</p></div>
       <div className="px-4 py-3 space-y-3">
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Name</p><p className="text-xs text-slate-800 font-medium">{conv.visitor_name}</p></div>
         {conv.visitor_email && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Email</p><p className="text-xs text-slate-700 break-all">{conv.visitor_email}</p></div>}
-        {ext.ip_address && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">IP Address</p><p className="text-xs text-slate-700 font-mono">{ext.ip_address}</p></div>}
+        {ext.ip_address && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">IP</p><p className="text-xs text-slate-700 font-mono">{ext.ip_address}</p></div>}
+        {tz && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Clock size={9} />Timezone</p>
+            <p className="text-xs text-slate-700">{tz}</p>
+            {localTime && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">🕐 {localTime} local</p>}
+          </div>
+        )}
         {currentPage && (
           <div>
             <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Globe size={9} />Current Page</p>
-            <a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all">{currentPage}</a>
+            <a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all leading-relaxed">{currentPage}</a>
           </div>
         )}
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Channel</p><p className="text-xs text-slate-700 capitalize">{conv.channel}</p></div>
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Brand</p><p className="text-xs text-slate-700">{conv.brand_name}</p></div>
         {conv.sla_breach_at && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">SLA</p><p className={`text-xs ${slaColor(conv.sla_breach_at)}`}>{new Date(conv.sla_breach_at).getTime() < Date.now() ? 'Breached' : `Due ${timeAgo(conv.sla_breach_at)}`}</p></div>}
+        {history.length > 0 && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-1.5">Past Conversations ({history.length})</p>
+            <div className="space-y-1.5">
+              {history.slice(0, 5).map(h => (
+                <div key={h.id} className="text-[10px] p-1.5 bg-slate-50 rounded border border-slate-100">
+                  <span className={`inline-block px-1 py-0.5 rounded text-[9px] font-semibold mr-1 ${h.status === 'open' ? 'bg-emerald-100 text-emerald-700' : h.status === 'closed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{h.status}</span>
+                  <span className="text-slate-500">{h.subject || '(No subject)'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, agents, currentPage, socketConnected }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string) => Promise<void>
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
+  onEditMessage?: (msgId: string, newBody: string) => Promise<void>
+  onDeleteMessage?: (msgId: string) => Promise<void>
+  onPriorityChange?: (priority: Priority) => Promise<void>
   agents: AgentRow[]
   currentPage: string | null
   socketConnected: boolean
@@ -558,9 +668,20 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   const [rephrasing, setRephrase] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [menuOpen, setMenuOpen]   = useState(false)
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const menuRef     = useRef<HTMLDivElement>(null)
   const api = useApi()
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
@@ -638,7 +759,30 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
           </select>
           {nextStatus[conv.status] && <button onClick={() => onStatusChange(nextStatus[conv.status]!)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">{statusActionLabel[conv.status]}</button>}
           <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-all">{exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}Export PDF</button>
-          <button className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"><MoreHorizontal size={16} /></button>
+          <div ref={menuRef} className="relative">
+            <button onClick={() => setMenuOpen(m => !m)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"><MoreHorizontal size={16} /></button>
+            {menuOpen && (
+              <div className="absolute right-0 top-8 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1">
+                {onPriorityChange && (
+                  <>
+                    <p className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Priority</p>
+                    {(['low','normal','high','urgent'] as Priority[]).map(p => (
+                      <button key={p} onClick={() => { onPriorityChange(p); setMenuOpen(false) }}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center gap-2 capitalize ${conv.priority === p ? 'text-sky-600 font-semibold' : 'text-slate-700'}`}>
+                        {p === 'urgent' ? '🔴' : p === 'high' ? '🟠' : p === 'normal' ? '🟡' : '⚪'} {p}
+                        {conv.priority === p && <Check size={11} className="ml-auto text-sky-500" />}
+                      </button>
+                    ))}
+                    <div className="border-t border-slate-100 mt-1 pt-1" />
+                  </>
+                )}
+                <button onClick={() => { navigator.clipboard.writeText(conv.id); setMenuOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                  <Copy size={11} />Copy ID
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {toast && <div className={`mx-4 mt-3 p-3 rounded-lg text-xs flex items-center gap-2 ${toast.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{toast.type === 'success' ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" /> : <AlertTriangle size={14} className="text-red-500 shrink-0" />}<span>{toast.msg}</span></div>}
@@ -646,7 +790,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center"><MessageSquare size={32} className="text-slate-200 mb-2" /><p className="text-sm text-slate-400">No messages yet</p><p className="text-xs text-slate-300">Start the conversation below</p></div>
-          ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} />)}
+          ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} onEdit={onEditMessage} onDelete={onDeleteMessage} />)}
           <div ref={bottomRef} />
         </div>
         <VisitorInfoPanel conv={conv} currentPage={currentPage} />
@@ -1500,7 +1644,8 @@ function ToastStack({ toasts, onDismiss, onOpen }: {
 // ─── Tickets Section ─────────────────────────────────────────────────────────
 function TicketsSection({
   tickets, activeId, agents, messages, visitorPages,
-  onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, socketConnected,
+  onSelect, onSend, onStatusChange, onConvertToTicket, onAssign,
+  onEditMessage, onDeleteMessage, onPriorityChange, socketConnected,
 }: {
   tickets: Conversation[]
   activeId: string | null
@@ -1512,6 +1657,9 @@ function TicketsSection({
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
+  onEditMessage?: (msgId: string, newBody: string) => Promise<void>
+  onDeleteMessage?: (msgId: string) => Promise<void>
+  onPriorityChange?: (priority: Priority) => Promise<void>
   socketConnected: boolean
 }) {
   const activeTicket = tickets.find(t => t.id === activeId)
@@ -1545,6 +1693,9 @@ function TicketsSection({
           onStatusChange={onStatusChange}
           onConvertToTicket={onConvertToTicket}
           onAssign={onAssign}
+          onEditMessage={onEditMessage}
+          onDeleteMessage={onDeleteMessage}
+          onPriorityChange={onPriorityChange}
           agents={agents}
           currentPage={visitorPages[activeId ?? ''] ?? null}
           socketConnected={socketConnected}
@@ -1710,6 +1861,30 @@ function Dashboard() {
     ))
   }, [activeId, agents]) // eslint-disable-line
 
+  const handleEditMessage = useCallback(async (msgId: string, newBody: string) => {
+    if (!activeId) return
+    await api.editMessage(activeId, msgId, newBody)
+    setMessages(prev => ({
+      ...prev,
+      [activeId]: (prev[activeId] ?? []).map(m => m.id === msgId ? { ...m, message_body: newBody } : m)
+    }))
+  }, [activeId]) // eslint-disable-line
+
+  const handleDeleteMessage = useCallback(async (msgId: string) => {
+    if (!activeId) return
+    await api.deleteMessage(activeId, msgId)
+    setMessages(prev => ({
+      ...prev,
+      [activeId]: (prev[activeId] ?? []).filter(m => m.id !== msgId)
+    }))
+  }, [activeId]) // eslint-disable-line
+
+  const handlePriorityChange = useCallback(async (priority: Priority) => {
+    if (!activeId) return
+    await api.patchConversation(activeId, { priority })
+    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, priority } : c))
+  }, [activeId]) // eslint-disable-line
+
   const totalUnread = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const activeConv  = convs.find(c => c.id === activeId)
 
@@ -1746,7 +1921,7 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} /> : <EmptyChat />}
               </>
             )
           )}
@@ -1762,6 +1937,9 @@ function Dashboard() {
               onStatusChange={handleStatusChange}
               onConvertToTicket={handleConvertToTicket}
               onAssign={handleAssign}
+              onEditMessage={handleEditMessage}
+              onDeleteMessage={handleDeleteMessage}
+              onPriorityChange={handlePriorityChange}
               socketConnected={socketOk}
             />
           )}
