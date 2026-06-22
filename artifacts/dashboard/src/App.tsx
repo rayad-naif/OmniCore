@@ -8,18 +8,21 @@ import {
   Eye, EyeOff, Wifi, WifiOff, Copy, Check, ArrowLeft,
   UserPlus, Building, Lock, Plus, Trash2, Pencil,
   Users, Shield, ToggleLeft, ToggleRight, Send as SendIcon,
-  Tag, UserCheck,
+  Tag, UserCheck, BarChart2, Star, Filter, Calendar,
+  TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
+  Paperclip, Bold, Italic, List, AtSign, Smile,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
 import { io, type Socket } from 'socket.io-client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Status      = 'open' | 'closed' | 'pending' | 'ai_handling'
+type Status      = 'open' | 'closed' | 'pending' | 'ai_handling' | 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved'
+type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved' | 'closed'
 type Channel     = 'email' | 'widget' | 'api'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin'
+type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat'
 type StatusFilter = 'all' | Status
 type AuthView    = 'login' | 'signup'
 
@@ -30,6 +33,7 @@ interface Conversation {
   sla_breach_at?: string | null; unread?: number
   is_ticket?: boolean; assigned_agent_id?: string | null
   visitor_id?: string; visitor_timezone?: string | null
+  csat_score?: number | null; brand_id?: string
 }
 
 interface Message {
@@ -54,12 +58,23 @@ interface SANTenant {
   id: string; company_name: string; account_status: string
   subscription_status: string; plan: string; created_at: string
   agent_count: number; max_brands_allowed: number
+  max_agents_allowed: number; ai_feature_enabled: boolean
+  smtp_feature_enabled: boolean; conversation_limit: number
 }
 
 interface UpgradeRequest {
   id: string; tenant_id: string; company_name: string
   agent_name: string; agent_email: string; requested_plan: string
   company_size: string | null; notes: string | null; status: string; created_at: string
+}
+
+interface CsatAgent {
+  agent_id: string; agent_name: string; agent_email: string
+  total_assigned: number; closed_count: number
+  avg_csat_score: number | null; positive_ratings: number
+  five_star: number; four_star: number; three_star: number; two_star: number; one_star: number
+  rated_count: number; avg_first_response_minutes: number | null
+  closed_today: number; participated_today: number
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
@@ -71,8 +86,9 @@ function useApi() {
     agent: { id: string; name: string; email: string; tenantId: string; role: string; isSuperAdmin?: boolean } | null
   }
   return useCallback(() => ({
-    listConversations: async (): Promise<Conversation[]> => {
-      const r = await authFetch(`${API}/conversations`)
+    listConversations: async (params?: Record<string, string>): Promise<Conversation[]> => {
+      const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+      const r = await authFetch(`${API}/conversations${qs}`)
       if (!r.ok) throw new Error(`${r.status}`)
       const d = await r.json() as { conversations: Conversation[] }
       return d.conversations
@@ -117,18 +133,9 @@ function useApi() {
       if (!agent?.tenantId) throw new Error('Not authenticated')
       const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands`, {
         method: 'POST',
-        body: JSON.stringify({
-          brand_name: name,
-          widget_config_json: {
-            website_url: websiteUrl || undefined,
-            support_email: supportEmail || undefined,
-          },
-        }),
+        body: JSON.stringify({ brand_name: name, widget_config_json: { website_url: websiteUrl || undefined, support_email: supportEmail || undefined } }),
       })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to create brand')
-      }
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to create brand') }
       return r.json() as Promise<Brand>
     },
     editBrand: async (brandId: string, patch: { brand_name?: string; website_url?: string; support_email?: string; color?: string }): Promise<Brand> => {
@@ -140,13 +147,8 @@ function useApi() {
       const body: Record<string, unknown> = {}
       if (patch.brand_name) body.brand_name = patch.brand_name
       if (Object.keys(widget_config_json).length) body.widget_config_json = widget_config_json
-      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands/${brandId}`, {
-        method: 'PATCH', body: JSON.stringify(body),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to update brand')
-      }
+      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands/${brandId}`, { method: 'PATCH', body: JSON.stringify(body) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update brand') }
       return r.json() as Promise<Brand>
     },
     deleteBrand: async (brandId: string): Promise<void> => {
@@ -155,9 +157,7 @@ function useApi() {
       if (!r.ok) throw new Error('Failed to delete brand')
     },
     rephraseText: async (draft: string, tone = 'professional'): Promise<string> => {
-      const r = await authFetch(`${API}/ai/rephrase`, {
-        method: 'POST', body: JSON.stringify({ draft, tone }),
-      })
+      const r = await authFetch(`${API}/ai/rephrase`, { method: 'POST', body: JSON.stringify({ draft, tone }) })
       if (!r.ok) throw new Error('AI unavailable')
       const d = await r.json() as { rephrased: string }
       return d.rephrased
@@ -168,13 +168,8 @@ function useApi() {
       return r.json() as Promise<AgentRow[]>
     },
     inviteAgent: async (name: string, email: string, role: string): Promise<AgentRow> => {
-      const r = await authFetch(`${API}/agents`, {
-        method: 'POST', body: JSON.stringify({ name, email, role }),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to invite agent')
-      }
+      const r = await authFetch(`${API}/agents`, { method: 'POST', body: JSON.stringify({ name, email, role }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to invite agent') }
       return r.json() as Promise<AgentRow>
     },
     removeAgent: async (id: string): Promise<void> => {
@@ -182,22 +177,12 @@ function useApi() {
       if (!r.ok) throw new Error('Failed to remove agent')
     },
     updateProfile: async (name?: string, password?: string): Promise<void> => {
-      const r = await authFetch(`${API}/agents/me`, {
-        method: 'PATCH', body: JSON.stringify({ name, password }),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to update profile')
-      }
+      const r = await authFetch(`${API}/agents/me`, { method: 'PATCH', body: JSON.stringify({ name, password }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update profile') }
     },
     createUpgradeRequest: async (requested_plan: string, company_size: string, notes: string): Promise<void> => {
-      const r = await authFetch(`${API}/billing/upgrade-request`, {
-        method: 'POST', body: JSON.stringify({ requested_plan, company_size, notes }),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to submit request')
-      }
+      const r = await authFetch(`${API}/billing/upgrade-request`, { method: 'POST', body: JSON.stringify({ requested_plan, company_size, notes }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to submit request') }
     },
     listSANTenants: async (): Promise<SANTenant[]> => {
       const r = await authFetch(`${API}/super-admin/tenants`)
@@ -210,48 +195,27 @@ function useApi() {
       return r.json() as Promise<UpgradeRequest[]>
     },
     patchTenantStatus: async (id: string, account_status: string): Promise<void> => {
-      const r = await authFetch(`${API}/super-admin/tenants/${id}/status`, {
-        method: 'PATCH', body: JSON.stringify({ account_status }),
-      })
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/status`, { method: 'PATCH', body: JSON.stringify({ account_status }) })
       if (!r.ok) throw new Error('Failed to update status')
     },
     patchTenantBilling: async (id: string, plan: string, subscription_status: string): Promise<void> => {
-      const r = await authFetch(`${API}/super-admin/tenants/${id}/billing`, {
-        method: 'PATCH', body: JSON.stringify({ plan, subscription_status }),
-      })
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/billing`, { method: 'PATCH', body: JSON.stringify({ plan, subscription_status }) })
       if (!r.ok) throw new Error('Failed to update billing')
     },
     purgeTenant: async (id: string, confirm_name: string): Promise<void> => {
-      const r = await authFetch(`${API}/super-admin/tenants/${id}/purge`, {
-        method: 'DELETE', body: JSON.stringify({ confirm_name }),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Purge failed')
-      }
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/purge`, { method: 'DELETE', body: JSON.stringify({ confirm_name }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Purge failed') }
     },
-    patchTenantLimits: async (id: string, max_brands_allowed: number): Promise<void> => {
-      const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, {
-        method: 'PATCH', body: JSON.stringify({ max_brands_allowed }),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to update limits')
-      }
+    patchTenantLimits: async (id: string, limits: Partial<{ max_brands_allowed: number; max_agents_allowed: number; ai_feature_enabled: boolean; smtp_feature_enabled: boolean; conversation_limit: number }>): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, { method: 'PATCH', body: JSON.stringify(limits) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update limits') }
     },
     updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object }): Promise<void> => {
-      const r = await authFetch(`${API}/tenants/settings`, {
-        method: 'PATCH', body: JSON.stringify(patch),
-      })
-      if (!r.ok) {
-        const err = await r.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to update workspace')
-      }
+      const r = await authFetch(`${API}/tenants/settings`, { method: 'PATCH', body: JSON.stringify(patch) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update workspace') }
     },
     editMessage: async (convId: string, msgId: string, body: string): Promise<void> => {
-      const r = await authFetch(`${API}/conversations/${convId}/messages/${msgId}`, {
-        method: 'PATCH', body: JSON.stringify({ body }),
-      })
+      const r = await authFetch(`${API}/conversations/${convId}/messages/${msgId}`, { method: 'PATCH', body: JSON.stringify({ body }) })
       if (!r.ok) throw new Error('Failed to edit message')
     },
     deleteMessage: async (convId: string, msgId: string): Promise<void> => {
@@ -262,6 +226,12 @@ function useApi() {
       const r = await authFetch(`${API}/conversations/${convId}/visitor-history`)
       if (!r.ok) return []
       return r.json() as Promise<Array<{ id: string; status: string; subject: string | null; created_at: string }>>
+    },
+    getCsatReport: async (params?: { brand_id?: string; date_from?: string; date_to?: string }): Promise<CsatAgent[]> => {
+      const qs = params ? '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v))).toString() : ''
+      const r = await authFetch(`${API}/conversations/csat${qs}`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<CsatAgent[]>
     },
   }), [authFetch, agent?.tenantId])()
 }
@@ -284,6 +254,17 @@ function slaColor(breachAt?: string | null): string {
   return 'text-slate-400'
 }
 
+function StarRating({ score, size = 'sm' }: { score: number | null | undefined; size?: 'sm' | 'lg' }) {
+  const s = size === 'lg' ? 14 : 10
+  return (
+    <span className="inline-flex gap-0.5">
+      {[1,2,3,4,5].map(n => (
+        <Star key={n} size={s} className={n <= (score ?? 0) ? 'text-amber-400 fill-amber-400' : 'text-slate-200 fill-slate-200'} />
+      ))}
+    </span>
+  )
+}
+
 // ─── Logo ─────────────────────────────────────────────────────────────────────
 function OmniLogo({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const s = size === 'sm' ? 'w-7 h-7' : 'w-9 h-9'
@@ -301,17 +282,12 @@ function SignupPage({ onGoLogin }: { onGoLogin: (successMsg?: string) => void })
   const [showPw, setShowPw]     = useState(false)
   const [submitting, setSub]    = useState(false)
   const [error, setError]       = useState<string | null>(null)
-
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm(f => ({ ...f, [k]: e.target.value }))
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setError(null); setSub(true)
     try {
-      const res = await fetch(`${API}/auth/signup`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
+      const res = await fetch(`${API}/auth/signup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
       const data = await res.json() as { error?: string }
       if (!res.ok) throw new Error(data.error ?? 'Signup failed')
       onGoLogin('Account created! Sign in below.')
@@ -321,34 +297,22 @@ function SignupPage({ onGoLogin }: { onGoLogin: (successMsg?: string) => void })
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center">
-          <OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Create your account</p></div>
-        </div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Create your account</p></div></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Start for free</h1>
           <p className="text-slate-500 text-xs mb-5">Set up your team workspace in seconds</p>
           {error && <div className="mb-4 p-3 bg-red-950/50 border border-red-900 rounded-lg text-xs text-red-400 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {error}</div>}
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><Building size={11} /> Company name</span></label>
-              <input type="text" value={form.companyName} onChange={set('companyName')} required placeholder="Acme Inc." className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
-            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><User size={11} /> Your name</span></label>
-              <input type="text" value={form.adminName} onChange={set('adminName')} required placeholder="Alex Johnson" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
-            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><Mail size={11} /> Work email</span></label>
-              <input type="email" value={form.adminEmail} onChange={set('adminEmail')} required placeholder="alex@acme.com" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><Building size={11} /> Company name</span></label><input type="text" value={form.companyName} onChange={set('companyName')} required placeholder="Acme Inc." className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><User size={11} /> Your name</span></label><input type="text" value={form.adminName} onChange={set('adminName')} required placeholder="Alex Johnson" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><Mail size={11} /> Work email</span></label><input type="email" value={form.adminEmail} onChange={set('adminEmail')} required placeholder="alex@acme.com" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
             <div><label className="block text-xs font-medium text-slate-400 mb-1.5"><span className="inline-flex items-center gap-1.5"><Lock size={11} /> Password</span></label>
-              <div className="relative">
-                <input type={showPw ? 'text' : 'password'} value={form.password} onChange={set('password')} required placeholder="Min 8 characters" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
-                <button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button>
-              </div>
+              <div className="relative"><input type={showPw ? 'text' : 'password'} value={form.password} onChange={set('password')} required placeholder="Min 8 characters" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /><button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button></div>
             </div>
-            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 mt-1">
-              {submitting ? <><RefreshCw size={13} className="animate-spin" /> Creating account…</> : <><UserPlus size={14} /> Create free account</>}
-            </button>
+            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 mt-1">{submitting ? <><RefreshCw size={13} className="animate-spin" /> Creating account…</> : <><UserPlus size={14} /> Create free account</>}</button>
           </form>
         </div>
-        <button onClick={() => onGoLogin()} className="mt-4 w-full flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-          <ArrowLeft size={12} /> Already have an account? Sign in
-        </button>
+        <button onClick={() => onGoLogin()} className="mt-4 w-full flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"><ArrowLeft size={12} /> Already have an account? Sign in</button>
       </div>
     </div>
   )
@@ -370,31 +334,20 @@ function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; success
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center">
-          <OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Agent Dashboard</p></div>
-        </div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Agent Dashboard</p></div></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Sign in</h1>
           <p className="text-slate-500 text-xs mb-5">Enter your agent credentials</p>
           {successMsg && <div className="mb-4 p-3 bg-emerald-950/60 border border-emerald-800 rounded-lg text-xs text-emerald-400 flex items-center gap-2"><CheckCircle2 size={13} className="shrink-0" /> {successMsg}</div>}
           {error && <div className="mb-4 p-3 bg-red-950/50 border border-red-900 rounded-lg text-xs text-red-400 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {error}</div>}
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
+            <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@company.com" autoComplete="email" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /></div>
             <div><label className="block text-xs font-medium text-slate-400 mb-1.5">Password</label>
-              <div className="relative">
-                <input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" autoComplete="current-password" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" />
-                <button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button>
-              </div>
+              <div className="relative"><input type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" autoComplete="current-password" className="w-full px-3 py-2.5 pr-10 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500 transition-all" /><button type="button" onClick={() => setShowPw(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">{showPw ? <EyeOff size={14} /> : <Eye size={14} />}</button></div>
             </div>
-            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
-              {submitting && <RefreshCw size={13} className="animate-spin" />}
-              {submitting ? 'Signing in…' : 'Sign in'}
-            </button>
+            <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">{submitting && <RefreshCw size={13} className="animate-spin" />}{submitting ? 'Signing in…' : 'Sign in'}</button>
           </form>
-          <div className="mt-4 pt-4 border-t border-slate-800 text-center">
-            <button onClick={onGoSignup} className="text-xs text-sky-500 hover:text-sky-400 transition-colors">New to OmniCore? Create a free account →</button>
-          </div>
+          <div className="mt-4 pt-4 border-t border-slate-800 text-center"><button onClick={onGoSignup} className="text-xs text-sky-500 hover:text-sky-400 transition-colors">New to OmniCore? Create a free account →</button></div>
         </div>
         <p className="text-center text-xs text-slate-700 mt-4">Demo: admin@omnicore.test / Admin123!</p>
       </div>
@@ -405,12 +358,16 @@ function LoginPage({ onGoSignup, successMsg }: { onGoSignup: () => void; success
 // ─── StatusBadge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: Status }) {
   const map: Record<Status, { label: string; cls: string; icon: React.ReactNode }> = {
-    open:        { label: 'Open',    cls: 'bg-sky-100 text-sky-700 border border-sky-200',          icon: <Circle size={6} className="fill-sky-500 text-sky-500" /> },
-    pending:     { label: 'Pending', cls: 'bg-amber-50 text-amber-700 border border-amber-200',     icon: <Clock size={10} /> },
-    ai_handling: { label: 'AI',      cls: 'bg-violet-100 text-violet-700 border border-violet-200', icon: <Sparkles size={10} /> },
-    closed:      { label: 'Closed',  cls: 'bg-slate-100 text-slate-500 border border-slate-200',    icon: <CheckCircle2 size={10} /> },
+    open:                  { label: 'Open',            cls: 'bg-sky-100 text-sky-700 border border-sky-200',            icon: <Circle size={6} className="fill-sky-500 text-sky-500" /> },
+    pending:               { label: 'Pending',         cls: 'bg-amber-50 text-amber-700 border border-amber-200',       icon: <Clock size={10} /> },
+    ai_handling:           { label: 'AI',              cls: 'bg-violet-100 text-violet-700 border border-violet-200',   icon: <Sparkles size={10} /> },
+    closed:                { label: 'Closed',          cls: 'bg-slate-100 text-slate-500 border border-slate-200',      icon: <CheckCircle2 size={10} /> },
+    submitted:             { label: 'Submitted',       cls: 'bg-blue-50 text-blue-700 border border-blue-200',          icon: <Tag size={10} /> },
+    in_progress:           { label: 'In Progress',     cls: 'bg-indigo-50 text-indigo-700 border border-indigo-200',    icon: <RefreshCw size={10} /> },
+    waiting_on_customer:   { label: 'Waiting',         cls: 'bg-orange-50 text-orange-700 border border-orange-200',    icon: <Clock size={10} /> },
+    resolved:              { label: 'Resolved',        cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200', icon: <CheckCircle2 size={10} /> },
   }
-  const { label, cls, icon } = map[status]
+  const { label, cls, icon } = map[status] ?? map.open
   return <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide ${cls}`}>{icon}{label}</span>
 }
 
@@ -439,7 +396,9 @@ function ConversationRow({ conv, isActive, onClick }: { conv: Conversation; isAc
       </div>
       <p className={`text-xs mb-1.5 truncate ${isActive ? 'text-slate-700 font-medium' : 'text-slate-600'}`}>{conv.subject || '(No subject)'}</p>
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0"><StatusBadge status={conv.status} /><ChannelIcon channel={conv.channel} />
+        <div className="flex items-center gap-2 min-w-0">
+          <StatusBadge status={conv.status} /><ChannelIcon channel={conv.channel} />
+          {conv.csat_score && <StarRating score={conv.csat_score} />}
           {conv.sla_breach_at && <span className={`text-[10px] flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}>{breached && <AlertTriangle size={9} />} SLA</span>}
         </div>
         {conv.agent_name && <span className="text-[10px] text-slate-400 truncate shrink-0">{conv.agent_name}</span>}
@@ -449,57 +408,86 @@ function ConversationRow({ conv, isActive, onClick }: { conv: Conversation; isAc
 }
 
 // ─── Conversations List ───────────────────────────────────────────────────────
-const FILTERS: { label: string; value: StatusFilter }[] = [
+const CONV_FILTERS: { label: string; value: StatusFilter }[] = [
   { label: 'All', value: 'all' }, { label: 'Open', value: 'open' },
-  { label: 'Pending', value: 'pending' }, { label: 'AI', value: 'ai_handling' }, { label: 'Closed', value: 'closed' },
+  { label: 'Pending', value: 'pending' }, { label: 'AI', value: 'ai_handling' },
+  { label: 'Closed', value: 'closed' },
 ]
 
-function ConversationsList({ convs, activeId, onSelect }: { convs: Conversation[]; activeId: string | null; onSelect: (id: string) => void }) {
-  const [query, setQuery]   = useState('')
-  const [filter, setFilter] = useState<StatusFilter>('all')
+function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
+  convs: Conversation[]; activeId: string | null; onSelect: (id: string) => void
+  brands: Brand[]; agents: AgentRow[]
+}) {
+  const [query, setQuery]       = useState('')
+  const [filter, setFilter]     = useState<StatusFilter>('all')
+  const [brandFilter, setBrand] = useState('')
+  const [agentFilter, setAgent] = useState('')
+  const [ratingFilter, setRating] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+  const [showFilters, setShowFilters] = useState(false)
 
-  const filtered = convs.filter(c => {
-    const matchStatus = filter === 'all' || c.status === filter
-    const q = query.toLowerCase()
-    const matchQuery = !q || c.visitor_name.toLowerCase().includes(q) || (c.subject ?? '').toLowerCase().includes(q) || (c.visitor_email ?? '').toLowerCase().includes(q)
-    return matchStatus && matchQuery
-  })
+  const filtered = convs
+    .filter(c => !c.is_ticket)
+    .filter(c => filter === 'all' || c.status === filter)
+    .filter(c => !brandFilter || c.brand_id === brandFilter)
+    .filter(c => !agentFilter || c.assigned_agent_id === agentFilter)
+    .filter(c => !ratingFilter || String(c.csat_score) === ratingFilter)
+    .filter(c => !dateFrom || new Date(c.updated_at) >= new Date(dateFrom))
+    .filter(c => !dateTo   || new Date(c.updated_at) <= new Date(dateTo + 'T23:59:59'))
+    .filter(c => {
+      if (!query) return true
+      const q = query.toLowerCase()
+      return c.visitor_name.toLowerCase().includes(q) || (c.subject ?? '').toLowerCase().includes(q) || (c.visitor_email ?? '').toLowerCase().includes(q)
+    })
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
-  const counts: Record<StatusFilter, number> = {
-    all: convs.length, open: convs.filter(c => c.status === 'open').length,
-    pending: convs.filter(c => c.status === 'pending').length,
-    ai_handling: convs.filter(c => c.status === 'ai_handling').length,
-    closed: convs.filter(c => c.status === 'closed').length,
-  }
+  const hasFilters = brandFilter || agentFilter || ratingFilter || dateFrom || dateTo
 
   return (
     <div className="flex flex-col h-full w-80 border-r border-slate-200 bg-white shrink-0">
       <div className="px-4 pt-4 pb-3 border-b border-slate-100">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-800">Conversations</h2>
-          <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{convs.length}</span>
+          <h2 className="text-sm font-semibold text-slate-800">Inbox</h2>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{filtered.length}</span>
+            <button onClick={() => setShowFilters(f => !f)} className={`p-1 rounded-md transition-colors ${hasFilters ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`} title="Filters"><Filter size={13} /></button>
+          </div>
         </div>
-        <div className="relative">
+        <div className="relative mb-2">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input type="text" placeholder="Search conversations…" value={query} onChange={e => setQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-md text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" />
-          {query && <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={12} /></button>}
+          <input type="text" placeholder="Search by name, email, content…" value={query} onChange={e => setQuery(e.target.value)} className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
         </div>
-      </div>
-      <div className="flex gap-0.5 px-3 py-2 bg-slate-50/80 border-b border-slate-100 overflow-x-auto">
-        {FILTERS.map(f => (
-          <button key={f.value} onClick={() => setFilter(f.value)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium whitespace-nowrap transition-colors ${filter === f.value ? 'bg-white text-slate-800 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>
-            {f.label}<span className={`text-[10px] ${filter === f.value ? 'text-sky-600' : 'text-slate-400'}`}>{counts[f.value]}</span>
-          </button>
-        ))}
+        {showFilters && (
+          <div className="space-y-2 pt-2 border-t border-slate-100 mt-2">
+            <select value={brandFilter} onChange={e => setBrand(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400">
+              <option value="">All Brands</option>
+              {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
+            </select>
+            <select value={agentFilter} onChange={e => setAgent(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400">
+              <option value="">All Agents</option>
+              {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <select value={ratingFilter} onChange={e => setRating(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400">
+              <option value="">All Ratings</option>
+              {[5,4,3,2,1].map(n => <option key={n} value={String(n)}>{n} ★</option>)}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" placeholder="From" />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" placeholder="To" />
+            </div>
+            {hasFilters && <button onClick={() => { setBrand(''); setAgent(''); setRating(''); setDateFrom(''); setDateTo('') }} className="text-xs text-red-500 hover:text-red-600">Clear filters</button>}
+          </div>
+        )}
+        <div className="flex gap-1 mt-2 overflow-x-auto pb-1 scrollbar-none">
+          {CONV_FILTERS.map(f => (
+            <button key={f.value} onClick={() => setFilter(f.value)} className={`shrink-0 px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${filter === f.value ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{f.label}</button>
+          ))}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center p-8">
-            <Inbox size={28} className="text-slate-300 mb-2" />
-            <p className="text-sm text-slate-400">{query ? 'No matches' : 'No conversations'}</p>
-          </div>
+          <div className="flex flex-col items-center justify-center h-full text-center p-8"><Inbox size={28} className="text-slate-200 mb-2" /><p className="text-xs text-slate-400">No conversations match</p></div>
         ) : filtered.map(c => <ConversationRow key={c.id} conv={c} isActive={c.id === activeId} onClick={() => onSelect(c.id)} />)}
       </div>
     </div>
@@ -512,88 +500,71 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
   onEdit?: (msgId: string, newBody: string) => Promise<void>
   onDelete?: (msgId: string) => Promise<void>
 }) {
-  const [hovering, setHovering] = useState(false)
   const [editing, setEditing]   = useState(false)
-  const [editText, setEditText] = useState(msg.message_body)
+  const [editDraft, setDraft]   = useState(msg.message_body)
   const [saving, setSaving]     = useState(false)
+  const [hovered, setHovered]   = useState(false)
 
-  const isAgent    = msg.sender_type === 'agent'
-  const isBot      = msg.sender_type === 'bot'
-  const isNote     = msg.is_internal_note
-  const name       = msg.sender_name || (isAgent ? 'Agent' : isBot ? 'AI' : visitorName)
-  const canModify  = isAgent && !!onEdit && !!onDelete
+  const isAgent   = msg.sender_type === 'agent'
+  const isBot     = msg.sender_type === 'bot'
+  const isSystem  = msg.sender_type === 'system'
+  const isInternal = msg.is_internal_note
 
-  const handleSaveEdit = async () => {
-    if (!editText.trim() || saving) return
-    setSaving(true)
-    try { await onEdit!(msg.id, editText.trim()); setEditing(false) }
-    catch { /* noop */ } finally { setSaving(false) }
-  }
-
-  const handleDelete = async () => {
-    if (!window.confirm('Delete this message?')) return
-    try { await onDelete!(msg.id) } catch { /* noop */ }
-  }
-
-  if (isNote) return (
-    <div className="flex justify-center my-1">
-      <div className="max-w-lg bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
-        <span className="font-semibold mr-1">🔒 Internal · {name}</span>{msg.message_body}
-      </div>
+  if (isSystem) return (
+    <div className="flex justify-center">
+      <span className="text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{msg.message_body}</span>
     </div>
   )
 
+  const handleSave = async () => {
+    if (!editDraft.trim() || !onEdit) return
+    setSaving(true)
+    try { await onEdit(msg.id, editDraft.trim()); setEditing(false) }
+    catch { /* ignore */ }
+    finally { setSaving(false) }
+  }
+
   return (
-    <div
-      className={`flex items-end gap-2 ${isAgent ? 'flex-row-reverse' : 'flex-row'}`}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-        {isAgent ? <User size={13} /> : isBot ? <Bot size={13} /> : <span className="text-xs font-semibold">{name[0]?.toUpperCase()}</span>}
+    <div className={`flex gap-2.5 ${isAgent || isBot ? 'flex-row-reverse' : 'flex-row'}`} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-1 ${isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
+        {isBot ? <Bot size={12} /> : isAgent ? <User size={12} /> : visitorName[0]?.toUpperCase()}
       </div>
-      <div className="max-w-sm lg:max-w-md xl:max-w-lg relative">
-        <div className={`text-[10px] mb-1 text-slate-400 ${isAgent ? 'text-right' : 'text-left'}`}>{name} · {timeAgo(msg.created_at)}</div>
+      <div className={`max-w-[70%] ${isAgent || isBot ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+        {isInternal && <span className="text-[9px] text-amber-600 font-semibold uppercase tracking-wide bg-amber-50 px-1.5 py-0.5 rounded-sm border border-amber-200">Internal note</span>}
         {editing ? (
-          <div className="flex flex-col gap-1">
-            <textarea
-              className="px-3 py-2 rounded-2xl text-sm leading-relaxed border border-sky-400 outline-none resize-none w-full bg-white text-slate-800 min-w-[200px]"
-              value={editText}
-              onChange={e => setEditText(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit() }
-                if (e.key === 'Escape') { setEditing(false); setEditText(msg.message_body) }
-              }}
-              rows={2}
-              autoFocus
-            />
-            <div className="flex gap-1 justify-end">
-              <button onClick={() => { setEditing(false); setEditText(msg.message_body) }} className="px-2 py-0.5 text-[10px] text-slate-500 hover:text-slate-700 rounded border border-slate-200">Cancel</button>
-              <button onClick={handleSaveEdit} disabled={saving} className="px-2 py-0.5 text-[10px] bg-sky-600 text-white rounded disabled:opacity-50">{saving ? '…' : 'Save'}</button>
+          <div className="flex flex-col gap-1.5">
+            <textarea value={editDraft} onChange={e => setDraft(e.target.value)} rows={3} className="px-3 py-2 bg-white border border-sky-300 rounded-xl text-sm text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/30 w-64" />
+            <div className="flex gap-1.5">
+              <button onClick={handleSave} disabled={saving} className="px-2.5 py-1 text-xs bg-sky-600 text-white rounded-lg disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+              <button onClick={() => setEditing(false)} className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-700">Cancel</button>
             </div>
           </div>
         ) : (
-          <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${isAgent ? 'bg-sky-600 text-white rounded-br-sm' : isBot ? 'bg-violet-100 text-violet-900 border border-violet-200 rounded-bl-sm' : 'bg-white text-slate-800 border border-slate-200 shadow-sm rounded-bl-sm'}`}>{msg.message_body}</div>
-        )}
-        {canModify && hovering && !editing && (
-          <div className={`absolute -top-6 ${isAgent ? 'right-0' : 'left-0'} flex gap-0 bg-white border border-slate-200 rounded-md shadow-sm z-10`}>
-            <button onClick={() => setEditing(true)} className="p-1.5 text-slate-400 hover:text-sky-600 transition-colors rounded-l-md hover:bg-slate-50" title="Edit"><Pencil size={11} /></button>
-            <button onClick={handleDelete} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors rounded-r-md hover:bg-slate-50 border-l border-slate-100" title="Delete"><Trash2 size={11} /></button>
+          <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${isInternal ? 'bg-amber-50 border border-amber-200 text-amber-900' : isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-50 border border-violet-200 text-violet-900' : 'bg-white border border-slate-200 text-slate-800'}`}>
+            {msg.message_body}
           </div>
         )}
+        <div className={`flex items-center gap-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
+          <span className="text-[10px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          {hovered && !editing && isAgent && (
+            <div className="flex items-center gap-1">
+              {onEdit && <button onClick={() => setEditing(true)} className="p-0.5 text-slate-400 hover:text-slate-600 rounded"><Pencil size={10} /></button>}
+              {onDelete && <button onClick={() => window.confirm('Delete this message?') && onDelete(msg.id)} className="p-0.5 text-slate-400 hover:text-red-500 rounded"><Trash2 size={10} /></button>}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-// ─── Visitor Info Panel ───────────────────────────────────────────────────────
+// ─── Visitor Info Panel ────────────────────────────────────────────────────────
 function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPage: string | null }) {
   const api = useApi()
-  const ext = conv as Conversation & { ip_address?: string }
-  const tz  = conv.visitor_timezone ?? null
-
+  const [ext, setExt] = useState<{ ip_address?: string }>({})
   const [history, setHistory] = useState<Array<{ id: string; status: string; subject: string | null; created_at: string }>>([])
-  const [tick, setTick]       = useState(0)
+  const [tick, setTick] = useState(0)
+  const tz = conv.visitor_timezone
 
   useEffect(() => {
     api.visitorHistory(conv.id).then(setHistory).catch(() => {})
@@ -609,27 +580,16 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
     : null
 
   return (
-    <div className="w-60 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
-      <div className="px-4 py-3 border-b border-slate-100"><p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Visitor</p></div>
+    <div className="w-56 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
+      <div className="px-4 py-3 border-b border-slate-100"><p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Contact</p></div>
       <div className="px-4 py-3 space-y-3">
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Name</p><p className="text-xs text-slate-800 font-medium">{conv.visitor_name}</p></div>
         {conv.visitor_email && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Email</p><p className="text-xs text-slate-700 break-all">{conv.visitor_email}</p></div>}
-        {ext.ip_address && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">IP</p><p className="text-xs text-slate-700 font-mono">{ext.ip_address}</p></div>}
-        {tz && (
-          <div>
-            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Clock size={9} />Timezone</p>
-            <p className="text-xs text-slate-700">{tz}</p>
-            {localTime && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">🕐 {localTime} local</p>}
-          </div>
-        )}
-        {currentPage && (
-          <div>
-            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Globe size={9} />Current Page</p>
-            <a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all leading-relaxed">{currentPage}</a>
-          </div>
-        )}
+        {tz && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Clock size={9} />Timezone</p><p className="text-xs text-slate-700">{tz}</p>{localTime && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">🕐 {localTime} local</p>}</div>}
+        {currentPage && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Globe size={9} />Current Page</p><a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all leading-relaxed">{currentPage}</a></div>}
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Channel</p><p className="text-xs text-slate-700 capitalize">{conv.channel}</p></div>
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Brand</p><p className="text-xs text-slate-700">{conv.brand_name}</p></div>
+        {conv.csat_score && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">CSAT</p><StarRating score={conv.csat_score} /></div>}
         {conv.sla_breach_at && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">SLA</p><p className={`text-xs ${slaColor(conv.sla_breach_at)}`}>{new Date(conv.sla_breach_at).getTime() < Date.now() ? 'Breached' : `Due ${timeAgo(conv.sla_breach_at)}`}</p></div>}
         {history.length > 0 && (
           <div>
@@ -649,6 +609,96 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
   )
 }
 
+// ─── Email-style Compose Box ──────────────────────────────────────────────────
+function EmailComposeBox({ conv, onSend, disabled }: {
+  conv: Conversation
+  onSend: (body: string) => Promise<void>
+  disabled?: boolean
+}) {
+  const [draft, setDraft]         = useState('')
+  const [sending, setSending]     = useState(false)
+  const [isNote, setIsNote]       = useState(false)
+  const [rephrasing, setRephrase] = useState(false)
+  const textareaRef               = useRef<HTMLTextAreaElement>(null)
+  const api = useApi()
+
+  const handleSend = async () => {
+    const body = draft.trim()
+    if (!body || sending) return
+    setDraft(''); setSending(true)
+    try { await onSend(body) } catch { /* ignore */ } finally { setSending(false) }
+    textareaRef.current?.focus()
+  }
+
+  const handleRephrase = async () => {
+    const body = draft.trim()
+    if (!body || rephrasing) return
+    setRephrase(true)
+    try { const improved = await api.rephraseText(body); setDraft(improved) }
+    catch { /* ignore */ }
+    finally { setRephrase(false); textareaRef.current?.focus() }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  }
+
+  const isClosed = conv.status === 'closed' || disabled
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mx-4 mb-4 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
+      {/* Email header fields */}
+      <div className="border-b border-slate-100">
+        <div className="flex items-center px-4 py-2 border-b border-slate-100">
+          <span className="text-xs font-medium text-slate-400 w-10 shrink-0">To</span>
+          <span className="text-xs text-slate-700 flex-1">{conv.visitor_email || conv.visitor_name}</span>
+          {conv.visitor_email && <span className="text-[10px] text-slate-400">{conv.visitor_name}</span>}
+        </div>
+        <div className="flex items-center px-4 py-2">
+          <span className="text-xs font-medium text-slate-400 w-10 shrink-0">Subj</span>
+          <span className="text-xs text-slate-600 flex-1 truncate">{conv.subject || '(No subject)'}</span>
+          <div className="flex items-center gap-2 ml-2">
+            <button onClick={() => setIsNote(false)} className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${!isNote ? 'bg-sky-100 text-sky-700' : 'text-slate-400 hover:text-slate-600'}`}>Reply</button>
+            <button onClick={() => setIsNote(true)} className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${isNote ? 'bg-amber-100 text-amber-700' : 'text-slate-400 hover:text-slate-600'}`}>Note</button>
+          </div>
+        </div>
+      </div>
+      {/* Body */}
+      <textarea
+        ref={textareaRef}
+        rows={4}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={isClosed ? 'Conversation closed — reopen to reply' : isNote ? 'Write an internal note (not visible to visitor)…' : 'Write your reply… (Enter to send, Shift+Enter for newline)'}
+        disabled={isClosed}
+        className={`w-full px-4 py-3 text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none leading-relaxed bg-transparent ${isNote ? 'bg-amber-50/30' : ''}`}
+      />
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-3 py-2 border-t border-slate-100 bg-slate-50/50">
+        <div className="flex items-center gap-1">
+          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Attach file (coming soon)"><Paperclip size={14} /></button>
+          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Bold (coming soon)"><Bold size={13} /></button>
+          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Italic (coming soon)"><Italic size={13} /></button>
+          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="List (coming soon)"><List size={13} /></button>
+          <div className="w-px h-4 bg-slate-200 mx-0.5" />
+          <button onClick={handleRephrase} disabled={!draft.trim() || rephrasing || isClosed} title="AI rephrase" className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+            {rephrasing ? <RefreshCw size={14} className="animate-spin text-violet-500" /> : <Sparkles size={14} />}
+          </button>
+        </div>
+        <button
+          onClick={handleSend}
+          disabled={!draft.trim() || sending || isClosed}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isNote ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
+        >
+          {sending ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+          {isNote ? 'Add Note' : 'Send Reply'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
 function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected }: {
   conv: Conversation; messages: Message[]
@@ -663,67 +713,59 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   currentPage: string | null
   socketConnected: boolean
 }) {
-  const [draft, setDraft]         = useState('')
-  const [sending, setSending]     = useState(false)
-  const [rephrasing, setRephrase] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [menuOpen, setMenuOpen]   = useState(false)
+  const [csatScore, setCsatScore] = useState<number>(conv.csat_score ?? 0)
+  const [ticketStatus, setTicketStatus] = useState<Status>(conv.status)
   const bottomRef   = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef     = useRef<HTMLDivElement>(null)
   const api = useApi()
 
   useEffect(() => {
     if (!menuOpen) return
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
+    const handler = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false) }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [menuOpen])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => { setTicketStatus(conv.status) }, [conv.status])
 
-  const showToast = (type: 'success' | 'error', msg: string) => {
-    setToast({ type, msg }); setTimeout(() => setToast(null), 5000)
-  }
-
-  const handleSend = async () => {
-    const body = draft.trim()
-    if (!body || sending) return
-    setDraft(''); setSending(true)
-    try { await onSend(body) } catch { showToast('error', 'Failed to send') } finally { setSending(false) }
-    textareaRef.current?.focus()
-  }
-
-  const handleRephrase = async () => {
-    const body = draft.trim()
-    if (!body || rephrasing) return
-    setRephrase(true)
-    try { const improved = await api.rephraseText(body); setDraft(improved) }
-    catch { showToast('error', 'AI rephrase unavailable') }
-    finally { setRephrase(false); textareaRef.current?.focus() }
-  }
+  const showToast = (type: 'success' | 'error', msg: string) => { setToast({ type, msg }); setTimeout(() => setToast(null), 5000) }
 
   const handleExport = async () => {
     setExporting(true)
-    try {
-      const url = await api.exportPdf(conv.id)
-      if (url) { window.open(url, '_blank'); showToast('success', 'PDF export opened in new tab') }
-    } catch (e) { showToast('error', (e as Error).message || 'Export unavailable') }
+    try { const url = await api.exportPdf(conv.id); if (url) { window.open(url, '_blank'); showToast('success', 'PDF export opened') } }
+    catch (e) { showToast('error', (e as Error).message || 'Export unavailable') }
     finally { setExporting(false) }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  const handleCsatSet = async (score: number) => {
+    setCsatScore(score)
+    try { await api.patchConversation(conv.id, { csat_score: score }) }
+    catch { /* ignore */ }
   }
 
-  const nextStatus: Partial<Record<Status, Status>> = { open: 'closed', pending: 'open', ai_handling: 'open', closed: 'open' }
-  const statusActionLabel: Partial<Record<Status, string>> = { open: 'Close', pending: 'Reopen', ai_handling: 'Take over', closed: 'Reopen' }
+  const handleTicketStatusChange = async (status: Status) => {
+    setTicketStatus(status)
+    onStatusChange(status)
+  }
+
+  const TICKET_STATUSES: { value: Status; label: string }[] = [
+    { value: 'submitted', label: 'Submitted' },
+    { value: 'in_progress', label: 'In Progress' },
+    { value: 'waiting_on_customer', label: 'Waiting on Customer' },
+    { value: 'resolved', label: 'Resolved' },
+    { value: 'closed', label: 'Closed' },
+  ]
+
+  const nextStatus: Partial<Record<Status, Status>> = { open: 'closed', pending: 'open', ai_handling: 'open', closed: 'open', submitted: 'in_progress', in_progress: 'resolved', waiting_on_customer: 'in_progress', resolved: 'closed' }
+  const statusActionLabel: Partial<Record<Status, string>> = { open: 'Close', pending: 'Reopen', ai_handling: 'Take over', closed: 'Reopen', submitted: 'Start', in_progress: 'Resolve', waiting_on_customer: 'Resume', resolved: 'Close' }
 
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full bg-slate-50">
+      {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-slate-200 shrink-0">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-0.5">
@@ -741,71 +783,66 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           {!conv.is_ticket && (
             <button onClick={onConvertToTicket} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all">
-              <Tag size={12} />Convert to Ticket
+              <Tag size={12} />Ticket
             </button>
           )}
           {conv.is_ticket && (
-            <span className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md">
-              <Tag size={10} />Ticket
-            </span>
+            <select value={ticketStatus} onChange={e => handleTicketStatusChange(e.target.value as Status)} className="text-xs text-slate-600 bg-white border border-amber-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400/30 cursor-pointer">
+              {TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
           )}
-          <select
-            value={conv.assigned_agent_id ?? ''}
-            onChange={e => onAssign(e.target.value || null)}
-            className="text-xs text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 cursor-pointer"
-          >
+          <select value={conv.assigned_agent_id ?? ''} onChange={e => onAssign(e.target.value || null)} className="text-xs text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 cursor-pointer">
             <option value="">Unassigned</option>
             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          {nextStatus[conv.status] && <button onClick={() => onStatusChange(nextStatus[conv.status]!)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">{statusActionLabel[conv.status]}</button>}
-          <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-all">{exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}Export PDF</button>
+          {!conv.is_ticket && nextStatus[conv.status] && (
+            <button onClick={() => onStatusChange(nextStatus[conv.status]!)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">{statusActionLabel[conv.status]}</button>
+          )}
+          <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-all">{exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}PDF</button>
           <div ref={menuRef} className="relative">
             <button onClick={() => setMenuOpen(m => !m)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"><MoreHorizontal size={16} /></button>
             {menuOpen && (
-              <div className="absolute right-0 top-8 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1">
+              <div className="absolute right-0 top-8 z-30 w-48 bg-white border border-slate-200 rounded-lg shadow-lg py-1">
                 {onPriorityChange && (
                   <>
                     <p className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Priority</p>
                     {(['low','normal','high','urgent'] as Priority[]).map(p => (
-                      <button key={p} onClick={() => { onPriorityChange(p); setMenuOpen(false) }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center gap-2 capitalize ${conv.priority === p ? 'text-sky-600 font-semibold' : 'text-slate-700'}`}>
-                        {p === 'urgent' ? '🔴' : p === 'high' ? '🟠' : p === 'normal' ? '🟡' : '⚪'} {p}
-                        {conv.priority === p && <Check size={11} className="ml-auto text-sky-500" />}
+                      <button key={p} onClick={() => { onPriorityChange(p); setMenuOpen(false) }} className={`w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center gap-2 capitalize ${conv.priority === p ? 'text-sky-600 font-semibold' : 'text-slate-700'}`}>
+                        {p === 'urgent' ? '🔴' : p === 'high' ? '🟠' : p === 'normal' ? '🟡' : '⚪'} {p}{conv.priority === p && <Check size={11} className="ml-auto text-sky-500" />}
                       </button>
                     ))}
                     <div className="border-t border-slate-100 mt-1 pt-1" />
                   </>
                 )}
-                <button onClick={() => { navigator.clipboard.writeText(conv.id); setMenuOpen(false) }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                  <Copy size={11} />Copy ID
-                </button>
+                <p className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">CSAT Rating</p>
+                <div className="px-3 pb-2 flex gap-1">
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n} onClick={() => { handleCsatSet(n); setMenuOpen(false) }} className="p-0.5">
+                      <Star size={16} className={n <= csatScore ? 'text-amber-400 fill-amber-400' : 'text-slate-200 fill-slate-200 hover:text-amber-300'} />
+                    </button>
+                  ))}
+                </div>
+                <div className="border-t border-slate-100 mt-1 pt-1" />
+                <button onClick={() => { navigator.clipboard.writeText(conv.id); setMenuOpen(false) }} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2"><Copy size={11} />Copy ID</button>
               </div>
             )}
           </div>
         </div>
       </div>
+
       {toast && <div className={`mx-4 mt-3 p-3 rounded-lg text-xs flex items-center gap-2 ${toast.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{toast.type === 'success' ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" /> : <AlertTriangle size={14} className="text-red-500 shrink-0" />}<span>{toast.msg}</span></div>}
+
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center"><MessageSquare size={32} className="text-slate-200 mb-2" /><p className="text-sm text-slate-400">No messages yet</p><p className="text-xs text-slate-300">Start the conversation below</p></div>
+            <div className="flex flex-col items-center justify-center h-full text-center"><MessageSquare size={32} className="text-slate-200 mb-2" /><p className="text-sm text-slate-400">No messages yet</p></div>
           ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} onEdit={onEditMessage} onDelete={onDeleteMessage} />)}
           <div ref={bottomRef} />
         </div>
         <VisitorInfoPanel conv={conv} currentPage={currentPage} />
       </div>
-      <div className="px-4 py-3 bg-white border-t border-slate-200 shrink-0">
-        <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
-          <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder={conv.status === 'closed' ? 'Conversation closed — reopen to reply' : 'Reply… (Enter to send, Shift+Enter for newline)'}
-            className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none leading-relaxed" disabled={conv.status === 'closed'} />
-          <div className="flex items-center gap-1.5 shrink-0 pb-0.5">
-            <button onClick={handleRephrase} disabled={!draft.trim() || rephrasing || conv.status === 'closed'} title="AI rephrase" className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">{rephrasing ? <RefreshCw size={14} className="animate-spin text-violet-500" /> : <Sparkles size={14} />}</button>
-            <button onClick={handleSend} disabled={!draft.trim() || sending || conv.status === 'closed'} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">{sending ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}Send</button>
-          </div>
-        </div>
-      </div>
+
+      <EmailComposeBox conv={conv} onSend={onSend} disabled={conv.status === 'closed'} />
     </div>
   )
 }
@@ -820,21 +857,21 @@ function EmptyChat() {
   )
 }
 
-// ─── Copy Snippet ─────────────────────────────────────────────────────────────
+// ─── Modal wrapper ────────────────────────────────────────────────────────────
+function Modal({ onClose, children, wide }: { onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative bg-white rounded-2xl shadow-2xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} p-6 max-h-[90vh] overflow-y-auto`}>{children}</div>
+    </div>
+  )
+}
+
+// ─── CopyButton ──────────────────────────────────────────────────────────────
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handle = async () => { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }
   return <button onClick={handle} className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 transition-colors rounded">{copied ? <><Check size={10} className="text-emerald-400" /> Copied</> : <><Copy size={10} /> Copy</>}</button>
-}
-
-// ─── Modal wrapper ────────────────────────────────────────────────────────────
-function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">{children}</div>
-    </div>
-  )
 }
 
 // ─── Add Brand Modal ──────────────────────────────────────────────────────────
@@ -900,10 +937,7 @@ function EditBrandModal({ brand, onClose, onSaved }: { brand: Brand; onClose: ()
         <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Brand Name *</label><input type="text" value={form.name} onChange={set('name')} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
         <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Website URL</label><input type="url" value={form.website} onChange={set('website')} placeholder="https://acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
         <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Support Email</label><input type="email" value={form.email} onChange={set('email')} placeholder="support@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-        <div>
-          <label className="block text-xs font-medium text-slate-600 mb-1.5">Widget Color</label>
-          <div className="flex items-center gap-3"><input type="color" value={form.color} onChange={set('color')} className="w-10 h-9 rounded border border-slate-200 cursor-pointer" /><span className="text-xs text-slate-500">{form.color}</span></div>
-        </div>
+        <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Widget Color</label><div className="flex items-center gap-3"><input type="color" value={form.color} onChange={set('color')} className="w-10 h-9 rounded border border-slate-200 cursor-pointer" /><span className="text-xs text-slate-500">{form.color}</span></div></div>
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={onClose} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
           <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Changes'}</button>
@@ -935,75 +969,62 @@ function BrandsSection() {
   const handleDelete = async () => {
     if (!deleteBrand) return
     setDeleting(true); setDelError(null)
-    try { await api.deleteBrand(deleteBrand.id); setBrands(prev => prev.filter(x => x.id !== deleteBrand.id)); setDeleteBrand(null) }
-    catch (e) { setDelError((e as Error).message) }
+    try { await api.deleteBrand(deleteBrand.id); setBrands(prev => prev.filter(b => b.id !== deleteBrand.id)); setDeleteBrand(null) }
+    catch (err) { setDelError((err as Error).message) }
     finally { setDeleting(false) }
   }
 
   return (
     <>
-      {showAdd    && <AddBrandModal onClose={() => setShowAdd(false)} onCreated={handleBrandCreated} />}
-      {editBrand  && <EditBrandModal brand={editBrand} onClose={() => setEditBrand(null)} onSaved={handleBrandSaved} />}
+      {showAdd && <AddBrandModal onClose={() => setShowAdd(false)} onCreated={handleBrandCreated} />}
+      {editBrand && <EditBrandModal brand={editBrand} onClose={() => setEditBrand(null)} onSaved={handleBrandSaved} />}
       {deleteBrand && (
-        <Modal onClose={() => { setDeleteBrand(null); setDelError(null) }}>
-          <div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center"><Trash2 size={18} className="text-red-600" /></div><div><p className="text-sm font-semibold text-slate-900">Delete Brand</p><p className="text-xs text-slate-500">This cannot be undone</p></div></div>
-          <p className="text-sm text-slate-600 mb-4">Are you sure you want to delete <span className="font-semibold">{deleteBrand.brand_name}</span>? All widget sessions and conversations under this brand will be removed.</p>
+        <Modal onClose={() => setDeleteBrand(null)}>
+          <div className="flex items-center justify-between mb-4"><h2 className="text-base font-semibold text-slate-900">Delete Brand</h2><button onClick={() => setDeleteBrand(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <p className="text-sm text-slate-600 mb-2">Are you sure you want to delete <strong>{deleteBrand.brand_name}</strong>? This will remove all associated conversations and data.</p>
           {delError && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{delError}</div>}
-          <div className="flex gap-2">
-            <button onClick={() => { setDeleteBrand(null); setDelError(null) }} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
-            <button onClick={handleDelete} disabled={deleting} className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center gap-1.5">{deleting ? <><RefreshCw size={11} className="animate-spin" /> Deleting…</> : <><Trash2 size={11} /> Delete</>}</button>
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => setDeleteBrand(null)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+            <button onClick={handleDelete} disabled={deleting} className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{deleting ? <><RefreshCw size={11} className="animate-spin" /> Deleting…</> : <><Trash2 size={11} /> Delete</>}</button>
           </div>
         </Modal>
       )}
-
       <div className="flex-1 overflow-auto p-6 bg-slate-50">
-        <div className="max-w-2xl">
+        <div className="max-w-3xl">
           <div className="flex items-center justify-between mb-6">
-            <div><h2 className="text-base font-semibold text-slate-900">Brands</h2><p className="text-xs text-slate-500 mt-0.5">Manage branded help centers and embed your widget</p></div>
+            <div><h2 className="text-base font-semibold text-slate-900">Brands</h2><p className="text-xs text-slate-500 mt-0.5">Manage your support brands and widget configurations</p></div>
             <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors"><Plus size={13} /> Add Brand</button>
           </div>
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm"><RefreshCw size={16} className="animate-spin" /> Loading…</div>
-          ) : brands.length === 0 ? (
-            <div className="text-center py-12 text-slate-400"><Building2 size={32} className="mx-auto mb-3 text-slate-300" /><p className="text-sm">No brands yet</p></div>
+          {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /> Loading…</div> : brands.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-xl border border-slate-200"><Building2 size={32} className="mx-auto mb-3 text-slate-300" /><p className="text-sm text-slate-500">No brands yet</p><button onClick={() => setShowAdd(true)} className="mt-3 px-4 py-2 text-xs font-medium text-sky-600 border border-sky-200 rounded-lg hover:bg-sky-50">Create your first brand</button></div>
           ) : (
-            <div className="space-y-4">
-              {brands.map(b => {
-                const snippet = `<script\n  src="${origin}/api/widget/widget.js"\n  data-brand-id="${b.id}"\n  data-label="${b.brand_name}"\n  defer\n></script>`
+            <div className="space-y-3">
+              {brands.map(brand => {
+                const cfg = brand.widget_config_json ?? {}
+                const widgetSrc = `${origin}/api/widget/widget.js`
+                const snippet = `<script src="${widgetSrc}" data-brand-id="${brand.id}" defer></script>`
                 return (
-                  <div key={b.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-slate-300 transition-colors">
-                    <div className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold" style={{ background: b.widget_config_json?.color ?? '#0ea5e9' }}>{b.brand_name[0]}</div>
-                            <span className="text-sm font-semibold text-slate-800">{b.brand_name}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-xs text-slate-500 ml-10">
-                            {b.widget_config_json?.website_url && <span className="flex items-center gap-1"><Globe size={10} />{b.widget_config_json.website_url}</span>}
-                            {b.widget_config_json?.support_email && <span className="flex items-center gap-1"><Mail size={10} />{b.widget_config_json.support_email}</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {b.widget_config_json && <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded">Widget active</span>}
-                          <button onClick={() => setEditBrand(b)} className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-md px-2.5 py-1 hover:bg-slate-50 transition-colors flex items-center gap-1"><Pencil size={10} /> Edit</button>
-                          <button onClick={() => setDeleteBrand(b)} className="text-xs text-red-500 hover:text-red-700 border border-red-100 rounded-md px-2.5 py-1 hover:bg-red-50 transition-colors flex items-center gap-1"><Trash2 size={10} /> Delete</button>
-                        </div>
+                  <div key={brand.id} className="bg-white border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition-colors">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ backgroundColor: cfg.color || '#0ea5e9' }}>{brand.brand_name[0]?.toUpperCase()}</div>
+                        <div><p className="text-sm font-semibold text-slate-900">{brand.brand_name}</p>{cfg.website_url && <a href={cfg.website_url} target="_blank" rel="noreferrer" className="text-xs text-sky-600 hover:underline">{cfg.website_url}</a>}</div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => setEditBrand(brand)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"><Pencil size={13} /></button>
+                        <button onClick={() => setDeleteBrand(brand)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"><Trash2 size={13} /></button>
                       </div>
                     </div>
-                    <div className="border-t border-slate-100 bg-slate-950">
-                      <div className="flex items-center justify-between px-4 pt-2.5 pb-1"><span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">Widget embed</span><CopyButton text={snippet} /></div>
-                      <pre className="px-4 pb-3 text-[11px] text-sky-300 overflow-x-auto leading-relaxed">{snippet}</pre>
+                    {cfg.support_email && <p className="text-xs text-slate-500 mb-3 flex items-center gap-1.5"><Mail size={11} /> {cfg.support_email}</p>}
+                    <div className="bg-slate-900 rounded-lg p-3 flex items-start justify-between gap-2">
+                      <code className="text-[10px] text-emerald-400 font-mono break-all leading-relaxed flex-1">{snippet}</code>
+                      <CopyButton text={snippet} />
                     </div>
                   </div>
                 )
               })}
             </div>
           )}
-          <div className="mt-6 p-4 bg-violet-50 border border-violet-200 rounded-xl flex items-center justify-between">
-            <div><p className="text-sm font-medium text-violet-900">Test the widget live</p><p className="text-xs text-violet-600 mt-0.5">Open the demo page to see the chat bubble in action</p></div>
-            <a href="/api/widget/demo" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-700 bg-violet-100 border border-violet-300 rounded-md hover:bg-violet-200 transition-colors"><Globe size={12} /> Open demo</a>
-          </div>
         </div>
       </div>
     </>
@@ -1013,87 +1034,214 @@ function BrandsSection() {
 // ─── Billing Section ──────────────────────────────────────────────────────────
 function BillingSection() {
   const api = useApi()
-  const [showUpgrade, setShowUpgrade] = useState(false)
-  const [form, setForm] = useState({ plan: 'Pro', size: '', notes: '' })
-  const [submitting, setSubmitting] = useState(false)
-  const [submitted, setSubmitted]   = useState(false)
+  const [submitting, setSub] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [form, setForm] = useState({ requested_plan: 'pro', company_size: '', notes: '' })
   const [error, setError] = useState<string | null>(null)
 
-  const PLANS = [
-    { id: 'Starter', price: '$49/mo', features: ['3 agents', '500 conversations/mo', '1 brand', 'Email support'] },
-    { id: 'Pro',     price: '$149/mo', features: ['10 agents', '5,000 conversations/mo', '5 brands', 'AI auto-reply', 'Priority support'] },
-    { id: 'Enterprise', price: 'Custom', features: ['Unlimited agents', 'Unlimited conversations', 'Unlimited brands', 'Custom AI training', 'Dedicated CSM'] },
-  ]
-
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null); setSubmitting(true)
-    try { await api.createUpgradeRequest(form.plan, form.size, form.notes); setSubmitted(true) }
+    e.preventDefault(); setError(null); setSub(true)
+    try { await api.createUpgradeRequest(form.requested_plan, form.company_size, form.notes); setSubmitted(true) }
     catch (err) { setError((err as Error).message) }
-    finally { setSubmitting(false) }
+    finally { setSub(false) }
   }
 
   return (
-    <>
-      {showUpgrade && (
-        <Modal onClose={() => { setShowUpgrade(false); setSubmitted(false); setError(null) }}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Upgrade / Contact Sales</h2><button onClick={() => { setShowUpgrade(false); setSubmitted(false); setError(null) }} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
-          {submitted ? (
-            <div className="text-center py-6">
-              <CheckCircle2 size={40} className="mx-auto text-emerald-500 mb-3" />
-              <p className="text-sm font-semibold text-slate-800 mb-1">Request received!</p>
-              <p className="text-xs text-slate-500">Our sales team will reach out within 1 business day.</p>
-              <button onClick={() => { setShowUpgrade(false); setSubmitted(false) }} className="mt-4 px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 transition-colors">Done</button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Requested Plan</label>
-                <select value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
-                  {PLANS.map(p => <option key={p.id}>{p.id}</option>)}
+    <div className="flex-1 overflow-auto p-6 bg-slate-50">
+      <div className="max-w-2xl">
+        <h2 className="text-base font-semibold text-slate-900 mb-1">Billing & Plans</h2>
+        <p className="text-xs text-slate-500 mb-6">Manage your subscription and usage</p>
+        {submitted ? (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center"><CheckCircle2 size={28} className="text-emerald-500 mx-auto mb-3" /><p className="text-sm font-semibold text-emerald-800">Upgrade request submitted!</p><p className="text-xs text-emerald-600 mt-1">Our team will contact you within 24 hours.</p></div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-xl p-6">
+            <h3 className="text-sm font-semibold text-slate-900 mb-4">Request Plan Upgrade</h3>
+            {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error}</div>}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Desired Plan</label>
+                <select value={form.requested_plan} onChange={e => setForm(f => ({ ...f, requested_plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
+                  <option value="pro">Pro — $49/mo</option><option value="business">Business — $149/mo</option><option value="enterprise">Enterprise — Custom</option>
                 </select>
               </div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Size</label><input type="text" value={form.size} onChange={e => setForm(f => ({ ...f, size: e.target.value }))} placeholder="e.g. 50 employees" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Notes (optional)</label><textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} placeholder="Any specific requirements or questions?" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 resize-none" /></div>
-              {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{error}</div>}
-              <div className="flex gap-2 pt-1">
-                <button type="button" onClick={() => setShowUpgrade(false)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" disabled={submitting} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{submitting ? <><RefreshCw size={11} className="animate-spin" /> Sending…</> : <><SendIcon size={11} /> Send Request</>}</button>
-              </div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Size</label><input type="text" value={form.company_size} onChange={e => setForm(f => ({ ...f, company_size: e.target.value }))} placeholder="e.g. 50 employees" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Notes</label><textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} placeholder="Any specific requirements…" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 resize-none" /></div>
+              <button type="submit" disabled={submitting} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{submitting ? <><RefreshCw size={11} className="animate-spin" /> Submitting…</> : 'Submit Request'}</button>
             </form>
-          )}
-        </Modal>
-      )}
-
-      <div className="flex-1 overflow-auto p-6 bg-slate-50">
-        <div className="max-w-2xl">
-          <h2 className="text-base font-semibold text-slate-900 mb-1">Billing & Plans</h2>
-          <p className="text-xs text-slate-500 mb-6">Choose the plan that fits your team</p>
-          <div className="grid gap-4 mb-6">
-            {PLANS.map(p => (
-              <div key={p.id} className={`bg-white border rounded-xl p-5 flex items-start justify-between ${p.id === 'Pro' ? 'border-sky-300 ring-1 ring-sky-200' : 'border-slate-200'}`}>
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="text-sm font-semibold text-slate-900">{p.id}</p>
-                    {p.id === 'Pro' && <span className="text-[10px] font-bold bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded uppercase tracking-wide">Most popular</span>}
-                  </div>
-                  <p className="text-lg font-bold text-slate-800 mb-2">{p.price}</p>
-                  <ul className="space-y-1">
-                    {p.features.map(f => <li key={f} className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={11} className="text-emerald-500 shrink-0" />{f}</li>)}
-                  </ul>
-                </div>
-                <button onClick={() => { setForm(x => ({ ...x, plan: p.id })); setShowUpgrade(true) }} className={`ml-4 shrink-0 px-4 py-2 text-xs font-medium rounded-lg transition-colors ${p.id === 'Pro' ? 'bg-sky-600 text-white hover:bg-sky-700' : 'border border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
-                  {p.id === 'Enterprise' ? 'Contact Sales' : 'Upgrade'}
-                </button>
-              </div>
-            ))}
           </div>
-          <div className="bg-slate-100 rounded-xl p-4 text-xs text-slate-500">
-            <p className="font-medium text-slate-700 mb-1">How it works</p>
-            <p>Submit your upgrade request and our sales team will contact you within 1 business day to set up your plan and issue an invoice.</p>
-          </div>
-        </div>
+        )}
       </div>
-    </>
+    </div>
+  )
+}
+
+// ─── CSAT Section ─────────────────────────────────────────────────────────────
+function CsatSection({ brands }: { brands: Brand[] }) {
+  const api = useApi()
+  const [data, setData]           = useState<CsatAgent[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [brandFilter, setBrand]   = useState('')
+  const [dateFrom, setDateFrom]   = useState('')
+  const [dateTo, setDateTo]       = useState('')
+  const [sortBy, setSortBy]       = useState<'avg_csat_score' | 'total_assigned' | 'closed_today' | 'participated_today' | 'avg_first_response_minutes'>('avg_csat_score')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params: Record<string, string> = {}
+      if (brandFilter) params.brand_id = brandFilter
+      if (dateFrom)    params.date_from = dateFrom
+      if (dateTo)      params.date_to   = dateTo
+      const result = await api.getCsatReport(params)
+      setData(result)
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [brandFilter, dateFrom, dateTo]) // eslint-disable-line
+
+  useEffect(() => { load() }, [load])
+
+  const sorted = [...data].sort((a, b) => {
+    const av = (a[sortBy] as number | null) ?? -1
+    const bv = (b[sortBy] as number | null) ?? -1
+    if (sortBy === 'avg_first_response_minutes') return av - bv
+    return bv - av
+  })
+
+  const totals = data.reduce((acc, a) => ({
+    total_assigned: acc.total_assigned + a.total_assigned,
+    closed_count:   acc.closed_count + a.closed_count,
+    rated_count:    acc.rated_count + a.rated_count,
+    positive_ratings: acc.positive_ratings + a.positive_ratings,
+    closed_today:   acc.closed_today + a.closed_today,
+    participated_today: acc.participated_today + a.participated_today,
+  }), { total_assigned: 0, closed_count: 0, rated_count: 0, positive_ratings: 0, closed_today: 0, participated_today: 0 })
+
+  const overallCsat = data.length && data.some(a => a.avg_csat_score !== null)
+    ? (data.reduce((s, a) => s + (a.avg_csat_score ?? 0) * a.rated_count, 0) / Math.max(1, totals.rated_count)).toFixed(2)
+    : null
+
+  const SortBtn = ({ field, label }: { field: typeof sortBy; label: string }) => (
+    <button onClick={() => setSortBy(field)} className={`text-[11px] font-medium px-2 py-1 rounded transition-colors ${sortBy === field ? 'bg-sky-100 text-sky-700' : 'text-slate-500 hover:bg-slate-100'}`}>{label}</button>
+  )
+
+  return (
+    <div className="flex-1 overflow-auto p-6 bg-slate-50">
+      <div className="max-w-5xl">
+        <div className="flex items-center justify-between mb-6">
+          <div><h2 className="text-base font-semibold text-slate-900 flex items-center gap-2"><BarChart2 size={16} className="text-sky-600" /> CSAT & Agent Performance</h2><p className="text-xs text-slate-500 mt-0.5">Customer satisfaction scores and productivity metrics per agent</p></div>
+          <button onClick={load} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"><RefreshCw size={12} /> Refresh</button>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap gap-3 mb-6">
+          <select value={brandFilter} onChange={e => setBrand(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30 min-w-[140px]">
+            <option value="">All Brands</option>
+            {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
+          </select>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30" placeholder="From" />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30" placeholder="To" />
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {[
+            { label: 'Overall CSAT', value: overallCsat ? `${overallCsat}/5.0` : '—', icon: <Star size={16} className="text-amber-500" />, color: 'bg-amber-50 border-amber-200' },
+            { label: 'Total Assigned', value: totals.total_assigned, icon: <MessageCircle size={16} className="text-sky-500" />, color: 'bg-sky-50 border-sky-200' },
+            { label: 'Closed Today', value: totals.closed_today, icon: <CheckCircle2 size={16} className="text-emerald-500" />, color: 'bg-emerald-50 border-emerald-200' },
+            { label: 'Positive Ratings', value: totals.rated_count ? `${Math.round(totals.positive_ratings / totals.rated_count * 100)}%` : '—', icon: <ThumbsUp size={16} className="text-indigo-500" />, color: 'bg-indigo-50 border-indigo-200' },
+          ].map(card => (
+            <div key={card.label} className={`bg-white border rounded-xl p-4 ${card.color}`}>
+              <div className="flex items-center gap-2 mb-1">{card.icon}<span className="text-xs font-medium text-slate-600">{card.label}</span></div>
+              <p className="text-2xl font-bold text-slate-900">{card.value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Sort controls */}
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+          <span className="text-xs text-slate-400 mr-1">Sort by:</span>
+          <SortBtn field="avg_csat_score" label="CSAT Score" />
+          <SortBtn field="total_assigned" label="Assigned" />
+          <SortBtn field="closed_today" label="Closed Today" />
+          <SortBtn field="participated_today" label="Active Today" />
+          <SortBtn field="avg_first_response_minutes" label="Response Time ↑" />
+        </div>
+
+        {/* Agent Table */}
+        {loading ? (
+          <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /> Loading…</div>
+        ) : sorted.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-xl border border-slate-200"><BarChart2 size={28} className="mx-auto mb-3 text-slate-300" /><p className="text-sm text-slate-400">No data yet</p></div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['Agent', 'CSAT Score', 'Rating Distribution', 'Assigned', 'Closed', 'Closed Today', 'Active Today', 'Avg 1st Reply'].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sorted.map((agent, i) => (
+                    <tr key={agent.agent_id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {i < 3 && <Award size={13} className={i === 0 ? 'text-amber-400' : i === 1 ? 'text-slate-400' : 'text-amber-700'} />}
+                          <div className="w-7 h-7 bg-sky-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">{agent.agent_name[0]?.toUpperCase()}</div>
+                          <div>
+                            <p className="text-xs font-semibold text-slate-800">{agent.agent_name}</p>
+                            <p className="text-[10px] text-slate-400">{agent.agent_email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {agent.avg_csat_score !== null ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-bold text-slate-800">{agent.avg_csat_score}</span>
+                            <StarRating score={Math.round(agent.avg_csat_score)} />
+                            <span className="text-[10px] text-slate-400">({agent.rated_count})</span>
+                          </div>
+                        ) : <span className="text-xs text-slate-300">No ratings</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-0.5 items-center">
+                          {[5,4,3,2,1].map(n => {
+                            const count = agent[`${['five','four','three','two','one'][5-n]}_star` as keyof CsatAgent] as number
+                            const pct = agent.rated_count ? Math.round(count / agent.rated_count * 100) : 0
+                            return (
+                              <div key={n} className="flex flex-col items-center gap-0.5" title={`${n}★: ${count}`}>
+                                <div className="w-4 bg-slate-100 rounded-full overflow-hidden" style={{ height: 24 }}>
+                                  <div className={`w-full rounded-full ${n >= 4 ? 'bg-emerald-400' : n === 3 ? 'bg-amber-400' : 'bg-red-400'}`} style={{ height: `${pct}%`, marginTop: `${100-pct}%` }} />
+                                </div>
+                                <span className="text-[8px] text-slate-400">{n}★</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3"><span className="text-xs font-semibold text-slate-700">{agent.total_assigned}</span></td>
+                      <td className="px-4 py-3"><span className="text-xs text-slate-600">{agent.closed_count}</span></td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-semibold ${agent.closed_today > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>{agent.closed_today}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-semibold ${agent.participated_today > 0 ? 'text-sky-600' : 'text-slate-400'}`}>{agent.participated_today}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-slate-600">
+                          {agent.avg_first_response_minutes !== null ? `${agent.avg_first_response_minutes}m` : '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1104,8 +1252,8 @@ function SettingsSection() {
   const [panel, setPanel] = useState<'profile' | 'workspace' | 'smtp' | null>(null)
 
   const [profileForm, setProfile] = useState({ name: agent?.name ?? '', password: '', confirm: '' })
-  const [profileSaving, setPS] = useState(false)
-  const [profileMsg, setPMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [profileSaving, setPS]    = useState(false)
+  const [profileMsg, setPMsg]     = useState<{ ok: boolean; text: string } | null>(null)
 
   const [wsForm, setWs] = useState({ company_name: '', default_timezone: 'UTC', ai_auto_reply_enabled: false, custom_domain: '' })
   const [wsSaving, setWS] = useState(false)
@@ -1119,23 +1267,15 @@ function SettingsSection() {
     e.preventDefault(); setPMsg(null)
     if (profileForm.password && profileForm.password !== profileForm.confirm) { setPMsg({ ok: false, text: 'Passwords do not match' }); return }
     setPS(true)
-    try {
-      await api.updateProfile(profileForm.name.trim() || undefined, profileForm.password || undefined)
-      setPMsg({ ok: true, text: 'Profile updated! Re-login to see name changes.' })
-      setProfile(f => ({ ...f, password: '', confirm: '' }))
-    } catch (err) { setPMsg({ ok: false, text: (err as Error).message }) }
+    try { await api.updateProfile(profileForm.name.trim() || undefined, profileForm.password || undefined); setPMsg({ ok: true, text: 'Profile updated! Re-login to see name changes.' }); setProfile(f => ({ ...f, password: '', confirm: '' })) }
+    catch (err) { setPMsg({ ok: false, text: (err as Error).message }) }
     finally { setPS(false) }
   }
 
   const handleWsSave = async (e: React.FormEvent) => {
     e.preventDefault(); setWsMsg(null); setWS(true)
     try {
-      await api.updateWorkspace({
-        company_name: wsForm.company_name || undefined,
-        default_timezone: wsForm.default_timezone,
-        ai_auto_reply_enabled: wsForm.ai_auto_reply_enabled,
-        custom_domain: wsForm.custom_domain || undefined,
-      })
+      await api.updateWorkspace({ company_name: wsForm.company_name || undefined, default_timezone: wsForm.default_timezone, ai_auto_reply_enabled: wsForm.ai_auto_reply_enabled, custom_domain: wsForm.custom_domain || undefined })
       setWsMsg({ ok: true, text: 'Workspace settings saved.' })
     }
     catch (err) { setWsMsg({ ok: false, text: (err as Error).message }) }
@@ -1145,17 +1285,8 @@ function SettingsSection() {
   const handleSmtpSave = async (e: React.FormEvent) => {
     e.preventDefault(); setSmtpMsg(null); setSmtpSaving(true)
     try {
-      await api.updateWorkspace({
-        smtp_config_json: {
-          host: smtpForm.host.trim(),
-          port: parseInt(smtpForm.port, 10) || 587,
-          user: smtpForm.user.trim(),
-          pass: smtpForm.pass,
-          from_email: smtpForm.from_email.trim(),
-          enabled: smtpForm.enabled,
-        }
-      })
-      setSmtpMsg({ ok: true, text: 'SMTP configuration saved. Status-change emails will now use these settings.' })
+      await api.updateWorkspace({ smtp_config_json: { host: smtpForm.host.trim(), port: parseInt(smtpForm.port, 10) || 587, user: smtpForm.user.trim(), pass: smtpForm.pass, from_email: smtpForm.from_email.trim(), enabled: smtpForm.enabled } })
+      setSmtpMsg({ ok: true, text: 'SMTP configuration saved.' })
     }
     catch (err) { setSmtpMsg({ ok: false, text: (err as Error).message }) }
     finally { setSmtpSaving(false) }
@@ -1163,7 +1294,7 @@ function SettingsSection() {
 
   const panels: { key: 'profile' | 'workspace' | 'smtp'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { key: 'profile',   label: 'Profile',            desc: 'Update your name and password',                     icon: <User size={14} /> },
-    { key: 'workspace', label: 'Workspace Settings', desc: 'Company name, timezone, custom domain, AI reply',  icon: <Building size={14} />, adminOnly: true },
+    { key: 'workspace', label: 'Workspace Settings', desc: 'Company name, timezone, AI auto-reply',             icon: <Building size={14} />, adminOnly: true },
     { key: 'smtp',      label: 'SMTP / Email Config',desc: 'Send ticket alerts via your own mail server',       icon: <Mail size={14} />, adminOnly: true },
   ]
 
@@ -1201,11 +1332,10 @@ function SettingsSection() {
                   {wsMsg && <div className={`mb-3 p-2 rounded text-xs ${wsMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{wsMsg.text}</div>}
                   <form onSubmit={handleWsSave} className="space-y-3">
                     <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Name</label><input type="text" value={wsForm.company_name} onChange={e => setWs(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Inc." className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Custom Domain <span className="text-slate-400 font-normal">(e.g. support.acme.com)</span></label><input type="text" value={wsForm.custom_domain} onChange={e => setWs(f => ({ ...f, custom_domain: e.target.value }))} placeholder="support.acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1.5">Default Timezone</label>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Custom Domain</label><input type="text" value={wsForm.custom_domain} onChange={e => setWs(f => ({ ...f, custom_domain: e.target.value }))} placeholder="support.acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Default Timezone</label>
                       <select value={wsForm.default_timezone} onChange={e => setWs(f => ({ ...f, default_timezone: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
-                        {['UTC', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore'].map(tz => <option key={tz}>{tz}</option>)}
+                        {['UTC','America/New_York','America/Chicago','America/Los_Angeles','Europe/London','Europe/Paris','Asia/Tokyo','Asia/Singapore','Asia/Dubai'].map(tz => <option key={tz}>{tz}</option>)}
                       </select>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
@@ -1219,7 +1349,7 @@ function SettingsSection() {
 
               {panel === 'smtp' && item.key === 'smtp' && (
                 <div className="mt-2 p-5 bg-white border border-slate-200 rounded-xl">
-                  <p className="text-xs text-slate-500 mb-4">Configure your outbound SMTP server. OmniCore will use these credentials to send ticket status-change alerts to visitors.</p>
+                  <p className="text-xs text-slate-500 mb-4">Configure your outbound SMTP server for status-change alerts.</p>
                   {smtpMsg && <div className={`mb-3 p-2 rounded text-xs ${smtpMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{smtpMsg.text}</div>}
                   <form onSubmit={handleSmtpSave} className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
@@ -1249,13 +1379,13 @@ function SettingsSection() {
 function TeamSection() {
   const api = useApi()
   const { agent: me } = useAuth() as { agent: { id: string } | null }
-  const [agents, setAgents]       = useState<AgentRow[]>([])
-  const [loading, setLoading]     = useState(true)
+  const [agents, setAgents]         = useState<AgentRow[]>([])
+  const [loading, setLoading]       = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [inviteForm, setInviteForm] = useState({ name: '', email: '', role: 'agent' })
-  const [inviting, setInviting]   = useState(false)
-  const [inviteErr, setInviteErr] = useState<string | null>(null)
-  const [removing, setRemoving]   = useState<string | null>(null)
+  const [inviting, setInviting]     = useState(false)
+  const [inviteErr, setInviteErr]   = useState<string | null>(null)
+  const [removing, setRemoving]     = useState<string | null>(null)
 
   useEffect(() => {
     api.listAgents().then(list => { setAgents(list); setLoading(false) }).catch(() => setLoading(false))
@@ -1287,13 +1417,12 @@ function TeamSection() {
           <form onSubmit={handleInvite} className="space-y-3">
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Name *</label><input type="text" value={inviteForm.name} onChange={e => setInviteForm(f => ({ ...f, name: e.target.value }))} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Email *</label><input type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
               <select value={inviteForm.role} onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
                 <option value="agent">Agent</option><option value="admin">Admin</option>
               </select>
             </div>
-            <p className="text-[11px] text-slate-400">A temporary password of <code className="bg-slate-100 px-1 rounded">Welcome1!</code> will be set. Ask the agent to change it on first login.</p>
+            <p className="text-[11px] text-slate-400">Temporary password: <code className="bg-slate-100 px-1 rounded">Welcome1!</code></p>
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={() => setShowInvite(false)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
               <button type="submit" disabled={inviting} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{inviting ? <><RefreshCw size={11} className="animate-spin" /> Inviting…</> : <><UserPlus size={11} /> Invite</>}</button>
@@ -1301,36 +1430,24 @@ function TeamSection() {
           </form>
         </Modal>
       )}
-
       <div className="flex-1 overflow-auto p-6 bg-slate-50">
         <div className="max-w-2xl">
           <div className="flex items-center justify-between mb-6">
             <div><h2 className="text-base font-semibold text-slate-900">Team</h2><p className="text-xs text-slate-500 mt-0.5">Manage agents and their access</p></div>
             <button onClick={() => setShowInvite(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 transition-colors"><UserPlus size={13} /> Invite Agent</button>
           </div>
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm"><RefreshCw size={16} className="animate-spin" /> Loading…</div>
-          ) : (
+          {loading ? <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm"><RefreshCw size={16} className="animate-spin" /> Loading…</div> : (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              {agents.length === 0 ? (
-                <div className="text-center py-12 text-slate-400"><Users size={28} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No agents yet</p></div>
-              ) : agents.map((a, i) => (
+              {agents.length === 0 ? <div className="text-center py-12 text-slate-400"><Users size={28} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No agents yet</p></div> : agents.map((a, i) => (
                 <div key={a.id} className={`flex items-center justify-between px-4 py-3 ${i < agents.length - 1 ? 'border-b border-slate-100' : ''}`}>
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-sky-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">{a.name[0]?.toUpperCase()}</div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">{a.name} {a.id === me?.id && <span className="text-[10px] text-sky-600 font-semibold">(you)</span>}</p>
-                      <p className="text-xs text-slate-400">{a.email}</p>
-                    </div>
+                    <div><p className="text-sm font-medium text-slate-800">{a.name} {a.id === me?.id && <span className="text-[10px] text-sky-600 font-semibold">(you)</span>}</p><p className="text-xs text-slate-400">{a.email}</p></div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${a.role === 'admin' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{a.role}</span>
                     <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{a.is_active ? 'Active' : 'Inactive'}</span>
-                    {a.id !== me?.id && (
-                      <button onClick={() => handleRemove(a.id)} disabled={removing === a.id} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-40">
-                        {removing === a.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                      </button>
-                    )}
+                    {a.id !== me?.id && <button onClick={() => handleRemove(a.id)} disabled={removing === a.id} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-40">{removing === a.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}</button>}
                   </div>
                 </div>
               ))}
@@ -1345,22 +1462,22 @@ function TeamSection() {
 // ─── Super Admin Section ──────────────────────────────────────────────────────
 function SuperAdminSection() {
   const api = useApi()
-  const [tenants, setTenants]       = useState<SANTenant[]>([])
-  const [requests, setRequests]     = useState<UpgradeRequest[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [tab, setTab]               = useState<'tenants' | 'requests'>('tenants')
-  const [actionTenant, setAction]   = useState<SANTenant | null>(null)
-  const [purgeTarget, setPurge]     = useState<SANTenant | null>(null)
-  const [purgeConfirm, setPConf]    = useState('')
-  const [purging, setPurging]       = useState(false)
-  const [purgeErr, setPurgeErr]     = useState<string | null>(null)
-  const [billingTarget, setBilling] = useState<SANTenant | null>(null)
-  const [billingForm, setBForm]     = useState({ plan: 'free', subscription_status: 'active' })
-  const [saving, setSaving]         = useState(false)
-  const [limitsTarget, setLimits]   = useState<SANTenant | null>(null)
-  const [limitsForm, setLimitsForm] = useState({ max_brands_allowed: 3 })
-  const [limitsSaving, setLSaving]  = useState(false)
-  const [limitsErr, setLimitsErr]   = useState<string | null>(null)
+  const [tenants, setTenants]         = useState<SANTenant[]>([])
+  const [requests, setRequests]       = useState<UpgradeRequest[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [tab, setTab]                 = useState<'tenants' | 'requests'>('tenants')
+  const [actionTenant, setAction]     = useState<SANTenant | null>(null)
+  const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
+  const [purgeConfirm, setPConf]      = useState('')
+  const [purging, setPurging]         = useState(false)
+  const [purgeErr, setPurgeErr]       = useState<string | null>(null)
+  const [billingTarget, setBilling]   = useState<SANTenant | null>(null)
+  const [billingForm, setBForm]       = useState({ plan: 'free', subscription_status: 'active' })
+  const [saving, setSaving]           = useState(false)
+  const [limitsTarget, setLimits]     = useState<SANTenant | null>(null)
+  const [limitsForm, setLimitsForm]   = useState({ max_brands_allowed: 3, max_agents_allowed: 10, ai_feature_enabled: true, smtp_feature_enabled: true, conversation_limit: 1000 })
+  const [limitsSaving, setLSaving]    = useState(false)
+  const [limitsErr, setLimitsErr]     = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([api.listSANTenants(), api.listUpgradeRequests()])
@@ -1377,21 +1494,17 @@ function SuperAdminSection() {
   }
 
   const handleBillingSave = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!billingTarget) return
-    setSaving(true)
+    e.preventDefault(); if (!billingTarget) return; setSaving(true)
     try { await api.patchTenantBilling(billingTarget.id, billingForm.plan, billingForm.subscription_status); setTenants(prev => prev.map(x => x.id === billingTarget.id ? { ...x, plan: billingForm.plan, subscription_status: billingForm.subscription_status } : x)); setBilling(null) }
     catch { /* ignore */ }
     finally { setSaving(false) }
   }
 
   const handleLimitsSave = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!limitsTarget) return
-    setLimitsErr(null); setLSaving(true)
+    e.preventDefault(); if (!limitsTarget) return; setLimitsErr(null); setLSaving(true)
     try {
-      await api.patchTenantLimits(limitsTarget.id, limitsForm.max_brands_allowed)
-      setTenants(prev => prev.map(x => x.id === limitsTarget.id ? { ...x, max_brands_allowed: limitsForm.max_brands_allowed } : x))
+      await api.patchTenantLimits(limitsTarget.id, limitsForm)
+      setTenants(prev => prev.map(x => x.id === limitsTarget.id ? { ...x, ...limitsForm } : x))
       setLimits(null)
     }
     catch (err) { setLimitsErr((err as Error).message) }
@@ -1399,8 +1512,7 @@ function SuperAdminSection() {
   }
 
   const handlePurge = async () => {
-    if (!purgeTarget) return
-    setPurgeErr(null); setPurging(true)
+    if (!purgeTarget) return; setPurgeErr(null); setPurging(true)
     try { await api.purgeTenant(purgeTarget.id, purgeConfirm); setTenants(prev => prev.filter(x => x.id !== purgeTarget.id)); setPurge(null); setPConf('') }
     catch (e) { setPurgeErr((e as Error).message) }
     finally { setPurging(false) }
@@ -1410,38 +1522,49 @@ function SuperAdminSection() {
 
   return (
     <>
+      {/* Limits Modal */}
       {limitsTarget && (
-        <Modal onClose={() => { setLimits(null); setLimitsErr(null) }}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-sm font-semibold text-slate-900">Brand Limits — {limitsTarget.company_name}</h2><button onClick={() => setLimits(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
-          <form onSubmit={handleLimitsSave} className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Max Brands Allowed</label>
-              <input type="number" min={1} max={1000} value={limitsForm.max_brands_allowed} onChange={e => setLimitsForm({ max_brands_allowed: parseInt(e.target.value, 10) || 1 })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
-              <p className="mt-1 text-[11px] text-slate-400">Controls how many brands this tenant can create. Starter=1, Pro=5, Enterprise=unlimited.</p>
+        <Modal onClose={() => setLimits(null)} wide>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Tenant Limits — {limitsTarget.company_name}</h2><button onClick={() => setLimits(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          {limitsErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{limitsErr}</div>}
+          <form onSubmit={handleLimitsSave} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Max Brands</label><input type="number" min={1} max={1000} value={limitsForm.max_brands_allowed} onChange={e => setLimitsForm(f => ({ ...f, max_brands_allowed: parseInt(e.target.value) }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Max Agents/Admins</label><input type="number" min={1} max={10000} value={limitsForm.max_agents_allowed} onChange={e => setLimitsForm(f => ({ ...f, max_agents_allowed: parseInt(e.target.value) }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Conversation Limit</label><input type="number" min={1} value={limitsForm.conversation_limit} onChange={e => setLimitsForm(f => ({ ...f, conversation_limit: parseInt(e.target.value) }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
             </div>
-            {limitsErr && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{limitsErr}</div>}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Feature Access</p>
+              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div><p className="text-xs font-medium text-slate-700">AI Features</p><p className="text-[11px] text-slate-400">Allow tenant to use AI auto-reply</p></div>
+                <button type="button" onClick={() => setLimitsForm(f => ({ ...f, ai_feature_enabled: !f.ai_feature_enabled }))} className={`${limitsForm.ai_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{limitsForm.ai_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div><p className="text-xs font-medium text-slate-700">SMTP / Email</p><p className="text-[11px] text-slate-400">Allow tenant to configure custom SMTP</p></div>
+                <button type="button" onClick={() => setLimitsForm(f => ({ ...f, smtp_feature_enabled: !f.smtp_feature_enabled }))} className={`${limitsForm.smtp_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{limitsForm.smtp_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+              </div>
+            </div>
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={() => setLimits(null)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-              <button type="submit" disabled={limitsSaving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{limitsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save'}</button>
+              <button type="submit" disabled={limitsSaving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{limitsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Limits'}</button>
             </div>
           </form>
         </Modal>
       )}
 
+      {/* Billing Modal */}
       {billingTarget && (
         <Modal onClose={() => setBilling(null)}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-sm font-semibold text-slate-900">Manage Billing — {billingTarget.company_name}</h2><button onClick={() => setBilling(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Update Billing — {billingTarget.company_name}</h2><button onClick={() => setBilling(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
           <form onSubmit={handleBillingSave} className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Plan</label>
-              <select value={billingForm.plan} onChange={e => setBForm(f => ({ ...f, plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none">
-                {['free', 'starter', 'pro', 'enterprise'].map(p => <option key={p}>{p}</option>)}
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan</label>
+              <select value={billingForm.plan} onChange={e => setBForm(f => ({ ...f, plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
+                {['free','pro','business','enterprise'].map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Subscription Status</label>
-              <select value={billingForm.subscription_status} onChange={e => setBForm(f => ({ ...f, subscription_status: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none">
-                {['active', 'trialing', 'past_due', 'cancelled', 'paused', 'revoked'].map(s => <option key={s}>{s}</option>)}
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Subscription Status</label>
+              <select value={billingForm.subscription_status} onChange={e => setBForm(f => ({ ...f, subscription_status: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
+                {['trialing','active','past_due','cancelled','paused'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="flex gap-2 pt-1">
@@ -1452,87 +1575,97 @@ function SuperAdminSection() {
         </Modal>
       )}
 
+      {/* Purge Modal */}
       {purgeTarget && (
         <Modal onClose={() => { setPurge(null); setPConf(''); setPurgeErr(null) }}>
-          <div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center"><Trash2 size={18} className="text-red-600" /></div><div><p className="text-sm font-semibold text-slate-900">Purge Tenant</p><p className="text-xs text-red-500">This permanently deletes all data</p></div></div>
-          <p className="text-xs text-slate-600 mb-3">Type the tenant company name to confirm: <span className="font-semibold">{purgeTarget.company_name}</span></p>
-          <input type="text" value={purgeConfirm} onChange={e => setPConf(e.target.value)} placeholder={purgeTarget.company_name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500/30 mb-3" />
+          <div className="flex items-center justify-between mb-4"><h2 className="text-base font-semibold text-red-700">Delete Tenant</h2><button onClick={() => { setPurge(null); setPConf('') }} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-4"><p className="text-xs text-red-700 font-medium">This will permanently delete <strong>{purgeTarget.company_name}</strong> and all associated data. This cannot be undone.</p></div>
           {purgeErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{purgeErr}</div>}
+          <div className="mb-4"><label className="block text-xs font-medium text-slate-600 mb-1.5">Type <strong>{purgeTarget.company_name}</strong> to confirm</label><input type="text" value={purgeConfirm} onChange={e => setPConf(e.target.value)} placeholder={purgeTarget.company_name} className="w-full px-3 py-2 bg-slate-50 border border-red-300 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-400/30" /></div>
           <div className="flex gap-2">
-            <button onClick={() => { setPurge(null); setPConf(''); setPurgeErr(null) }} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-            <button onClick={handlePurge} disabled={purgeConfirm !== purgeTarget.company_name || purging} className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5">{purging ? <><RefreshCw size={11} className="animate-spin" /> Purging…</> : 'Confirm Purge'}</button>
+            <button onClick={() => { setPurge(null); setPConf('') }} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+            <button onClick={handlePurge} disabled={purgeConfirm !== purgeTarget.company_name || purging} className="flex-1 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5">{purging ? <><RefreshCw size={11} className="animate-spin" /> Deleting…</> : <><Trash2 size={11} /> Delete Forever</>}</button>
           </div>
         </Modal>
       )}
 
       <div className="flex-1 overflow-auto p-6 bg-slate-50">
-        <div className="max-w-4xl">
-          <div className="flex items-center gap-2 mb-1">
-            <Shield size={16} className="text-red-500" />
-            <h2 className="text-base font-semibold text-slate-900">Super Admin Panel</h2>
-            <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded uppercase tracking-wide">God View</span>
+        <div className="max-w-5xl">
+          <div className="flex items-center justify-between mb-6">
+            <div><h2 className="text-base font-semibold text-slate-900 flex items-center gap-2"><Shield size={16} className="text-sky-600" /> Super Admin</h2><p className="text-xs text-slate-500 mt-0.5">Manage all tenants, plans, and platform features</p></div>
           </div>
-          <p className="text-xs text-slate-500 mb-5">Full control over all tenants and billing</p>
 
-          <div className="flex gap-1 mb-5 bg-slate-100 p-1 rounded-lg w-fit">
-            {(['tenants', 'requests'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors capitalize ${tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{t === 'tenants' ? `Tenants (${tenants.length})` : `Upgrade Requests (${requests.length})`}</button>
+          <div className="flex gap-2 mb-5">
+            {(['tenants','requests'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                {t === 'tenants' ? `Tenants (${tenants.length})` : `Upgrade Requests (${requests.length})`}
+              </button>
             ))}
           </div>
 
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-slate-400 text-sm"><RefreshCw size={16} className="animate-spin" /> Loading…</div>
-          ) : tab === 'tenants' ? (
+          {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-xs">
-                <thead><tr className="border-b border-slate-100 bg-slate-50">{['Company', 'Plan', 'Billing', 'Account', 'Agents', 'Brand Limit', 'Created', 'Actions'].map(h => <th key={h} className="text-left px-4 py-2.5 text-slate-500 font-semibold">{h}</th>)}</tr></thead>
-                <tbody>
-                  {tenants.map((t, i) => (
-                    <tr key={t.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${i === tenants.length - 1 ? 'border-0' : ''}`}>
-                      <td className="px-4 py-3 font-medium text-slate-800">{t.company_name}</td>
-                      <td className="px-4 py-3 text-slate-600 capitalize">{t.plan || 'free'}</td>
-                      <td className="px-4 py-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor(t.subscription_status)}`}>{t.subscription_status}</span></td>
-                      <td className="px-4 py-3"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor(t.account_status)}`}>{t.account_status}</span></td>
-                      <td className="px-4 py-3 text-slate-600">{t.agent_count}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed ?? 3 }); setLimitsErr(null) }} className="flex items-center gap-1 text-slate-600 hover:text-sky-600 transition-colors" title="Edit brand limit">
-                          <span className="font-semibold">{t.max_brands_allowed ?? 3}</span>
-                          <Pencil size={10} className="text-slate-400" />
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">{new Date(t.created_at).toLocaleDateString()}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => toggleStatus(t)} title={t.account_status === 'active' ? 'Suspend' : 'Activate'} className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${t.account_status === 'active' ? 'text-amber-500' : 'text-emerald-500'}`}>{t.account_status === 'active' ? <ToggleLeft size={14} /> : <ToggleRight size={14} />}</button>
-                          <button onClick={() => { setBilling(t); setBForm({ plan: t.plan || 'free', subscription_status: t.subscription_status || 'active' }) }} title="Manage Billing" className="p-1.5 rounded hover:bg-slate-100 text-slate-500 transition-colors"><CreditCard size={14} /></button>
-                          <button onClick={() => setPurge(t)} title="Purge Data" className="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"><Trash2 size={14} /></button>
-                        </div>
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      {['Company', 'Plan', 'Status', 'Agents', 'Brands', 'AI', 'SMTP', 'Conversations', 'Created', 'Actions'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {tenants.length === 0 && <div className="text-center py-8 text-slate-400"><p className="text-sm">No tenants</p></div>}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {tenants.map(t => (
+                      <tr key={t.id} className={`hover:bg-slate-50 ${t.account_status === 'suspended' ? 'opacity-60' : ''}`}>
+                        <td className="px-4 py-3"><p className="text-xs font-semibold text-slate-800">{t.company_name}</p><p className="text-[10px] text-slate-400">{t.id.slice(0, 8)}</p></td>
+                        <td className="px-4 py-3"><span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded capitalize">{t.plan}</span></td>
+                        <td className="px-4 py-3"><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${statusColor(t.account_status)}`}>{t.account_status}</span></td>
+                        <td className="px-4 py-3"><span className="text-xs text-slate-700">{t.agent_count} / {t.max_agents_allowed}</span></td>
+                        <td className="px-4 py-3"><span className="text-xs text-slate-700">{t.max_brands_allowed}</span></td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${t.ai_feature_enabled ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-400'}`}>
+                            {t.ai_feature_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${t.smtp_feature_enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                            {t.smtp_feature_enabled ? 'ON' : 'OFF'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3"><span className="text-xs text-slate-600">{t.conversation_limit.toLocaleString()}</span></td>
+                        <td className="px-4 py-3"><span className="text-xs text-slate-500">{new Date(t.created_at).toLocaleDateString()}</span></td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed, max_agents_allowed: t.max_agents_allowed, ai_feature_enabled: t.ai_feature_enabled, smtp_feature_enabled: t.smtp_feature_enabled, conversation_limit: t.conversation_limit }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded text-[10px]" title="Limits & Features"><Settings size={12} /></button>
+                            <button onClick={() => { setBilling(t); setBForm({ plan: t.plan, subscription_status: t.subscription_status }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Billing"><CreditCard size={12} /></button>
+                            <button onClick={() => toggleStatus(t)} className={`p-1.5 rounded transition-colors ${t.account_status === 'active' ? 'text-amber-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50'}`} title={t.account_status === 'active' ? 'Suspend' : 'Activate'}>{t.account_status === 'active' ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}</button>
+                            <button onClick={() => { setPurge(t); setPConf(''); setPurgeErr(null) }} className="p-1.5 text-red-300 hover:text-red-500 hover:bg-red-50 rounded" title="Delete"><Trash2 size={12} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-xs">
-                <thead><tr className="border-b border-slate-100 bg-slate-50">{['Company', 'Agent', 'Plan', 'Size', 'Notes', 'Status', 'Date'].map(h => <th key={h} className="text-left px-4 py-2.5 text-slate-500 font-semibold">{h}</th>)}</tr></thead>
-                <tbody>
-                  {requests.map((r, i) => (
-                    <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${i === requests.length - 1 ? 'border-0' : ''}`}>
-                      <td className="px-4 py-3 font-medium text-slate-800">{r.company_name}</td>
-                      <td className="px-4 py-3 text-slate-600">{r.agent_name}<br /><span className="text-slate-400">{r.agent_email}</span></td>
-                      <td className="px-4 py-3"><span className="bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded font-semibold">{r.requested_plan}</span></td>
-                      <td className="px-4 py-3 text-slate-500">{r.company_size || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500 max-w-xs truncate">{r.notes || '—'}</td>
-                      <td className="px-4 py-3"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize">{r.status}</span></td>
-                      <td className="px-4 py-3 text-slate-400">{new Date(r.created_at).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {requests.length === 0 && <div className="text-center py-8 text-slate-400"><p className="text-sm">No upgrade requests</p></div>}
+              {requests.length === 0 ? (
+                <div className="text-center py-12 text-slate-400"><Bell size={24} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No upgrade requests</p></div>
+              ) : requests.map((r, i) => (
+                <div key={r.id} className={`p-4 ${i < requests.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                  <div className="flex items-start justify-between">
+                    <div><p className="text-sm font-semibold text-slate-800">{r.company_name}</p><p className="text-xs text-slate-500">{r.agent_name} · {r.agent_email}</p></div>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{r.status}</span>
+                  </div>
+                  <div className="mt-2 flex gap-4 text-xs text-slate-500">
+                    <span>Plan: <strong className="text-slate-700">{r.requested_plan}</strong></span>
+                    {r.company_size && <span>Size: <strong className="text-slate-700">{r.company_size}</strong></span>}
+                    <span>{new Date(r.created_at).toLocaleDateString()}</span>
+                  </div>
+                  {r.notes && <p className="text-xs text-slate-400 mt-1.5 italic">{r.notes}</p>}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -1541,99 +1674,19 @@ function SuperAdminSection() {
   )
 }
 
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
-  active: Section; onNavigate: (s: Section) => void; unread: number
-  agent: { name: string; email: string; role: string; isSuperAdmin?: boolean } | null; onLogout: () => void
-}) {
-  const isAdmin = agent?.role === 'admin'
-  const isSA    = agent?.isSuperAdmin
-
-  const NAV: { section: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
-    { section: 'conversations', icon: <MessageSquare size={17} />, label: 'Conversations' },
-    { section: 'tickets',       icon: <Tag size={17} />,           label: 'Tickets' },
-    { section: 'brands',        icon: <Building2 size={17} />,    label: 'Brands',   adminOnly: true },
-    { section: 'team',          icon: <Users size={17} />,        label: 'Team',     adminOnly: true },
-    { section: 'billing',       icon: <CreditCard size={17} />,  label: 'Billing',  adminOnly: true },
-    { section: 'settings',      icon: <Settings size={17} />,    label: 'Settings' },
-    { section: 'superadmin',    icon: <Shield size={17} />,      label: 'Super Admin', superAdminOnly: true },
-  ]
-
-  const visible = NAV.filter(n => {
-    if (n.superAdminOnly) return isSA
-    if (n.adminOnly)      return isAdmin
-    return true
-  })
-
-  return (
-    <nav className="flex flex-col w-56 bg-slate-900 h-full shrink-0">
-      <div className="px-5 py-5 border-b border-slate-800">
-        <div className="flex items-center gap-2.5"><OmniLogo size="sm" /><div><p className="text-xs font-bold text-white tracking-wide">OmniCore</p><p className="text-[10px] text-slate-500">Atelier</p></div></div>
-      </div>
-      <div className="flex-1 px-2 py-3 space-y-0.5">
-        {visible.map(n => {
-          const isActive = n.section === active
-          return (
-            <button key={n.section} onClick={() => onNavigate(n.section)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${isActive ? (n.section === 'superadmin' ? 'bg-red-600 text-white shadow-md' : 'bg-sky-600 text-white shadow-md') : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}`}>
-              {n.icon}
-              <span>{n.label}</span>
-              {n.section === 'conversations' && unread > 0 && <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unread}</span>}
-            </button>
-          )
-        })}
-      </div>
-      <div className="px-3 py-3 border-t border-slate-800">
-        {isSA && <div className="px-2 py-1 mb-1"><span className="text-[10px] font-semibold text-red-400 bg-red-500/10 px-2 py-0.5 rounded uppercase tracking-wide">Super Admin</span></div>}
-        {isAdmin && !isSA && <div className="px-2 py-1 mb-1"><span className="text-[10px] font-semibold text-sky-500 bg-sky-500/10 px-2 py-0.5 rounded uppercase tracking-wide">Admin</span></div>}
-        <button onClick={onLogout} className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-800 cursor-pointer transition-colors group">
-          <div className="w-7 h-7 bg-sky-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">{agent?.name?.[0]?.toUpperCase() ?? 'A'}</div>
-          <div className="flex-1 min-w-0 text-left"><p className="text-xs font-medium text-slate-200 truncate">{agent?.name ?? 'Agent'}</p><p className="text-[10px] text-slate-500 truncate">{agent?.email ?? ''}</p></div>
-          <LogOut size={13} className="text-slate-600 group-hover:text-slate-400 transition-colors shrink-0" />
-        </button>
-      </div>
-    </nav>
-  )
-}
-
-// ─── Toast Notification Types ─────────────────────────────────────────────────
-interface InboxToast {
-  id: string
-  convId: string
-  visitorName: string
-  preview: string
-  createdAt: number
-}
-
 // ─── Toast Notification Stack ─────────────────────────────────────────────────
-function ToastStack({ toasts, onDismiss, onOpen }: {
-  toasts: InboxToast[]
-  onDismiss: (id: string) => void
-  onOpen: (convId: string) => void
-}) {
+interface InboxToast { id: string; convId: string; visitorName: string; preview: string; createdAt: number }
+
+function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDismiss: (id: string) => void; onOpen: (convId: string) => void }) {
   return (
     <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style={{ maxWidth: 320 }}>
       {toasts.map(t => (
-        <div key={t.id}
-          className="pointer-events-auto flex items-start gap-3 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl px-4 py-3 animate-in slide-in-from-right-4"
-          style={{ animation: 'slideInRight 0.2s ease-out' }}
-        >
-          <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">
-            {t.visitorName[0]?.toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-slate-100 truncate">{t.visitorName}</p>
-            <p className="text-xs text-slate-400 truncate mt-0.5">{t.preview}</p>
-          </div>
+        <div key={t.id} className="pointer-events-auto flex items-start gap-3 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl px-4 py-3" style={{ animation: 'slideInRight 0.2s ease-out' }}>
+          <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">{t.visitorName[0]?.toUpperCase()}</div>
+          <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-slate-100 truncate">{t.visitorName}</p><p className="text-xs text-slate-400 truncate mt-0.5">{t.preview}</p></div>
           <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => { onOpen(t.convId); onDismiss(t.id) }}
-              className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-colors px-1.5 py-1 rounded hover:bg-sky-500/10">
-              View
-            </button>
-            <button onClick={() => onDismiss(t.id)}
-              className="text-slate-600 hover:text-slate-300 transition-colors p-1 rounded">
-              <X size={11} />
-            </button>
+            <button onClick={() => { onOpen(t.convId); onDismiss(t.id) }} className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-colors px-1.5 py-1 rounded">View</button>
+            <button onClick={() => onDismiss(t.id)} className="text-slate-600 hover:text-slate-300 transition-colors p-1 rounded"><X size={11} /></button>
           </div>
         </div>
       ))}
@@ -1642,16 +1695,9 @@ function ToastStack({ toasts, onDismiss, onOpen }: {
 }
 
 // ─── Tickets Section ─────────────────────────────────────────────────────────
-function TicketsSection({
-  tickets, activeId, agents, messages, visitorPages,
-  onSelect, onSend, onStatusChange, onConvertToTicket, onAssign,
-  onEditMessage, onDeleteMessage, onPriorityChange, socketConnected,
-}: {
-  tickets: Conversation[]
-  activeId: string | null
-  agents: AgentRow[]
-  messages: Record<string, Message[]>
-  visitorPages: Record<string, string>
+function TicketsSection({ tickets, activeId, agents, messages, visitorPages, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
+  tickets: Conversation[]; activeId: string | null; agents: AgentRow[]
+  messages: Record<string, Message[]>; visitorPages: Record<string, string>
   onSelect: (id: string) => void
   onSend: (body: string) => Promise<void>
   onStatusChange: (status: Status) => void
@@ -1662,44 +1708,56 @@ function TicketsSection({
   onPriorityChange?: (priority: Priority) => Promise<void>
   socketConnected: boolean
 }) {
-  const activeTicket = tickets.find(t => t.id === activeId)
+  const [query, setQuery]         = useState('')
+  const [statusFilter, setStatus] = useState<string>('all')
+  const [agentFilter, setAgent]   = useState('')
+
+  const TICKET_STATUS_OPTS = ['all', 'submitted', 'in_progress', 'waiting_on_customer', 'resolved', 'closed']
+
+  const filtered = tickets
+    .filter(t => statusFilter === 'all' || t.status === statusFilter)
+    .filter(t => !agentFilter || t.assigned_agent_id === agentFilter)
+    .filter(t => {
+      if (!query) return true
+      const q = query.toLowerCase()
+      return t.visitor_name.toLowerCase().includes(q) || (t.subject ?? '').toLowerCase().includes(q) || (t.visitor_email ?? '').toLowerCase().includes(q)
+    })
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+
+  const activeTicket = filtered.find(t => t.id === activeId) ?? tickets.find(t => t.id === activeId)
+
   return (
     <>
       <div className="flex flex-col w-80 border-r border-slate-200 bg-white shrink-0">
         <div className="px-4 pt-4 pb-3 border-b border-slate-100">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Tag size={14} className="text-amber-600" />Tickets</h2>
-            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{tickets.length}</span>
+            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{filtered.length}</span>
           </div>
-          <p className="text-[11px] text-slate-400">Conversations escalated to tickets</p>
+          <div className="relative mb-2">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="text" placeholder="Search tickets…" value={query} onChange={e => setQuery(e.target.value)} className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
+          </div>
+          <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-none mb-2">
+            {TICKET_STATUS_OPTS.map(s => (
+              <button key={s} onClick={() => setStatus(s)} className={`shrink-0 px-2 py-1 text-[10px] font-medium rounded-md transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {s === 'all' ? 'All' : s === 'in_progress' ? 'In Progress' : s === 'waiting_on_customer' ? 'Waiting' : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+          <select value={agentFilter} onChange={e => setAgent(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400">
+            <option value="">All Agents</option>
+            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {tickets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8">
-              <Tag size={28} className="text-slate-300 mb-2" />
-              <p className="text-sm text-slate-400">No tickets yet</p>
-              <p className="text-xs text-slate-300 mt-1">Use "Convert to Ticket" inside any conversation</p>
-            </div>
-          ) : tickets.map(t => (
-            <ConversationRow key={t.id} conv={t} isActive={t.id === activeId} onClick={() => onSelect(t.id)} />
-          ))}
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-8"><Tag size={28} className="text-slate-300 mb-2" /><p className="text-sm text-slate-400">No tickets</p><p className="text-xs text-slate-300 mt-1">Use "Ticket" button in any conversation</p></div>
+          ) : filtered.map(t => <ConversationRow key={t.id} conv={t} isActive={t.id === activeId} onClick={() => onSelect(t.id)} />)}
         </div>
       </div>
       {activeTicket ? (
-        <ChatPanel
-          conv={activeTicket}
-          messages={messages[activeId!] ?? []}
-          onSend={onSend}
-          onStatusChange={onStatusChange}
-          onConvertToTicket={onConvertToTicket}
-          onAssign={onAssign}
-          onEditMessage={onEditMessage}
-          onDeleteMessage={onDeleteMessage}
-          onPriorityChange={onPriorityChange}
-          agents={agents}
-          currentPage={visitorPages[activeId ?? ''] ?? null}
-          socketConnected={socketConnected}
-        />
+        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50 p-8">
           <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4"><Tag size={24} className="text-amber-400" /></div>
@@ -1708,6 +1766,57 @@ function TicketsSection({
         </div>
       )}
     </>
+  )
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
+  active: Section; onNavigate: (s: Section) => void; unread: number
+  agent: { name: string; email: string; role: string; isSuperAdmin?: boolean } | null
+  onLogout: () => Promise<void>
+}) {
+  const items: { key: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
+    { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
+    { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
+    { key: 'csat',          icon: <BarChart2 size={16} />,     label: 'CSAT', adminOnly: true },
+    { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', adminOnly: true },
+    { key: 'team',          icon: <Users size={16} />,         label: 'Team', adminOnly: true },
+    { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing' },
+    { key: 'settings',      icon: <Settings size={16} />,      label: 'Settings' },
+    { key: 'superadmin',    icon: <Shield size={16} />,        label: 'Super Admin', superAdminOnly: true },
+  ]
+
+  const visible = items.filter(i => {
+    if (i.superAdminOnly) return agent?.isSuperAdmin
+    if (i.adminOnly) return agent?.role === 'admin' || agent?.isSuperAdmin
+    return true
+  })
+
+  return (
+    <div className="flex flex-col w-52 h-full bg-slate-900 text-white shrink-0">
+      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-slate-800">
+        <OmniLogo size="sm" />
+        <div className="min-w-0"><p className="text-sm font-bold tracking-wide leading-none">OmniCore</p><p className="text-[10px] text-slate-500 mt-0.5">Atelier</p></div>
+      </div>
+      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+        {visible.map(item => (
+          <button key={item.key} onClick={() => onNavigate(item.key)}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${active === item.key ? 'bg-sky-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+            {item.icon}
+            <span>{item.label}</span>
+            {item.key === 'conversations' && unread > 0 && <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unread}</span>}
+          </button>
+        ))}
+      </nav>
+      <div className="px-2 py-3 border-t border-slate-800">
+        <div className="px-3 py-2 mb-1">
+          <p className="text-xs font-medium text-slate-300 truncate">{agent?.name}</p>
+          <p className="text-[10px] text-slate-500 truncate">{agent?.email}</p>
+          <span className={`mt-0.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase ${agent?.isSuperAdmin ? 'bg-sky-900 text-sky-300' : agent?.role === 'admin' ? 'bg-sky-900/50 text-sky-400' : 'bg-slate-800 text-slate-500'}`}>{agent?.isSuperAdmin ? 'Super Admin' : agent?.role}</span>
+        </div>
+        <button onClick={onLogout} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"><LogOut size={14} /> Sign out</button>
+      </div>
+    </div>
   )
 }
 
@@ -1730,20 +1839,20 @@ function Dashboard() {
   const [socketOk, setSocketOk]   = useState(false)
   const [toasts, setToasts]       = useState<InboxToast[]>([])
   const [agents, setAgents]       = useState<AgentRow[]>([])
+  const [brands, setBrands]       = useState<Brand[]>([])
   const [visitorPages, setVisitorPages] = useState<Record<string, string>>({})
   const socketRef                 = useRef<Socket | null>(null)
   const activeIdRef               = useRef<string | null>(null)
 
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
 
-  // Auto-navigate Super Admin to their section immediately after login
   useEffect(() => {
     if (agent?.isSuperAdmin) setSection('superadmin')
   }, [agent?.isSuperAdmin]) // eslint-disable-line
 
-  // Load agent list for the Assign To dropdown (shared by ChatPanel + TicketsSection)
   useEffect(() => {
     api.listAgents().then(setAgents).catch(() => {})
+    api.listBrands().then(setBrands).catch(() => {})
   }, []) // eslint-disable-line
 
   useEffect(() => {
@@ -1760,10 +1869,7 @@ function Dashboard() {
     socket.on('disconnect',    () => setSocketOk(false))
     socket.on('connect_error', () => setSocketOk(false))
     socket.on('conversation:created', (conv: Conversation) => {
-      setConvs(prev => {
-        if (prev.some(c => c.id === conv.id)) return prev
-        return [{ ...conv, unread: 0 }, ...prev]
-      })
+      setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0 }, ...prev] })
     })
     socket.on('server:new_message', (msg: Message) => {
       if (msg.is_internal_note) return
@@ -1777,21 +1883,13 @@ function Dashboard() {
         const isActive = activeIdRef.current === c.id
         return { ...c, updated_at: msg.created_at, unread: isActive ? (c.unread ?? 0) : (c.unread ?? 0) + 1 }
       }))
-      // Show toast only for incoming (non-agent) messages on conversations not currently open
       if (msg.sender_type !== 'agent' && msg.sender_type !== 'system') {
         setConvs(prev => {
           const conv = prev.find(c => c.id === msg.conversation_id)
-          if (!conv) return prev
-          if (activeIdRef.current === msg.conversation_id) return prev
+          if (!conv || activeIdRef.current === msg.conversation_id) return prev
           const toastId = `${msg.id}-toast`
-          const toast: InboxToast = {
-            id: toastId,
-            convId: msg.conversation_id,
-            visitorName: conv.visitor_name,
-            preview: msg.message_body.slice(0, 80),
-            createdAt: Date.now(),
-          }
-          setToasts(t => [...t.slice(-4), toast]) // keep max 5 toasts
+          const toast: InboxToast = { id: toastId, convId: msg.conversation_id, visitorName: conv.visitor_name, preview: msg.message_body.slice(0, 80), createdAt: Date.now() }
+          setToasts(t => [...t.slice(-4), toast])
           setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
           return prev
         })
@@ -1801,18 +1899,13 @@ function Dashboard() {
       setVisitorPages(prev => ({ ...prev, [conversationId]: url }))
     })
     socket.on('conversation:assigned', ({ conversationId, agentId, agentName }: { conversationId: string; agentId: string | null; agentName: string | null }) => {
-      setConvs(prev => prev.map(c => c.id === conversationId
-        ? { ...c, agent_name: agentName, assigned_agent_id: agentId }
-        : c
-      ))
+      setConvs(prev => prev.map(c => c.id === conversationId ? { ...c, agent_name: agentName, assigned_agent_id: agentId } : c))
     })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 
   useEffect(() => {
-    if (activeId && socketRef.current?.connected) {
-      socketRef.current.emit('join:conversation', { conversationId: activeId })
-    }
+    if (activeId && socketRef.current?.connected) socketRef.current.emit('join:conversation', { conversationId: activeId })
   }, [activeId])
 
   useEffect(() => {
@@ -1825,6 +1918,11 @@ function Dashboard() {
 
   const handleSelectConversation = useCallback((id: string) => {
     setActiveId(id); setSection('conversations')
+    setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
+  }, [])
+
+  const handleSelectTicket = useCallback((id: string) => {
+    setActiveId(id)
     setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
   }, [])
 
@@ -1855,28 +1953,19 @@ function Dashboard() {
     if (!activeId) return
     await api.patchConversation(activeId, { assigned_agent_id: agentId })
     const agentName = agents.find(a => a.id === agentId)?.name ?? null
-    setConvs(prev => prev.map(c => c.id === activeId
-      ? { ...c, agent_name: agentName, assigned_agent_id: agentId }
-      : c
-    ))
+    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, agent_name: agentName, assigned_agent_id: agentId } : c))
   }, [activeId, agents]) // eslint-disable-line
 
   const handleEditMessage = useCallback(async (msgId: string, newBody: string) => {
     if (!activeId) return
     await api.editMessage(activeId, msgId, newBody)
-    setMessages(prev => ({
-      ...prev,
-      [activeId]: (prev[activeId] ?? []).map(m => m.id === msgId ? { ...m, message_body: newBody } : m)
-    }))
+    setMessages(prev => ({ ...prev, [activeId]: (prev[activeId] ?? []).map(m => m.id === msgId ? { ...m, message_body: newBody } : m) }))
   }, [activeId]) // eslint-disable-line
 
   const handleDeleteMessage = useCallback(async (msgId: string) => {
     if (!activeId) return
     await api.deleteMessage(activeId, msgId)
-    setMessages(prev => ({
-      ...prev,
-      [activeId]: (prev[activeId] ?? []).filter(m => m.id !== msgId)
-    }))
+    setMessages(prev => ({ ...prev, [activeId]: (prev[activeId] ?? []).filter(m => m.id !== msgId) }))
   }, [activeId]) // eslint-disable-line
 
   const handlePriorityChange = useCallback(async (priority: Priority) => {
@@ -1887,12 +1976,8 @@ function Dashboard() {
 
   const totalUnread = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const activeConv  = convs.find(c => c.id === activeId)
-
   const dismissToast = useCallback((id: string) => setToasts(t => t.filter(x => x.id !== id)), [])
-  const openToastConv = useCallback((convId: string) => {
-    handleSelectConversation(convId)
-    setSection('conversations')
-  }, [handleSelectConversation])
+  const openToastConv = useCallback((convId: string) => { handleSelectConversation(convId); setSection('conversations') }, [handleSelectConversation])
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -1920,33 +2005,19 @@ function Dashboard() {
               <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8"><AlertTriangle size={28} className="text-amber-400" /><p className="text-sm font-medium text-slate-700">Could not load conversations</p><p className="text-xs text-slate-400">{error}</p><button onClick={() => window.location.reload()} className="text-xs text-sky-600 underline">Retry</button></div>
             ) : (
               <>
-                <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} />
+                <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
                 {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} /> : <EmptyChat />}
               </>
             )
           )}
           {section === 'tickets' && (
-            <TicketsSection
-              tickets={convs.filter(c => c.is_ticket)}
-              activeId={activeId}
-              agents={agents}
-              messages={messages}
-              visitorPages={visitorPages}
-              onSelect={handleSelectConversation}
-              onSend={handleSend}
-              onStatusChange={handleStatusChange}
-              onConvertToTicket={handleConvertToTicket}
-              onAssign={handleAssign}
-              onEditMessage={handleEditMessage}
-              onDeleteMessage={handleDeleteMessage}
-              onPriorityChange={handlePriorityChange}
-              socketConnected={socketOk}
-            />
+            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} messages={messages} visitorPages={visitorPages} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
           )}
-          {section === 'brands'     && <BrandsSection />}
-          {section === 'billing'    && <BillingSection />}
-          {section === 'settings'   && <SettingsSection />}
-          {section === 'team'       && <TeamSection />}
+          {section === 'csat'      && <CsatSection brands={brands} />}
+          {section === 'brands'    && <BrandsSection />}
+          {section === 'billing'   && <BillingSection />}
+          {section === 'settings'  && <SettingsSection />}
+          {section === 'team'      && <TeamSection />}
           {section === 'superadmin' && <SuperAdminSection />}
         </div>
       </div>
@@ -1957,7 +2028,7 @@ function Dashboard() {
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth() as { isAuthenticated: boolean; isLoading: boolean }
-  const [view, setView]          = useState<AuthView>('login')
+  const [view, setView]     = useState<AuthView>('login')
   const [successMsg, setSuccess] = useState<string | undefined>()
 
   const goSignup = () => { setSuccess(undefined); setView('signup') }
@@ -1974,7 +2045,5 @@ export default function App() {
 
   if (isAuthenticated) return <Dashboard />
 
-  return view === 'signup'
-    ? <SignupPage onGoLogin={goLogin} />
-    : <LoginPage onGoSignup={goSignup} successMsg={successMsg} />
+  return view === 'signup' ? <SignupPage onGoLogin={goLogin} /> : <LoginPage onGoSignup={goSignup} successMsg={successMsg} />
 }

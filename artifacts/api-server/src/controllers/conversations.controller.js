@@ -2,17 +2,18 @@
 
 /**
  * conversations.controller.js
- * Atelier OmniCore — Conversations + Messages + Export
+ * Atelier OmniCore — Conversations + Messages + Export + CSAT
  *
- * GET    /api/conversations                  list (paginated, tenant-scoped, RBAC)
- * GET    /api/conversations/:id              single conversation
- * PATCH  /api/conversations/:id             update status / priority / assignment / is_ticket
- * GET    /api/conversations/:id/messages     message history
- * POST   /api/conversations/:id/messages     agent sends a message
- * PATCH  /api/conversations/:id/messages/:msgId  edit message (agent, own or admin)
- * DELETE /api/conversations/:id/messages/:msgId  delete message
- * GET    /api/conversations/:id/visitor-history   other conversations by same visitor
- * GET    /api/conversations/:id/export       PDF → R2 presigned URL
+ * GET    /api/conversations                        list (paginated, tenant-scoped, RBAC, filtered)
+ * GET    /api/conversations/csat                   CSAT report per agent
+ * GET    /api/conversations/:id                    single conversation
+ * PATCH  /api/conversations/:id                    update status / priority / assignment / is_ticket
+ * GET    /api/conversations/:id/messages           message history
+ * POST   /api/conversations/:id/messages           agent sends a message
+ * PATCH  /api/conversations/:id/messages/:msgId   edit message
+ * DELETE /api/conversations/:id/messages/:msgId   delete message
+ * GET    /api/conversations/:id/visitor-history    other conversations by same visitor
+ * GET    /api/conversations/:id/export             PDF → R2 presigned URL
  */
 
 const { Router }                = require('express');
@@ -33,30 +34,107 @@ pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN
 pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
   .catch(() => {});
 
+// Extend the status check constraint to include ticket statuses
+pool.query(`
+  ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_status_check;
+  ALTER TABLE conversations ADD CONSTRAINT conversations_status_check
+    CHECK (status IN ('ai_handling','open','closed','pending','submitted','in_progress','waiting_on_customer','resolved'));
+`).catch(err => logger.warn({ err: err.message }, 'status_constraint_migration_warning'));
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const PAGE_LIMIT = 25;
+const PAGE_LIMIT = 50;
 function tenantId(req) { return req.agent.tenantId; }
+
+// ─── GET /api/conversations/csat ─────────────────────────────────────────────
+router.get('/csat', async (req, res, next) => {
+  try {
+    const tid         = tenantId(req);
+    const { brand_id, date_from, date_to } = req.query;
+
+    const conditions = ['a.tenant_id = $1'];
+    const values     = [tid];
+    let i = 2;
+
+    const cConditions = ['c.tenant_id = $1'];
+    if (brand_id) { cConditions.push(`c.brand_id = $${i}`); conditions.push(`(c.brand_id IS NULL OR c.brand_id = $${i})`); values.push(brand_id); i++; }
+    if (date_from) { cConditions.push(`c.updated_at >= $${i}`); values.push(date_from); i++; }
+    if (date_to)   { cConditions.push(`c.updated_at <= $${i}`); values.push(date_to);   i++; }
+
+    const cWhere = cConditions.join(' AND ');
+
+    const { rows } = await pool.query(`
+      SELECT
+        a.id                                                                          AS agent_id,
+        a.name                                                                        AS agent_name,
+        a.email                                                                       AS agent_email,
+        COUNT(DISTINCT c.id)::int                                                     AS total_assigned,
+        COUNT(DISTINCT c.id) FILTER (WHERE c.status IN ('closed','resolved'))::int    AS closed_count,
+        ROUND(AVG(c.csat_score) FILTER (WHERE c.csat_score IS NOT NULL), 2)           AS avg_csat_score,
+        COUNT(c.id) FILTER (WHERE c.csat_score >= 4)::int                             AS positive_ratings,
+        COUNT(c.id) FILTER (WHERE c.csat_score = 5)::int                              AS five_star,
+        COUNT(c.id) FILTER (WHERE c.csat_score = 4)::int                              AS four_star,
+        COUNT(c.id) FILTER (WHERE c.csat_score = 3)::int                              AS three_star,
+        COUNT(c.id) FILTER (WHERE c.csat_score = 2)::int                              AS two_star,
+        COUNT(c.id) FILTER (WHERE c.csat_score = 1)::int                              AS one_star,
+        COUNT(c.id) FILTER (WHERE c.csat_score IS NOT NULL)::int                      AS rated_count,
+        ROUND(
+          EXTRACT(EPOCH FROM AVG(
+            (SELECT MIN(m.created_at) FROM messages m WHERE m.conversation_id = c.id AND m.sender_type = 'agent') - c.created_at
+          )) / 60, 1
+        )                                                                             AS avg_first_response_minutes,
+        COUNT(DISTINCT CASE WHEN DATE(c.updated_at) = CURRENT_DATE AND c.status IN ('closed','resolved') THEN c.id END)::int AS closed_today,
+        (SELECT COUNT(DISTINCT mp.conversation_id)
+           FROM messages mp
+           JOIN conversations cp ON cp.id = mp.conversation_id
+           WHERE mp.sender_id = a.id AND mp.sender_type = 'agent'
+             AND DATE(mp.created_at) = CURRENT_DATE
+             AND cp.tenant_id = a.tenant_id
+        )::int                                                                        AS participated_today
+      FROM agents a
+      LEFT JOIN conversations c ON c.assigned_agent_id = a.id AND ${cWhere}
+      WHERE a.tenant_id = $1 AND a.is_active = true
+      GROUP BY a.id, a.name, a.email
+      ORDER BY avg_csat_score DESC NULLS LAST, total_assigned DESC
+    `, values);
+
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
 
 // ─── GET /api/conversations ───────────────────────────────────────────────────
 router.get('/', async (req, res, next) => {
   try {
     const tid      = tenantId(req);
-    const status   = req.query.status;
-    const isTicket = req.query.is_ticket;
-    const page     = Math.max(1, parseInt(req.query.page) || 1);
-    const limit    = Math.min(100, parseInt(req.query.limit) || PAGE_LIMIT);
+    const { status, is_ticket, brand_id, agent_id, rating, search, date_from, date_to, page: pageQ, limit: limitQ } = req.query;
+    const page     = Math.max(1, parseInt(pageQ) || 1);
+    const limit    = Math.min(100, parseInt(limitQ) || PAGE_LIMIT);
     const offset   = (page - 1) * limit;
 
     const conditions = ['c.tenant_id = $1'];
     const values     = [tid];
+    let i = 2;
 
     if (req.agent.role === 'agent') {
-      conditions.push(`(c.assigned_agent_id = $${values.length + 1} OR c.assigned_agent_id IS NULL)`);
-      values.push(req.agent.id);
+      conditions.push(`(c.assigned_agent_id = $${i} OR c.assigned_agent_id IS NULL)`);
+      values.push(req.agent.id); i++;
     }
-    if (status) { conditions.push(`c.status = $${values.length + 1}`); values.push(status); }
-    if (isTicket === 'true')  conditions.push(`c.is_ticket = true`);
-    else if (isTicket === 'false') conditions.push(`c.is_ticket = false`);
+    if (status)    { conditions.push(`c.status = $${i}`);            values.push(status); i++; }
+    if (brand_id)  { conditions.push(`c.brand_id = $${i}`);          values.push(brand_id); i++; }
+    if (agent_id)  { conditions.push(`c.assigned_agent_id = $${i}`); values.push(agent_id); i++; }
+    if (rating)    { conditions.push(`c.csat_score = $${i}`);        values.push(parseInt(rating, 10)); i++; }
+    if (date_from) { conditions.push(`c.updated_at >= $${i}`);       values.push(date_from); i++; }
+    if (date_to)   { conditions.push(`c.updated_at <= $${i}`);       values.push(date_to); i++; }
+    if (search) {
+      const q = `%${search}%`;
+      conditions.push(`(
+        v.email ILIKE $${i} OR v.display_name ILIKE $${i} OR
+        c.subject ILIKE $${i} OR
+        EXISTS(SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.message_body ILIKE $${i})
+      )`);
+      values.push(q); i++;
+    }
+    if (is_ticket === 'true')  conditions.push(`c.is_ticket = true`);
+    else if (is_ticket === 'false') conditions.push(`c.is_ticket = false`);
 
     const where = conditions.join(' AND ');
 
@@ -66,6 +144,7 @@ router.get('/', async (req, res, next) => {
            c.id, c.status, c.channel, c.priority, c.subject,
            c.created_at, c.updated_at, c.sla_breach_at,
            c.assigned_agent_id, c.is_ticket, c.visitor_id,
+           c.csat_score, c.brand_id,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
            v.timezone                                       AS visitor_timezone,
@@ -77,10 +156,10 @@ router.get('/', async (req, res, next) => {
          LEFT JOIN brands   b ON b.id = c.brand_id
          WHERE ${where}
          ORDER BY c.updated_at DESC
-         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+         LIMIT $${i} OFFSET $${i + 1}`,
         [...values, limit, offset]
       ),
-      pool.query(`SELECT COUNT(*) FROM conversations c WHERE ${where}`, values),
+      pool.query(`SELECT COUNT(*) FROM conversations c LEFT JOIN visitors v ON v.id = c.visitor_id WHERE ${where}`, values),
     ]);
 
     const total = parseInt(countRow[0].count, 10);
@@ -117,7 +196,7 @@ router.get('/:id', async (req, res, next) => {
 // ─── PATCH /api/conversations/:id ─────────────────────────────────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
-    const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject', 'is_ticket'];
+    const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject', 'is_ticket', 'csat_score'];
     const fields  = Object.keys(req.body).filter(k => ALLOWED.includes(k));
     if (!fields.length) return res.status(400).json({ error: 'No valid fields provided' });
 
@@ -135,7 +214,7 @@ router.patch('/:id', async (req, res, next) => {
     const { rows } = await pool.query(
       `UPDATE conversations SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
-       RETURNING id, status, priority, assigned_agent_id, is_ticket, updated_at`,
+       RETURNING id, status, priority, assigned_agent_id, is_ticket, csat_score, updated_at`,
       values
     );
     if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });

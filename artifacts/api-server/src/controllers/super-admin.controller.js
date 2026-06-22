@@ -8,7 +8,7 @@
  * GET    /api/super-admin/upgrade-requests            — list pending upgrade requests
  * PATCH  /api/super-admin/tenants/:id/status          — suspend / activate
  * PATCH  /api/super-admin/tenants/:id/billing         — manually set plan / status
- * PATCH  /api/super-admin/tenants/:id/limits          — adjust max_brands_allowed
+ * PATCH  /api/super-admin/tenants/:id/limits          — adjust max_brands_allowed + agent/feature limits
  * DELETE /api/super-admin/tenants/:id/purge           — hard cascade delete
  */
 
@@ -44,7 +44,12 @@ router.use(requireSuperAdmin);
         ADD COLUMN IF NOT EXISTS ai_auto_reply_enabled BOOLEAN NOT NULL DEFAULT false,
         ADD COLUMN IF NOT EXISTS max_brands_allowed   INTEGER NOT NULL DEFAULT 3,
         ADD COLUMN IF NOT EXISTS custom_domain        TEXT,
-        ADD COLUMN IF NOT EXISTS smtp_config_json     JSONB
+        ADD COLUMN IF NOT EXISTS smtp_config_json     JSONB,
+        ADD COLUMN IF NOT EXISTS max_agents_allowed   INTEGER NOT NULL DEFAULT 10,
+        ADD COLUMN IF NOT EXISTS ai_feature_enabled   BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS smtp_feature_enabled BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS conversation_limit   INTEGER NOT NULL DEFAULT 1000,
+        ADD COLUMN IF NOT EXISTS plan                 TEXT    NOT NULL DEFAULT 'free'
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS upgrade_requests (
@@ -71,8 +76,9 @@ router.get('/tenants', async (req, res, next) => {
       SELECT
         t.id, t.company_name, t.account_status,
         t.subscription_status, t.plan,
-        t.max_brands_allowed,
-        t.created_at,
+        t.max_brands_allowed, t.max_agents_allowed,
+        t.ai_feature_enabled, t.smtp_feature_enabled,
+        t.conversation_limit, t.created_at,
         COUNT(DISTINCT a.id)::int AS agent_count
       FROM tenants t
       LEFT JOIN agents a ON a.tenant_id = t.id
@@ -142,19 +148,45 @@ router.patch('/tenants/:id/billing', async (req, res, next) => {
 // ─── PATCH /api/super-admin/tenants/:id/limits ───────────────────────────────
 router.patch('/tenants/:id/limits', async (req, res, next) => {
   try {
-    const { max_brands_allowed } = req.body || {};
-    const val = parseInt(max_brands_allowed, 10);
-    if (isNaN(val) || val < 1 || val > 1000) {
-      return res.status(400).json({ error: 'max_brands_allowed must be an integer between 1 and 1000' });
+    const { max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, conversation_limit } = req.body || {};
+
+    const updates = [];
+    const values  = [];
+    let i = 1;
+
+    if (max_brands_allowed !== undefined) {
+      const val = parseInt(max_brands_allowed, 10);
+      if (isNaN(val) || val < 1 || val > 1000) return res.status(400).json({ error: 'max_brands_allowed must be 1–1000' });
+      updates.push(`max_brands_allowed = $${i++}`); values.push(val);
     }
+    if (max_agents_allowed !== undefined) {
+      const val = parseInt(max_agents_allowed, 10);
+      if (isNaN(val) || val < 1 || val > 10000) return res.status(400).json({ error: 'max_agents_allowed must be 1–10000' });
+      updates.push(`max_agents_allowed = $${i++}`); values.push(val);
+    }
+    if (ai_feature_enabled !== undefined) {
+      updates.push(`ai_feature_enabled = $${i++}`); values.push(Boolean(ai_feature_enabled));
+    }
+    if (smtp_feature_enabled !== undefined) {
+      updates.push(`smtp_feature_enabled = $${i++}`); values.push(Boolean(smtp_feature_enabled));
+    }
+    if (conversation_limit !== undefined) {
+      const val = parseInt(conversation_limit, 10);
+      if (isNaN(val) || val < 1) return res.status(400).json({ error: 'conversation_limit must be >= 1' });
+      updates.push(`conversation_limit = $${i++}`); values.push(val);
+    }
+
+    if (!updates.length) return res.status(400).json({ error: 'No valid limit fields provided' });
+
+    values.push(req.params.id);
     const { rows } = await pool.query(
-      `UPDATE tenants SET max_brands_allowed = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, company_name, max_brands_allowed`,
-      [val, req.params.id]
+      `UPDATE tenants SET ${updates.join(', ')}, updated_at = NOW()
+       WHERE id = $${i}
+       RETURNING id, company_name, max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, conversation_limit`,
+      values
     );
     if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
-    logger.info({ tenantId: req.params.id, max_brands_allowed: val, by: req.agent.id }, 'tenant_limits_updated');
+    logger.info({ tenantId: req.params.id, by: req.agent.id }, 'tenant_limits_updated');
     return res.json(rows[0]);
   } catch (err) { next(err); }
 });
