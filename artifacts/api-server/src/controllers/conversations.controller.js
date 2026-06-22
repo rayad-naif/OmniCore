@@ -5,23 +5,37 @@
  * Atelier OmniCore — Conversations + Messages + Export
  *
  * GET    /api/conversations                  list (paginated, tenant-scoped, RBAC)
+ *                                            ?is_ticket=true  → tickets only
  * GET    /api/conversations/:id              single conversation
- * PATCH  /api/conversations/:id             update status / priority / assignment
+ * PATCH  /api/conversations/:id             update status / priority / assignment / is_ticket
  *                                            → triggers SMTP email on status change
+ *                                            → broadcasts conversation:assigned via socket
  * GET    /api/conversations/:id/messages     message history
  * POST   /api/conversations/:id/messages     agent sends a message
+ *                                            → broadcasts server:new_message to conv room
  * GET    /api/conversations/:id/export       PDF → R2 presigned URL
  */
 
-const { Router }               = require('express');
-const { requireAuth }          = require('../middleware/auth');
-const { pool }                 = require('../lib/db');
-const { handleExportRequest }  = require('../services/export.service');
+const { Router }                = require('express');
+const { requireAuth }           = require('../middleware/auth');
+const { pool }                  = require('../lib/db');
+const { handleExportRequest }   = require('../services/export.service');
 const { sendStatusChangeEmail } = require('../services/email.service');
-const logger                   = require('../utils/logger');
+const { broadcastToConversation, broadcastToTenant } = require('../services/socket.service');
+const logger                    = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+
+// ─── One-time migration: is_ticket column ─────────────────────────────────────
+pool.query(`
+  ALTER TABLE conversations
+    ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN NOT NULL DEFAULT false
+`).catch(err => {
+  if (!err.message?.includes('already exists')) {
+    logger.warn({ err: err.message }, 'is_ticket_migration_warning');
+  }
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const PAGE_LIMIT = 25;
@@ -30,11 +44,12 @@ function tenantId(req) { return req.agent.tenantId; }
 // ─── GET /api/conversations ───────────────────────────────────────────────────
 router.get('/', async (req, res, next) => {
   try {
-    const tid    = tenantId(req);
-    const status = req.query.status;
-    const page   = Math.max(1, parseInt(req.query.page) || 1);
-    const limit  = Math.min(100, parseInt(req.query.limit) || PAGE_LIMIT);
-    const offset = (page - 1) * limit;
+    const tid      = tenantId(req);
+    const status   = req.query.status;
+    const isTicket = req.query.is_ticket;   // 'true' | 'false' | undefined
+    const page     = Math.max(1, parseInt(req.query.page) || 1);
+    const limit    = Math.min(100, parseInt(req.query.limit) || PAGE_LIMIT);
+    const offset   = (page - 1) * limit;
 
     const conditions = ['c.tenant_id = $1'];
     const values     = [tid];
@@ -52,6 +67,12 @@ router.get('/', async (req, res, next) => {
       values.push(status);
     }
 
+    if (isTicket === 'true') {
+      conditions.push(`c.is_ticket = true`);
+    } else if (isTicket === 'false') {
+      conditions.push(`c.is_ticket = false`);
+    }
+
     const where = conditions.join(' AND ');
 
     const [{ rows: conversations }, { rows: countRow }] = await Promise.all([
@@ -59,7 +80,7 @@ router.get('/', async (req, res, next) => {
         `SELECT
            c.id, c.status, c.channel, c.priority, c.subject,
            c.created_at, c.updated_at, c.sla_breach_at,
-           c.assigned_agent_id,
+           c.assigned_agent_id, c.is_ticket,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
            a.name                                           AS agent_name,
@@ -112,31 +133,36 @@ router.get('/:id', async (req, res, next) => {
 // ─── PATCH /api/conversations/:id ─────────────────────────────────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
-    const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject'];
+    const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject', 'is_ticket'];
     const fields  = Object.keys(req.body).filter(k => ALLOWED.includes(k));
 
     if (!fields.length) {
       return res.status(400).json({ error: 'No valid fields provided' });
     }
 
-    // Fetch old status before updating (needed for email alert)
+    // Fetch pre-update state for comparisons
     const { rows: beforeRows } = await pool.query(
-      `SELECT status, visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      `SELECT status, visitor_id, assigned_agent_id
+       FROM conversations WHERE id = $1 AND tenant_id = $2`,
       [req.params.id, tenantId(req)]
     );
     if (!beforeRows[0]) return res.status(404).json({ error: 'Conversation not found' });
     const oldStatus    = beforeRows[0].status;
     const oldVisitorId = beforeRows[0].visitor_id;
+    const oldAgentId   = beforeRows[0].assigned_agent_id;
 
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values     = fields.map(f => req.body[f]);
+    const values     = fields.map(f => {
+      const v = req.body[f];
+      return (v === '' || v === undefined) ? null : v;
+    });
     values.push(req.params.id, tenantId(req));
 
     const { rows } = await pool.query(
       `UPDATE conversations
        SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
-       RETURNING id, status, priority, assigned_agent_id, updated_at`,
+       RETURNING id, status, priority, assigned_agent_id, is_ticket, updated_at`,
       values
     );
 
@@ -144,22 +170,31 @@ router.patch('/:id', async (req, res, next) => {
     logger.info({ conversationId: req.params.id, fields }, 'conversation_patched');
 
     // Fire-and-forget email alert on status change
-    const newStatus = rows[0].status;
+    const newStatus  = rows[0].status;
     if (fields.includes('status') && newStatus !== oldStatus) {
-      // Look up visitor email (async, non-blocking)
-      pool.query(
-        `SELECT email FROM visitors WHERE id = $1`,
-        [oldVisitorId]
-      ).then(({ rows: vRows }) => {
-        const visitorEmail = vRows[0]?.email;
-        sendStatusChangeEmail(
-          tenantId(req),
-          req.params.id,
-          oldStatus,
-          newStatus,
-          visitorEmail
+      pool.query(`SELECT email FROM visitors WHERE id = $1`, [oldVisitorId])
+        .then(({ rows: vRows }) => {
+          sendStatusChangeEmail(
+            tenantId(req), req.params.id, oldStatus, newStatus, vRows[0]?.email
+          );
+        }).catch(() => {});
+    }
+
+    // Broadcast conversation:assigned when assignment changes
+    const newAgentId = rows[0].assigned_agent_id;
+    if (fields.includes('assigned_agent_id') && String(newAgentId) !== String(oldAgentId)) {
+      let agentName = null;
+      if (newAgentId) {
+        const { rows: agRows } = await pool.query(
+          'SELECT name FROM agents WHERE id = $1', [newAgentId]
         );
-      }).catch(() => {});
+        agentName = agRows[0]?.name ?? null;
+      }
+      broadcastToTenant(tenantId(req), 'conversation:assigned', {
+        conversationId: req.params.id,
+        agentId:   newAgentId,
+        agentName,
+      });
     }
 
     return res.json(rows[0]);
@@ -221,12 +256,16 @@ router.post('/:id/messages', async (req, res, next) => {
     );
 
     const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [req.agent.id]);
-    const result = { ...newMsg[0], sender_name: agentRow.rows[0]?.name ?? 'Agent' };
+    const result   = { ...newMsg[0], sender_name: agentRow.rows[0]?.name ?? 'Agent' };
 
     await pool.query(
       'UPDATE conversations SET updated_at = NOW() WHERE id = $1',
       [req.params.id]
     );
+
+    // Broadcast to the conversation room so the visitor widget and
+    // other agents in the room see the agent reply in real-time.
+    broadcastToConversation(req.params.id, 'server:new_message', result);
 
     logger.info(
       { conversationId: req.params.id, agentId: req.agent.id },

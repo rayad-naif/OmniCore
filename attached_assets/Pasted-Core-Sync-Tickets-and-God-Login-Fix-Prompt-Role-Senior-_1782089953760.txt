@@ -1,0 +1,40 @@
+Core Sync, Tickets, and God-Login Fix" Prompt
+"Role: Senior Full-Stack Engineer.
+
+Task: You failed to implement the Super Admin login flow, the Ticket Panel, and the 'Convert to Ticket' features. Furthermore, the chat has critical real-time bugs. Fix all of these immediately. Do not generate placeholders.
+
+Part 1: Fix Core Chat Bugs (Double Send & Real-Time Sync)
+
+Widget Double-Send: In omnicore-widget.js, fix the input event listeners. Pressing 'Enter' currently fires the send function twice. Ensure e.preventDefault() is used and the event only fires once per message.
+
+Dashboard Sync Issue: In TicketPanel.jsx / ChatPanel.jsx, the agent's outgoing messages only appear after a page refresh. Fix the React state: when POST /api/conversations/:id/messages succeeds, immediately append the returned message object to the local messages state array. Also, ensure the Socket.io listener for message:received correctly appends incoming messages to the state without requiring a refresh.
+
+Part 2: Build the Ticket System & Assignment
+
+Tickets Tab: Add a 'Tickets' tab to the dashboard sidebar. This should fetch and display conversations where is_ticket = true (update the database schema to support an is_ticket boolean if it does not exist).
+
+Convert to Ticket: Inside the active Conversation/Chat panel, add a 'Convert to Ticket' button. This must call a PATCH endpoint to flip is_ticket to true and change the status.
+
+Agent Assignment: In the top header of the chat/ticket panel, add an 'Assign To' dropdown. It must fetch GET /api/agents for the current tenant and allow the user to assign the chat/ticket to a specific agent (updating assigned_agent_id).
+
+Part 3: Widget Page Tracking
+
+Widget Side: Update omnicore-widget.js to track page navigation. It must emit a Socket.io event (visitor:page_change) sending the current window.location.href whenever the URL changes or the widget loads.
+
+Dashboard Side: In the right-hand 'Visitor Info' panel of the dashboard, listen for this event and dynamically update a 'Current Page' UI field so the agent knows exactly what page the user is currently viewing.
+
+Part 4: Super Admin Login Flow
+
+Implement the actual login access for the Super Admin.
+
+During the POST /api/auth/login flow, check if the email matches process.env.SUPER_ADMIN_EMAIL.
+
+If true, attach role: 'superadmin' to the JWT.
+
+On the frontend, if the user role is superadmin, automatically redirect them to /super-admin (the God View) instead of the standard tenant dashboard.
+
+Rules:
+
+Output the exact, corrected code for the frontend components and backend controllers.
+
+Focus strictly on making the widget, real-time sync, and tickets work flawlessly before anything else.

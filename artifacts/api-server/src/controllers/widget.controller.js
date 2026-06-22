@@ -349,6 +349,12 @@ function flushQueue(){
   });
 }
 
+function emitPageChange(){
+  if(state.socket&&state.connected&&state.conversationId){
+    state.socket.emit('visitor:page_change',{conversationId:state.conversationId,url:w.location.href});
+  }
+}
+
 function initSio(){
   var sk=w.io(API_ORIGIN,{
     path:'/api/socket.io',
@@ -361,6 +367,7 @@ function initSio(){
     state.connected=true;setSt('Online',true);
     sk.emit('join:conversation',{conversationId:state.conversationId});
     flushQueue();
+    emitPageChange();
   });
   sk.on('disconnect',function(){
     state.connected=false;setSt('Reconnecting\u2026',false);

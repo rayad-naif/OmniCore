@@ -8,6 +8,7 @@ import {
   Eye, EyeOff, Wifi, WifiOff, Copy, Check, ArrowLeft,
   UserPlus, Building, Lock, Plus, Trash2, Pencil,
   Users, Shield, ToggleLeft, ToggleRight, Send as SendIcon,
+  Tag, UserCheck,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -18,7 +19,7 @@ type Status      = 'open' | 'closed' | 'pending' | 'ai_handling'
 type Channel     = 'email' | 'widget' | 'api'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin'
+type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin'
 type StatusFilter = 'all' | Status
 type AuthView    = 'login' | 'signup'
 
@@ -27,6 +28,7 @@ interface Conversation {
   priority: Priority; visitor_name: string; visitor_email: string | null
   agent_name?: string | null; brand_name: string; updated_at: string
   sla_breach_at?: string | null; unread?: number
+  is_ticket?: boolean; assigned_agent_id?: string | null
 }
 
 interface Message {
@@ -86,7 +88,7 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message>
     },
-    patchConversation: async (id: string, patch: Record<string, string>): Promise<Conversation> => {
+    patchConversation: async (id: string, patch: Record<string, unknown>): Promise<Conversation> => {
       const r = await authFetch(`${API}/conversations/${id}`, {
         method: 'PATCH', body: JSON.stringify(patch),
       })
@@ -517,8 +519,8 @@ function MessageBubble({ msg, visitorName }: { msg: Message; visitorName: string
 }
 
 // ─── Visitor Info Panel ───────────────────────────────────────────────────────
-function VisitorInfoPanel({ conv }: { conv: Conversation }) {
-  const ext = conv as Conversation & { ip_address?: string; current_page_url?: string }
+function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPage: string | null }) {
+  const ext = conv as Conversation & { ip_address?: string }
   return (
     <div className="w-56 border-l border-slate-200 bg-white shrink-0 overflow-y-auto">
       <div className="px-4 py-3 border-b border-slate-100"><p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Visitor</p></div>
@@ -526,7 +528,12 @@ function VisitorInfoPanel({ conv }: { conv: Conversation }) {
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Name</p><p className="text-xs text-slate-800 font-medium">{conv.visitor_name}</p></div>
         {conv.visitor_email && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Email</p><p className="text-xs text-slate-700 break-all">{conv.visitor_email}</p></div>}
         {ext.ip_address && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">IP Address</p><p className="text-xs text-slate-700 font-mono">{ext.ip_address}</p></div>}
-        {ext.current_page_url && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Current Page</p><a href={ext.current_page_url} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all">{ext.current_page_url}</a></div>}
+        {currentPage && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Globe size={9} />Current Page</p>
+            <a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all">{currentPage}</a>
+          </div>
+        )}
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Channel</p><p className="text-xs text-slate-700 capitalize">{conv.channel}</p></div>
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Brand</p><p className="text-xs text-slate-700">{conv.brand_name}</p></div>
         {conv.sla_breach_at && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">SLA</p><p className={`text-xs ${slaColor(conv.sla_breach_at)}`}>{new Date(conv.sla_breach_at).getTime() < Date.now() ? 'Breached' : `Due ${timeAgo(conv.sla_breach_at)}`}</p></div>}
@@ -536,10 +543,14 @@ function VisitorInfoPanel({ conv }: { conv: Conversation }) {
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, socketConnected }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, agents, currentPage, socketConnected }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string) => Promise<void>
   onStatusChange: (status: Status) => void
+  onConvertToTicket: () => Promise<void>
+  onAssign: (agentId: string | null) => Promise<void>
+  agents: AgentRow[]
+  currentPage: string | null
   socketConnected: boolean
 }) {
   const [draft, setDraft]         = useState('')
@@ -606,7 +617,25 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, socketConnected }: 
             {conv.sla_breach_at && <span className={`flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}><Clock size={10} /> SLA {new Date(conv.sla_breach_at).getTime() < Date.now() ? 'breached' : timeAgo(conv.sla_breach_at)}</span>}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {!conv.is_ticket && (
+            <button onClick={onConvertToTicket} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all">
+              <Tag size={12} />Convert to Ticket
+            </button>
+          )}
+          {conv.is_ticket && (
+            <span className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md">
+              <Tag size={10} />Ticket
+            </span>
+          )}
+          <select
+            value={conv.assigned_agent_id ?? ''}
+            onChange={e => onAssign(e.target.value || null)}
+            className="text-xs text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 cursor-pointer"
+          >
+            <option value="">Unassigned</option>
+            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
           {nextStatus[conv.status] && <button onClick={() => onStatusChange(nextStatus[conv.status]!)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">{statusActionLabel[conv.status]}</button>}
           <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-all">{exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}Export PDF</button>
           <button className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"><MoreHorizontal size={16} /></button>
@@ -620,7 +649,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, socketConnected }: 
           ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} />)}
           <div ref={bottomRef} />
         </div>
-        <VisitorInfoPanel conv={conv} />
+        <VisitorInfoPanel conv={conv} currentPage={currentPage} />
       </div>
       <div className="px-4 py-3 bg-white border-t border-slate-200 shrink-0">
         <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
@@ -1378,6 +1407,7 @@ function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
 
   const NAV: { section: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
     { section: 'conversations', icon: <MessageSquare size={17} />, label: 'Conversations' },
+    { section: 'tickets',       icon: <Tag size={17} />,           label: 'Tickets' },
     { section: 'brands',        icon: <Building2 size={17} />,    label: 'Brands',   adminOnly: true },
     { section: 'team',          icon: <Users size={17} />,        label: 'Team',     adminOnly: true },
     { section: 'billing',       icon: <CreditCard size={17} />,  label: 'Billing',  adminOnly: true },
@@ -1467,6 +1497,69 @@ function ToastStack({ toasts, onDismiss, onOpen }: {
   )
 }
 
+// ─── Tickets Section ─────────────────────────────────────────────────────────
+function TicketsSection({
+  tickets, activeId, agents, messages, visitorPages,
+  onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, socketConnected,
+}: {
+  tickets: Conversation[]
+  activeId: string | null
+  agents: AgentRow[]
+  messages: Record<string, Message[]>
+  visitorPages: Record<string, string>
+  onSelect: (id: string) => void
+  onSend: (body: string) => Promise<void>
+  onStatusChange: (status: Status) => void
+  onConvertToTicket: () => Promise<void>
+  onAssign: (agentId: string | null) => Promise<void>
+  socketConnected: boolean
+}) {
+  const activeTicket = tickets.find(t => t.id === activeId)
+  return (
+    <>
+      <div className="flex flex-col w-80 border-r border-slate-200 bg-white shrink-0">
+        <div className="px-4 pt-4 pb-3 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Tag size={14} className="text-amber-600" />Tickets</h2>
+            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{tickets.length}</span>
+          </div>
+          <p className="text-[11px] text-slate-400">Conversations escalated to tickets</p>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {tickets.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-8">
+              <Tag size={28} className="text-slate-300 mb-2" />
+              <p className="text-sm text-slate-400">No tickets yet</p>
+              <p className="text-xs text-slate-300 mt-1">Use "Convert to Ticket" inside any conversation</p>
+            </div>
+          ) : tickets.map(t => (
+            <ConversationRow key={t.id} conv={t} isActive={t.id === activeId} onClick={() => onSelect(t.id)} />
+          ))}
+        </div>
+      </div>
+      {activeTicket ? (
+        <ChatPanel
+          conv={activeTicket}
+          messages={messages[activeId!] ?? []}
+          onSend={onSend}
+          onStatusChange={onStatusChange}
+          onConvertToTicket={onConvertToTicket}
+          onAssign={onAssign}
+          agents={agents}
+          currentPage={visitorPages[activeId ?? ''] ?? null}
+          socketConnected={socketConnected}
+        />
+      ) : (
+        <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50 p-8">
+          <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4"><Tag size={24} className="text-amber-400" /></div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-1">Select a ticket</h3>
+          <p className="text-xs text-slate-400 max-w-xs">Choose a ticket from the list to view and respond</p>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ─── Dashboard (authenticated) ────────────────────────────────────────────────
 function Dashboard() {
   const { accessToken, agent, logout } = useAuth() as {
@@ -1485,10 +1578,22 @@ function Dashboard() {
   const [sidebarOpen, setSidebar] = useState(false)
   const [socketOk, setSocketOk]   = useState(false)
   const [toasts, setToasts]       = useState<InboxToast[]>([])
+  const [agents, setAgents]       = useState<AgentRow[]>([])
+  const [visitorPages, setVisitorPages] = useState<Record<string, string>>({})
   const socketRef                 = useRef<Socket | null>(null)
   const activeIdRef               = useRef<string | null>(null)
 
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
+
+  // Auto-navigate Super Admin to their section immediately after login
+  useEffect(() => {
+    if (agent?.isSuperAdmin) setSection('superadmin')
+  }, [agent?.isSuperAdmin]) // eslint-disable-line
+
+  // Load agent list for the Assign To dropdown (shared by ChatPanel + TicketsSection)
+  useEffect(() => {
+    api.listAgents().then(setAgents).catch(() => {})
+  }, []) // eslint-disable-line
 
   useEffect(() => {
     api.listConversations()
@@ -1541,6 +1646,15 @@ function Dashboard() {
         })
       }
     })
+    socket.on('visitor:page_change', ({ conversationId, url }: { conversationId: string; url: string }) => {
+      setVisitorPages(prev => ({ ...prev, [conversationId]: url }))
+    })
+    socket.on('conversation:assigned', ({ conversationId, agentId, agentName }: { conversationId: string; agentId: string | null; agentName: string | null }) => {
+      setConvs(prev => prev.map(c => c.id === conversationId
+        ? { ...c, agent_name: agentName, assigned_agent_id: agentId }
+        : c
+      ))
+    })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 
@@ -1580,6 +1694,22 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, status } : c))
   }, [activeId]) // eslint-disable-line
 
+  const handleConvertToTicket = useCallback(async () => {
+    if (!activeId) return
+    await api.patchConversation(activeId, { is_ticket: true })
+    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, is_ticket: true } : c))
+  }, [activeId]) // eslint-disable-line
+
+  const handleAssign = useCallback(async (agentId: string | null) => {
+    if (!activeId) return
+    await api.patchConversation(activeId, { assigned_agent_id: agentId })
+    const agentName = agents.find(a => a.id === agentId)?.name ?? null
+    setConvs(prev => prev.map(c => c.id === activeId
+      ? { ...c, agent_name: agentName, assigned_agent_id: agentId }
+      : c
+    ))
+  }, [activeId, agents]) // eslint-disable-line
+
   const totalUnread = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const activeConv  = convs.find(c => c.id === activeId)
 
@@ -1616,9 +1746,24 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} socketConnected={socketOk} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} /> : <EmptyChat />}
               </>
             )
+          )}
+          {section === 'tickets' && (
+            <TicketsSection
+              tickets={convs.filter(c => c.is_ticket)}
+              activeId={activeId}
+              agents={agents}
+              messages={messages}
+              visitorPages={visitorPages}
+              onSelect={handleSelectConversation}
+              onSend={handleSend}
+              onStatusChange={handleStatusChange}
+              onConvertToTicket={handleConvertToTicket}
+              onAssign={handleAssign}
+              socketConnected={socketOk}
+            />
           )}
           {section === 'brands'     && <BrandsSection />}
           {section === 'billing'    && <BillingSection />}

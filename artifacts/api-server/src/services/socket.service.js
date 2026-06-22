@@ -27,7 +27,7 @@ const typingRegistry = new Map();
 const TYPING_TTL_MS  = 5_000;
 
 // ---------------------------------------------------------------------------
-// Module-level io reference so broadcastToTenant can be called externally
+// Module-level io reference so broadcast helpers can be called externally
 // ---------------------------------------------------------------------------
 let _io = null;
 
@@ -38,6 +38,16 @@ let _io = null;
 function broadcastToTenant(tenantId, event, data) {
   if (!_io) return;
   _io.to(`tenant:${tenantId}`).emit(event, data);
+}
+
+/**
+ * Broadcast an event to all sockets in a conversation room.
+ * Used by the REST POST /messages handler so the widget visitor and
+ * other agents see agent replies in real-time without a page refresh.
+ */
+function broadcastToConversation(conversationId, event, data) {
+  if (!_io) return;
+  _io.to(`conv:${conversationId}`).emit(event, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +264,18 @@ function attachSocketServer(httpServer) {
       }
     });
 
+    // ── visitor:page_change ─────────────────────────────────────────────────
+    // Emitted by the widget whenever the visitor navigates to a new URL.
+    // Forward to all agents watching that conversation so they see the
+    // "Current Page" field update in real-time.
+    socket.on('visitor:page_change', ({ conversationId, url }) => {
+      if (actorType !== 'visitor') return;
+      if (!conversationId || !url) return;
+      socket.to(`conv:${conversationId}`).emit('visitor:page_change', {
+        conversationId, url,
+      });
+    });
+
     // ── client:telemetry_update ─────────────────────────────────────────────
     socket.on('client:telemetry_update', async ({ conversationId, event, meta }) => {
       try {
@@ -307,4 +329,4 @@ function attachSocketServer(httpServer) {
   return io;
 }
 
-module.exports = { attachSocketServer, broadcastToTenant };
+module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation };
