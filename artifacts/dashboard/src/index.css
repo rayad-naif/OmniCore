@@ -1,5 +1,35 @@
 @import "tailwindcss";
 
+/* ─── TipTap rich-text editor ──────────────────────────────────────────────── */
+.tiptap-compose .ProseMirror {
+  outline: none;
+  min-height: 80px;
+  padding: 12px 16px;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: #334155;
+}
+.tiptap-compose .ProseMirror p { margin: 0 0 4px; }
+.tiptap-compose .ProseMirror p:last-child { margin-bottom: 0; }
+.tiptap-compose .ProseMirror ul,
+.tiptap-compose .ProseMirror ol { padding-left: 1.25rem; margin: 4px 0; }
+.tiptap-compose .ProseMirror strong { font-weight: 700; }
+.tiptap-compose .ProseMirror em { font-style: italic; }
+.tiptap-compose .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #94a3b8;
+  pointer-events: none;
+  height: 0;
+}
+
+/* ─── Rich message rendering ────────────────────────────────────────────────── */
+.msg-html p { margin: 0 0 4px; }
+.msg-html p:last-child { margin-bottom: 0; }
+.msg-html ul, .msg-html ol { padding-left: 1.25rem; margin: 4px 0; }
+.msg-html strong { font-weight: 700; }
+.msg-html em { font-style: italic; }
+
 @layer base {
   * {
     box-sizing: border-box;

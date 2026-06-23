@@ -6,6 +6,9 @@
  * POST   /api/agents           — invite (create) agent  (admin only)
  * DELETE /api/agents/:id       — remove agent            (admin only)
  * PATCH  /api/agents/me        — update own profile      (any auth'd agent)
+ *
+ * Super-admin account is always excluded from listing and cannot be deleted
+ * by any admin or agent.
  */
 
 const { Router }   = require('express');
@@ -17,6 +20,8 @@ const logger       = require('../utils/logger');
 const router = Router();
 router.use(requireAuth);
 
+const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+
 // ─── GET /api/agents ──────────────────────────────────────────────────────────
 router.get('/', requireRole('admin'), async (req, res, next) => {
   try {
@@ -24,8 +29,9 @@ router.get('/', requireRole('admin'), async (req, res, next) => {
       `SELECT id, name, email, role, is_active, created_at
        FROM agents
        WHERE tenant_id = $1
+         AND ($2 = '' OR lower(email) != $2)
        ORDER BY created_at ASC`,
-      [req.agent.tenantId]
+      [req.agent.tenantId, SUPER_ADMIN_EMAIL]
     );
     return res.json(rows);
   } catch (err) { next(err); }
@@ -65,6 +71,18 @@ router.delete('/:id', requireRole('admin'), async (req, res, next) => {
     if (req.params.id === req.agent.id) {
       return res.status(400).json({ error: 'Cannot remove yourself' });
     }
+
+    // Protect the superadmin account from deletion by any admin / agent
+    if (SUPER_ADMIN_EMAIL) {
+      const { rows: target } = await pool.query(
+        'SELECT email FROM agents WHERE id = $1',
+        [req.params.id]
+      );
+      if (target[0] && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
+        return res.status(403).json({ error: 'Super admin cannot be deleted' });
+      }
+    }
+
     const { rowCount } = await pool.query(
       'DELETE FROM agents WHERE id = $1 AND tenant_id = $2',
       [req.params.id, req.agent.tenantId]

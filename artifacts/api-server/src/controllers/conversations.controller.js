@@ -20,7 +20,7 @@ const { Router }                = require('express');
 const { requireAuth }           = require('../middleware/auth');
 const { pool }                  = require('../lib/db');
 const { handleExportRequest }   = require('../services/export.service');
-const { sendStatusChangeEmail } = require('../services/email.service');
+const { sendStatusChangeEmail, sendAgentReplyEmail } = require('../services/email.service');
 const { broadcastToConversation, broadcastToTenant } = require('../services/socket.service');
 const logger                    = require('../utils/logger');
 
@@ -290,6 +290,20 @@ router.post('/:id/messages', async (req, res, next) => {
     await pool.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [req.params.id]);
     broadcastToConversation(req.params.id, 'server:new_message', result);
     logger.info({ conversationId: req.params.id, agentId: req.agent.id }, 'agent_message_sent');
+
+    // Non-blocking: email visitor when agent replies (not for internal notes)
+    if (!Boolean(isInternalNote)) {
+      pool.query(
+        `SELECT v.email FROM conversations c JOIN visitors v ON v.id = c.visitor_id WHERE c.id = $1`,
+        [req.params.id]
+      ).then(({ rows: vr }) => {
+        if (vr[0]?.email) {
+          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email)
+            .catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     return res.status(201).json(result);
   } catch (err) { next(err); }
 });

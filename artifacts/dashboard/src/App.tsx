@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Placeholder from '@tiptap/extension-placeholder'
 import {
   MessageSquare, Building2, CreditCard, Settings,
   Search, Send, FileDown, Menu, X, Bot, User,
@@ -209,6 +212,16 @@ function useApi() {
     patchTenantLimits: async (id: string, limits: Partial<{ max_brands_allowed: number; max_agents_allowed: number; ai_feature_enabled: boolean; smtp_feature_enabled: boolean; conversation_limit: number }>): Promise<void> => {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, { method: 'PATCH', body: JSON.stringify(limits) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update limits') }
+    },
+    provisionTenant: async (company_name: string, admin_name: string, admin_email: string, admin_password: string): Promise<{ tenant: SANTenant; agent: AgentRow; temp_password: string }> => {
+      const r = await authFetch(`${API}/tenants/provision`, { method: 'POST', body: JSON.stringify({ company_name, admin_name, admin_email, admin_password }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to provision tenant') }
+      return r.json() as Promise<{ tenant: SANTenant; agent: AgentRow; temp_password: string }>
+    },
+    getWorkspaceSettings: async (): Promise<{ smtp_config_json?: Record<string, unknown> }> => {
+      const r = await authFetch(`${API}/tenants/settings/current`)
+      if (!r.ok) return {}
+      return r.json() as Promise<{ smtp_config_json?: Record<string, unknown> }>
     },
     updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean }): Promise<void> => {
       const r = await authFetch(`${API}/tenants/settings`, { method: 'PATCH', body: JSON.stringify(patch) })
@@ -630,7 +643,11 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
           </div>
         ) : (
           <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${isInternal ? 'bg-amber-50 border border-amber-200 text-amber-900' : isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-50 border border-violet-200 text-violet-900' : 'bg-white border border-slate-200 text-slate-800'}`}>
-            {msg.message_body}
+            {msg.message_body.trimStart().startsWith('<') ? (
+              <div className="msg-html" dangerouslySetInnerHTML={{ __html: msg.message_body }} />
+            ) : (
+              msg.message_body
+            )}
           </div>
         )}
         <div className={`flex items-center gap-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
@@ -698,44 +715,57 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
   )
 }
 
-// ─── Email-style Compose Box ──────────────────────────────────────────────────
+// ─── Email-style Compose Box (rich-text via TipTap) ───────────────────────────
 function EmailComposeBox({ conv, onSend, disabled }: {
   conv: Conversation
   onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   disabled?: boolean
 }) {
-  const [draft, setDraft]         = useState('')
   const [sending, setSending]     = useState(false)
   const [isNote, setIsNote]       = useState(false)
   const [rephrasing, setRephrase] = useState(false)
-  const textareaRef               = useRef<HTMLTextAreaElement>(null)
   const api = useApi()
-
-  const handleSend = async () => {
-    const body = draft.trim()
-    if (!body || sending) return
-    setDraft(''); setSending(true)
-    try { await onSend(body, isNote) } catch { /* ignore */ } finally { setSending(false) }
-    textareaRef.current?.focus()
-  }
-
-  const handleRephrase = async () => {
-    const body = draft.trim()
-    if (!body || rephrasing) return
-    setRephrase(true)
-    try { const improved = await api.rephraseText(body); setDraft(improved) }
-    catch { /* ignore */ }
-    finally { setRephrase(false); textareaRef.current?.focus() }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-  }
 
   const isClosed = conv.status === 'closed' || disabled
 
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Placeholder.configure({
+        placeholder: isClosed
+          ? 'Conversation closed — reopen to reply'
+          : isNote
+          ? 'Write an internal note (not visible to visitor)…'
+          : 'Write your reply… (Ctrl+Enter to send)',
+      }),
+    ],
+    editable: !isClosed,
+  })
+
+  const handleSend = async () => {
+    if (!editor || editor.isEmpty || sending) return
+    const body = editor.getHTML()
+    editor.commands.clearContent(true)
+    setSending(true)
+    try { await onSend(body, isNote) } catch { /* ignore */ } finally { setSending(false) }
+    editor.commands.focus()
+  }
+
+  const handleRephrase = async () => {
+    if (!editor || editor.isEmpty || rephrasing) return
+    const text = editor.getText()
+    setRephrase(true)
+    try {
+      const improved = await api.rephraseText(text)
+      editor.commands.setContent(improved)
+    } catch { /* ignore */ }
+    finally { setRephrase(false); editor.commands.focus() }
+  }
+
+  const isActive = (fmt: string) => editor?.isActive(fmt) ?? false
+
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mx-4 mb-4 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
+    <div className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mx-4 mb-4 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all ${isNote ? 'border-amber-200 focus-within:border-amber-400 focus-within:ring-amber-400/20' : ''}`}>
       {/* Email header fields */}
       <div className="border-b border-slate-100">
         <div className="flex items-center px-4 py-2 border-b border-slate-100">
@@ -752,37 +782,46 @@ function EmailComposeBox({ conv, onSend, disabled }: {
           </div>
         </div>
       </div>
-      {/* Body */}
-      <textarea
-        ref={textareaRef}
-        rows={4}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={isClosed ? 'Conversation closed — reopen to reply' : isNote ? 'Write an internal note (not visible to visitor)…' : 'Write your reply… (Enter to send, Shift+Enter for newline)'}
-        disabled={isClosed}
-        className={`w-full px-4 py-3 text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none leading-relaxed bg-transparent ${isNote ? 'bg-amber-50/30' : ''}`}
-      />
-      {/* Toolbar */}
+      {/* Rich-text body */}
+      <div
+        className={`tiptap-compose ${isNote ? 'bg-amber-50/20' : ''}`}
+        onClick={() => editor?.commands.focus()}
+        onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSend() } }}
+      >
+        <EditorContent editor={editor} />
+      </div>
+      {/* Formatting toolbar */}
       <div className="flex items-center justify-between px-3 py-2 border-t border-slate-100 bg-slate-50/50">
-        <div className="flex items-center gap-1">
-          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Attach file (coming soon)"><Paperclip size={14} /></button>
-          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Bold (coming soon)"><Bold size={13} /></button>
-          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="Italic (coming soon)"><Italic size={13} /></button>
-          <button disabled className="p-1.5 text-slate-300 rounded-lg" title="List (coming soon)"><List size={13} /></button>
-          <div className="w-px h-4 bg-slate-200 mx-0.5" />
-          <button onClick={handleRephrase} disabled={!draft.trim() || rephrasing || isClosed} title="AI rephrase" className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+        <div className="flex items-center gap-0.5">
+          <button onClick={() => editor?.chain().focus().toggleBold().run()} disabled={isClosed}
+            className={`p-1.5 rounded-lg transition-colors ${isActive('bold') ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`} title="Bold (Ctrl+B)">
+            <Bold size={13} />
+          </button>
+          <button onClick={() => editor?.chain().focus().toggleItalic().run()} disabled={isClosed}
+            className={`p-1.5 rounded-lg transition-colors ${isActive('italic') ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`} title="Italic (Ctrl+I)">
+            <Italic size={13} />
+          </button>
+          <button onClick={() => editor?.chain().focus().toggleBulletList().run()} disabled={isClosed}
+            className={`p-1.5 rounded-lg transition-colors ${isActive('bulletList') ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`} title="Bullet list">
+            <List size={13} />
+          </button>
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+          <button onClick={handleRephrase} disabled={!editor || editor.isEmpty || rephrasing || isClosed}
+            title="AI rephrase" className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
             {rephrasing ? <RefreshCw size={14} className="animate-spin text-violet-500" /> : <Sparkles size={14} />}
           </button>
         </div>
-        <button
-          onClick={handleSend}
-          disabled={!draft.trim() || sending || isClosed}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isNote ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
-        >
-          {sending ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
-          {isNote ? 'Add Note' : 'Send Reply'}
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-300 hidden sm:block">Ctrl+Enter to send</span>
+          <button
+            onClick={handleSend}
+            disabled={!editor || editor.isEmpty || sending || isClosed}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isNote ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
+          >
+            {sending ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+            {isNote ? 'Add Note' : 'Send Reply'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -1358,7 +1397,7 @@ function SettingsSection() {
   const [wsSaving, setWS] = useState(false)
   const [wsMsg, setWsMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const [smtpForm, setSmtp] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', enabled: false })
+  const [smtpForm, setSmtp] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', notification_email: '', enabled: false })
   const [smtpSaving, setSmtpSaving] = useState(false)
   const [smtpMsg, setSmtpMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -1384,7 +1423,7 @@ function SettingsSection() {
   const handleSmtpSave = async (e: React.FormEvent) => {
     e.preventDefault(); setSmtpMsg(null); setSmtpSaving(true)
     try {
-      await api.updateWorkspace({ smtp_config_json: { host: smtpForm.host.trim(), port: parseInt(smtpForm.port, 10) || 587, user: smtpForm.user.trim(), pass: smtpForm.pass, from_email: smtpForm.from_email.trim(), enabled: smtpForm.enabled } })
+      await api.updateWorkspace({ smtp_config_json: { host: smtpForm.host.trim(), port: parseInt(smtpForm.port, 10) || 587, user: smtpForm.user.trim(), pass: smtpForm.pass, from_email: smtpForm.from_email.trim(), notification_email: smtpForm.notification_email.trim() || undefined, enabled: smtpForm.enabled } })
       setSmtpMsg({ ok: true, text: 'SMTP configuration saved.' })
     }
     catch (err) { setSmtpMsg({ ok: false, text: (err as Error).message }) }
@@ -1466,8 +1505,9 @@ function SettingsSection() {
                     <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={smtpForm.user} onChange={e => setSmtp(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
                     <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={smtpForm.pass} onChange={e => setSmtp(f => ({ ...f, pass: e.target.value }))} placeholder="••••••••••••" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
                     <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={smtpForm.from_email} onChange={e => setSmtp(f => ({ ...f, from_email: e.target.value }))} placeholder="support@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
+                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Inbox Notification Email <span className="text-slate-400 font-normal">(alert address for new visitor messages)</span></label><input type="email" value={smtpForm.notification_email} onChange={e => setSmtp(f => ({ ...f, notification_email: e.target.value }))} placeholder="owner@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                      <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email on ticket status changes</p></div>
+                      <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email on ticket status changes and visitor messages</p></div>
                       <button type="button" onClick={() => setSmtp(f => ({ ...f, enabled: !f.enabled }))} className={`${smtpForm.enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{smtpForm.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
                     </div>
                     <button type="submit" disabled={smtpSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{smtpSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save SMTP Config'}</button>
@@ -1585,6 +1625,11 @@ function SuperAdminSection() {
   const [limitsForm, setLimitsForm]   = useState({ max_brands_allowed: 3, max_agents_allowed: 10, ai_feature_enabled: true, smtp_feature_enabled: true, conversation_limit: 1000 })
   const [limitsSaving, setLSaving]    = useState(false)
   const [limitsErr, setLimitsErr]     = useState<string | null>(null)
+  const [showCreate, setShowCreate]   = useState(false)
+  const [createForm, setCreateForm]   = useState({ company_name: '', admin_name: '', admin_email: '', admin_password: '' })
+  const [creating, setCreating]       = useState(false)
+  const [createErr, setCreateErr]     = useState<string | null>(null)
+  const [createResult, setCreateResult] = useState<{ tenant: SANTenant; agent: AgentRow; temp_password: string } | null>(null)
 
   useEffect(() => {
     Promise.all([api.listSANTenants(), api.listUpgradeRequests()])
@@ -1627,8 +1672,61 @@ function SuperAdminSection() {
 
   const statusColor = (s: string) => s === 'active' ? 'bg-emerald-50 text-emerald-700' : s === 'suspended' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
 
+  const handleCreateTenant = async (e: React.FormEvent) => {
+    e.preventDefault(); setCreateErr(null); setCreating(true)
+    try {
+      const result = await api.provisionTenant(
+        createForm.company_name,
+        createForm.admin_name,
+        createForm.admin_email,
+        createForm.admin_password || 'Welcome1!'
+      )
+      setCreateResult(result)
+      setTenants(prev => [...prev, result.tenant])
+      setCreateForm({ company_name: '', admin_name: '', admin_email: '', admin_password: '' })
+    } catch (err) { setCreateErr((err as Error).message) }
+    finally { setCreating(false) }
+  }
+
   return (
     <>
+      {/* Create Tenant Modal */}
+      {showCreate && (
+        <Modal onClose={() => { setShowCreate(false); setCreateErr(null); setCreateResult(null) }}>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-semibold text-slate-900">Create New Tenant</h2>
+            <button onClick={() => { setShowCreate(false); setCreateErr(null); setCreateResult(null) }} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+          </div>
+          {createResult ? (
+            <div className="space-y-4">
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <p className="text-xs font-semibold text-emerald-700 mb-1">✅ Tenant created successfully!</p>
+                <p className="text-xs text-emerald-600"><strong>{createResult.tenant.company_name}</strong> is ready.</p>
+              </div>
+              <div className="p-4 bg-sky-50 border border-sky-200 rounded-xl space-y-1.5">
+                <p className="text-xs font-semibold text-sky-700 mb-2">Admin credentials</p>
+                <p className="text-xs text-slate-700">Email: <code className="bg-white px-1 rounded">{createResult.agent.email}</code></p>
+                <p className="text-xs text-slate-700">Temp password: <code className="bg-white px-1 rounded">{createResult.temp_password}</code></p>
+                <p className="text-[11px] text-slate-400 mt-1">Share these securely — the admin should change the password on first login.</p>
+              </div>
+              <button onClick={() => { setShowCreate(false); setCreateResult(null) }} className="w-full py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg">Done</button>
+            </div>
+          ) : (
+            <form onSubmit={handleCreateTenant} className="space-y-3">
+              {createErr && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{createErr}</div>}
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Name *</label><input required type="text" value={createForm.company_name} onChange={e => setCreateForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Acme Corp" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Admin Name *</label><input required type="text" value={createForm.admin_name} onChange={e => setCreateForm(f => ({ ...f, admin_name: e.target.value }))} placeholder="Jane Smith" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Admin Email *</label><input required type="email" value={createForm.admin_email} onChange={e => setCreateForm(f => ({ ...f, admin_email: e.target.value }))} placeholder="jane@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Temporary Password <span className="text-slate-400 font-normal">(default: Welcome1!)</span></label><input type="password" value={createForm.admin_password} onChange={e => setCreateForm(f => ({ ...f, admin_password: e.target.value }))} placeholder="Welcome1!" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => { setShowCreate(false); setCreateErr(null) }} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={creating} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{creating ? <><RefreshCw size={11} className="animate-spin" /> Creating…</> : <><UserPlus size={11} /> Create Tenant</>}</button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
+
       {/* Limits Modal */}
       {limitsTarget && (
         <Modal onClose={() => setLimits(null)} wide>
@@ -1700,6 +1798,7 @@ function SuperAdminSection() {
         <div className="max-w-5xl">
           <div className="flex items-center justify-between mb-6">
             <div><h2 className="text-base font-semibold text-slate-900 flex items-center gap-2"><Shield size={16} className="text-sky-600" /> Super Admin</h2><p className="text-xs text-slate-500 mt-0.5">Manage all tenants, plans, and platform features</p></div>
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-lg transition-colors"><Plus size={13} /> New Tenant</button>
           </div>
 
           <div className="flex gap-2 mb-5">

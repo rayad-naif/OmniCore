@@ -19,6 +19,7 @@
 
 const { Server }   = require('socket.io');
 const { pool }     = require('../lib/db');
+const { sendNewVisitorMessageEmail } = require('./email.service');
 
 // ---------------------------------------------------------------------------
 // In-memory typing registry  { conversationId -> { agentId, displayName, expiresAt } }
@@ -253,6 +254,10 @@ function attachSocketServer(httpServer) {
             conversationId,
             message: enriched,
           });
+
+          // Non-blocking: email the tenant's notification_email address
+          sendNewVisitorMessageEmail(tenantId, conversationId, senderName, body.trim())
+            .catch(() => {});
         }
 
         ack?.({ ok: true, messageId: message.id });

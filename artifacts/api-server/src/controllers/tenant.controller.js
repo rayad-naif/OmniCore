@@ -87,6 +87,57 @@ router.post('/', requireRole('superadmin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * POST /api/tenants/provision — superadmin only
+ * Creates a new tenant AND its first admin agent atomically.
+ * Body: { company_name, admin_name, admin_email, admin_password }
+ */
+router.post('/provision', requireRole('superadmin'), async (req, res, next) => {
+  const bcrypt = require('bcryptjs');
+  const { company_name, admin_name, admin_email, admin_password = 'Welcome1!' } = req.body || {};
+
+  if (!company_name?.trim()) return res.status(400).json({ error: 'company_name is required' });
+  if (!admin_name?.trim())   return res.status(400).json({ error: 'admin_name is required' });
+  if (!admin_email?.trim())  return res.status(400).json({ error: 'admin_email is required' });
+
+  const client = await req.db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: tenantRows } = await client.query(
+      `INSERT INTO tenants (company_name)
+       VALUES ($1)
+       RETURNING id, company_name, subscription_status, created_at`,
+      [company_name.trim()]
+    );
+    const tenant = tenantRows[0];
+
+    const hash = await bcrypt.hash(admin_password, 10);
+    const { rows: agentRows } = await client.query(
+      `INSERT INTO agents (tenant_id, name, email, role, password_hash, is_active)
+       VALUES ($1, $2, $3, 'admin', $4, true)
+       RETURNING id, name, email, role, is_active, created_at`,
+      [tenant.id, admin_name.trim(), admin_email.trim().toLowerCase(), hash]
+    );
+    const agent = agentRows[0];
+
+    // Seed a default brand so the tenant is immediately usable
+    await client.query(
+      `INSERT INTO brands (tenant_id, brand_name) VALUES ($1, $2)`,
+      [tenant.id, company_name.trim()]
+    );
+
+    await client.query('COMMIT');
+    logger.info({ tenantId: tenant.id, agentId: agent.id }, 'tenant_provisioned');
+    return res.status(201).json({ tenant, agent, temp_password: admin_password });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // WORKSPACE SETTINGS  PATCH /api/tenants/settings  (must be before /:tenantId)
 // ---------------------------------------------------------------------------
