@@ -267,12 +267,15 @@ function ChatPanel({
   visitorTyping, socket, onMessageSent,
   onAiRephrase, aiRephrasing,
   onExport, exporting,
+  authFetch,
 }) {
-  const [draft, setDraft]         = useState('');
-  const [isInternal, setInternal] = useState(false);
-  const [sending, setSending]     = useState(false);
-  const messagesEndRef            = useRef(null);
-  const textareaRef               = useRef(null);
+  const [draft, setDraft]             = useState('');
+  const [isInternal, setInternal]     = useState(false);
+  const [sending, setSending]         = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);   // { file, name, type, dataUrl }
+  const messagesEndRef                = useRef(null);
+  const textareaRef                   = useRef(null);
+  const fileInputRef                  = useRef(null);
 
   // Debounced typing event
   const emitTyping = useRef(
@@ -292,7 +295,33 @@ function ChatPanel({
   }, [messages, visitorTyping]);
 
   // Reset draft when switching conversations
-  useEffect(() => { setDraft(''); setInternal(false); }, [conversation?.id]);
+  useEffect(() => { setDraft(''); setInternal(false); setPendingFile(null); }, [conversation?.id]);
+
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert('File too large — max 10 MB.'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => setPendingFile({ file, name: file.name, type: file.type, dataUrl: ev.target.result });
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function handlePaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = (ev) => setPendingFile({ file, name: `paste-${Date.now()}.png`, type: file.type, dataUrl: ev.target.result });
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  }
 
   function autoResize(el) {
     el.style.height = 'auto';
@@ -309,21 +338,44 @@ function ChatPanel({
   }
 
   async function send() {
-    if (!draft.trim() || !conversation || sending) return;
+    if ((!draft.trim() && !pendingFile) || !conversation || sending) return;
     setSending(true);
-    const payload = {
-      conversationId: conversation.id,
-      body:           draft.trim(),
-      isInternalNote: isInternal,
-      attachments:    [],
-    };
-    socket?.emit('client:send_message', payload, () => {});
-    onMessageSent(payload);
+    const bodyText   = draft.trim();
+    const capturedFile = pendingFile;
+
     setDraft('');
     setInternal(false);
+    setPendingFile(null);
     if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
-    setSending(false);
     socket?.emit('agent:is_typing', { conversationId: conversation.id, isTyping: false });
+
+    try {
+      let attachments = [];
+
+      if (capturedFile) {
+        const comma  = capturedFile.dataUrl.indexOf(',');
+        const base64 = comma >= 0 ? capturedFile.dataUrl.slice(comma + 1) : capturedFile.dataUrl;
+        const upRes  = await authFetch(`${API_URL}/conversations/upload`, {
+          method: 'POST',
+          body: JSON.stringify({ filename: capturedFile.name, mimeType: capturedFile.type, data: base64 }),
+        });
+        if (upRes.ok) {
+          const upData = await upRes.json();
+          attachments = [{ url: upData.url, name: capturedFile.name, type: capturedFile.type }];
+        }
+      }
+
+      const payload = {
+        conversationId: conversation.id,
+        body:           bodyText,
+        isInternalNote: isInternal,
+        attachments,
+      };
+      socket?.emit('client:send_message', payload, () => {});
+      onMessageSent({ ...payload, attachments_json: attachments });
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleKeyDown(e) {
@@ -444,6 +496,26 @@ function ChatPanel({
             {isInternal ? 'Internal Note' : 'Note'}
           </button>
 
+          {/* Attach file */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach file (or paste an image)"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium
+                       bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            Attach
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.pdf,.csv,.doc,.docx,.xls,.xlsx,.txt"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+
           {/* AI Rephrase */}
           <button
             onClick={handleAiRephrase}
@@ -463,10 +535,27 @@ function ChatPanel({
           </button>
 
           <div className="flex-1" />
-
-          {/* Macro shortcut hint */}
-          <span className="text-[10px] text-slate-400">/ for macros  ·  Shift+Enter new line</span>
+          <span className="text-[10px] text-slate-400">Shift+Enter new line · Paste image</span>
         </div>
+
+        {/* Pending attachment preview */}
+        {pendingFile && (
+          <div className="mx-4 mb-1 flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+            {pendingFile.type.startsWith('image/') ? (
+              <img src={pendingFile.dataUrl} alt="preview"
+                   className="w-8 h-8 rounded object-cover shrink-0" />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                   className="w-4 h-4 text-blue-500 shrink-0">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            )}
+            <span className="text-xs text-blue-700 flex-1 truncate">{pendingFile.name}</span>
+            <button onClick={() => setPendingFile(null)}
+                    className="text-blue-400 hover:text-blue-600 text-sm font-bold leading-none">×</button>
+          </div>
+        )}
 
         {/* Textarea */}
         <div className={`mx-4 mb-3 rounded-xl border transition-all
@@ -478,7 +567,8 @@ function ChatPanel({
             value={draft}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder={isInternal ? 'Write a private internal note…' : 'Type a reply…'}
+            onPaste={handlePaste}
+            placeholder={isInternal ? 'Write a private internal note…' : 'Type a reply… (paste image to attach)'}
             rows={2}
             className="w-full px-4 pt-3 pb-2 text-sm bg-transparent outline-none resize-none
                        placeholder:text-slate-400 text-slate-800"
@@ -487,10 +577,10 @@ function ChatPanel({
           <div className="flex justify-end px-3 pb-2.5">
             <button
               onClick={send}
-              disabled={!draft.trim() || sending}
+              disabled={(!draft.trim() && !pendingFile) || sending}
               className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold
                 transition-all
-                ${draft.trim() && !sending
+                ${(draft.trim() || pendingFile) && !sending
                   ? 'bg-violet-600 text-white hover:bg-violet-700 active:scale-[.97]'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
               {sending ? <Spinner size="sm" /> : (
@@ -643,6 +733,7 @@ export default function Inbox() {
     if (!accessToken) return;
 
     const socket = io(SOCKET_URL, {
+      path:        '/api/socket.io',
       auth:        { agentToken: accessToken },
       transports:  ['websocket', 'polling'],
       reconnection: true,
@@ -683,6 +774,24 @@ export default function Inbox() {
     // Telemetry events
     socket.on('server:telemetry', (ev) => {
       setTelEv(prev => [...prev.slice(-49), ev]);
+    });
+
+    // New message from visitor — updates sidebar for all agents (even if conv not open)
+    socket.on('conversation:visitor_message', ({ conversationId, message }) => {
+      dispatchTickets({
+        type: 'PATCH',
+        id: conversationId,
+        patch: {
+          last_message:  message?.message_body || message?.body || '',
+          unread: conversationId !== activeConvIdRef.current,
+          updated_at:    message?.created_at || new Date().toISOString(),
+        },
+      });
+    });
+
+    // New conversation created by widget — prepend to sidebar
+    socket.on('conversation:created', (conv) => {
+      dispatchTickets({ type: 'PREPEND', payload: { ...conv, unread: true } });
     });
 
     // Handover: mark ticket open
@@ -829,6 +938,7 @@ export default function Inbox() {
           aiRephrasing={aiRephrasing}
           onExport={handleExport}
           exporting={exporting}
+          authFetch={authFetch}
         />
       </div>
 
@@ -845,14 +955,18 @@ export default function Inbox() {
 
 // ─── Msg normaliser — handles both snake_case (REST) and camelCase (socket) ───
 function normaliseMsg(m) {
+  let atts = m.attachments_json || m.attachments || [];
+  if (typeof atts === 'string') { try { atts = JSON.parse(atts); } catch { atts = []; } }
+  if (!Array.isArray(atts)) atts = [];
   return {
     id:               m.id,
     conversation_id:  m.conversation_id  || m.conversationId,
     sender_type:      m.sender_type      || m.senderType,
     sender_id:        m.sender_id        || m.senderId,
-    message_body:     m.message_body     || m.messageBody || m.body || '',
+    sender_name:      m.sender_name      || m.senderName   || '',
+    message_body:     m.message_body     || m.messageBody  || m.body || '',
     is_internal_note: m.is_internal_note || m.isInternalNote || false,
-    attachments_json: m.attachments_json || m.attachments  || [],
+    attachments_json: atts,
     created_at:       m.created_at       || m.createdAt    || new Date().toISOString(),
   };
 }

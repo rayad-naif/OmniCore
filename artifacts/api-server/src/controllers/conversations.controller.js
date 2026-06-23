@@ -23,6 +23,12 @@ const { handleExportRequest }   = require('../services/export.service');
 const { sendStatusChangeEmail, sendAgentReplyEmail } = require('../services/email.service');
 const { broadcastToConversation, broadcastToTenant } = require('../services/socket.service');
 const logger                    = require('../utils/logger');
+const crypto                    = require('crypto');
+const fs                        = require('fs');
+const path                      = require('path');
+
+const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
+try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch(e) {}
 
 const router = Router();
 router.use(requireAuth);
@@ -44,6 +50,21 @@ pool.query(`
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const PAGE_LIMIT = 50;
 function tenantId(req) { return req.agent.tenantId; }
+
+// ─── POST /api/conversations/upload — authenticated file upload for agents ────
+router.post('/upload', async (req, res, next) => {
+  try {
+    const { filename, mimeType, data } = req.body || {};
+    if (!filename || !data) return res.status(400).json({ error: 'filename and data are required' });
+    const buffer   = Buffer.from(data, 'base64');
+    const ext      = path.extname(filename) || '';
+    const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+    const filePath = path.join(UPLOADS_DIR, safeName);
+    fs.writeFileSync(filePath, buffer);
+    logger.info({ filename, size: buffer.length, agentId: req.agent?.id }, 'agent_file_uploaded');
+    return res.json({ url: `/api/widget/files/${safeName}`, name: filename, type: mimeType });
+  } catch (err) { next(err); }
+});
 
 // ─── GET /api/conversations/csat ─────────────────────────────────────────────
 router.get('/csat', async (req, res, next) => {

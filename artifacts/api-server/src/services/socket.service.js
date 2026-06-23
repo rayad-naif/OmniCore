@@ -3,23 +3,41 @@
 /**
  * socket.service.js
  * Atelier OmniCore — Real-Time Socket Architecture
- *
- * Responsibilities:
- *  - Authenticate incoming connections (visitor session token OR agent JWT)
- *  - Room management: each conversation gets its own room
- *    Agents also auto-join a tenant-level room `tenant:{tenantId}` so
- *    broadcasts like `conversation:created` reach all connected agents.
- *  - client:send_message      — visitor or agent sends a chat message
- *  - agent:is_typing          — collision-detection broadcast
- *  - Offline queue drain on reconnect
- *  - Graceful disconnect / cleanup
- *  - broadcastToTenant(tenantId, event, data) — exported for use by other
- *    controllers (e.g. widget session endpoint)
  */
 
 const { Server }   = require('socket.io');
 const { pool }     = require('../lib/db');
 const { sendNewVisitorMessageEmail } = require('./email.service');
+
+// ---------------------------------------------------------------------------
+// AI subject generation — async, non-blocking, gracefully degraded
+// ---------------------------------------------------------------------------
+async function maybeGenerateSubject(conversationId, firstMessageBody) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT subject FROM conversations WHERE id = $1`, [conversationId]
+    );
+    if (!rows[0] || rows[0].subject) return; // already has a subject
+
+    let subject = `Re: ${firstMessageBody.slice(0, 80)}`;
+
+    const genAI = (() => { try { return require('./ai.service'); } catch { return null; } })();
+    if (genAI?.rephraseText && process.env.GEMINI_API_KEY) {
+      try {
+        const raw = await genAI.rephraseText({
+          draft: `Summarise this customer support message in one short title (max 8 words, no quotes, no full stop): "${firstMessageBody}"`,
+          tone: 'concise',
+        });
+        if (raw?.trim()) subject = `Re: ${raw.trim()}`;
+      } catch { /* use fallback */ }
+    }
+
+    await pool.query(
+      `UPDATE conversations SET subject = $1, updated_at = NOW() WHERE id = $2`,
+      [subject, conversationId]
+    );
+  } catch { /* non-fatal */ }
+}
 
 // ---------------------------------------------------------------------------
 // In-memory typing registry  { conversationId -> { agentId, displayName, expiresAt } }
@@ -99,17 +117,17 @@ function verifyAgentJwt(token) {
 // ---------------------------------------------------------------------------
 // Helper: persist a message row and return it
 // ---------------------------------------------------------------------------
-async function persistMessage({ conversationId, senderType, senderId, body, attachments = [] }) {
+async function persistMessage({ conversationId, senderType, senderId, body, attachments = [], isInternalNote = false }) {
   const attJson = Array.isArray(attachments) && attachments.length > 0
     ? JSON.stringify(attachments)
     : '[]';
   const { rows } = await pool.query(
     `INSERT INTO messages
-       (conversation_id, sender_type, sender_id, message_body, attachments_json)
-     VALUES ($1, $2, $3, $4, $5)
+       (conversation_id, sender_type, sender_id, message_body, attachments_json, is_internal_note)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, conversation_id, sender_type, sender_id,
-               message_body, attachments_json, created_at`,
-    [conversationId, senderType, senderId, body, attJson]
+               message_body, attachments_json, is_internal_note, created_at`,
+    [conversationId, senderType, senderId, body, attJson, Boolean(isInternalNote)]
   );
   return rows[0];
 }
@@ -201,8 +219,10 @@ function attachSocketServer(httpServer) {
     // ── client:send_message ─────────────────────────────────────────────────
     socket.on('client:send_message', async (payload, ack) => {
       try {
-        const { conversationId, body, attachments } = payload;
-        if (!conversationId || !body?.trim()) {
+        const { conversationId, body, attachments, isInternalNote } = payload;
+        const hasBody = body?.trim();
+        const hasAtts = Array.isArray(attachments) && attachments.length > 0;
+        if (!conversationId || (!hasBody && !hasAtts)) {
           return ack?.({ error: 'INVALID_PAYLOAD' });
         }
 
@@ -219,8 +239,9 @@ function attachSocketServer(httpServer) {
           conversationId,
           senderType,
           senderId,
-          body: body.trim(),
+          body: hasBody ? body.trim() : '',
           attachments,
+          isInternalNote: actorType === 'agent' ? Boolean(isInternalNote) : false,
         });
 
         await touchConversation(conversationId);
@@ -255,8 +276,14 @@ function attachSocketServer(httpServer) {
             message: enriched,
           });
 
+          // Non-blocking: auto-generate subject on first visitor message
+          const msgBody = hasBody ? body.trim() : '';
+          if (msgBody) {
+            maybeGenerateSubject(conversationId, msgBody).catch(() => {});
+          }
+
           // Non-blocking: email the tenant's notification_email address
-          sendNewVisitorMessageEmail(tenantId, conversationId, senderName, body.trim())
+          sendNewVisitorMessageEmail(tenantId, conversationId, senderName, hasBody ? body.trim() : '')
             .catch(() => {});
         }
 

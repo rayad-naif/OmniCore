@@ -419,6 +419,28 @@ function buildDom(){
   qs('#omni-close-btn').addEventListener('click',close);
   els.inp.addEventListener('input',autoResize);
   els.inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+  els.inp.addEventListener('paste',function(e){
+    var items=e.clipboardData&&e.clipboardData.items;
+    if(!items)return;
+    for(var i=0;i<items.length;i++){
+      if(items[i].type.startsWith('image/')){
+        e.preventDefault();
+        var file=items[i].getAsFile();
+        if(!file)continue;
+        (function(f){
+          var reader=new FileReader();
+          reader.onload=function(ev){
+            pendingFile={file:f,dataUrl:ev.target.result,name:'paste-'+Date.now()+'.png',type:f.type};
+            els.attName.textContent='\uD83D\uDCCE Pasted image';
+            els.attPrev.style.display='flex';
+            els.inp.placeholder='Add a message (optional)\u2026';
+          };
+          reader.readAsDataURL(f);
+        })(file);
+        break;
+      }
+    }
+  });
   els.snd.addEventListener('click',send);
   els.fileBtn.addEventListener('click',function(){els.fileInput.click();});
   els.fileInput.addEventListener('change',onFileSelect);
