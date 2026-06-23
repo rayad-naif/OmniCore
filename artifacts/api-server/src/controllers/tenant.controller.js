@@ -20,7 +20,7 @@ const {
   PutObjectCommand,
 }                  = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const logger       = require('../utils/logger');
 
 const router = Router();
