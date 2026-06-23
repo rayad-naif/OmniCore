@@ -2233,11 +2233,25 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
-  active: Section; onNavigate: (s: Section) => void; unread: number
+function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout }: {
+  active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
+  recentActivity: Conversation[]; onSelectConv: (id: string) => void
   agent: { name: string; email: string; role: string; isSuperAdmin?: boolean } | null
   onLogout: () => Promise<void>
 }) {
+  const [bellOpen, setBellOpen] = useState(false)
+  const bellRef = useRef<HTMLDivElement>(null)
+  const totalNotifs = unread + unassigned
+
+  useEffect(() => {
+    if (!bellOpen) return
+    const handler = (e: MouseEvent) => {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [bellOpen])
+
   const items: { key: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
@@ -2257,9 +2271,68 @@ function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
 
   return (
     <div className="flex flex-col w-52 h-full bg-slate-900 text-white shrink-0">
-      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-slate-800">
+      <div className="flex items-center gap-2 px-4 py-5 border-b border-slate-800">
         <OmniLogo size="sm" />
-        <div className="min-w-0"><p className="text-sm font-bold tracking-wide leading-none">OmniCore</p><p className="text-[10px] text-slate-500 mt-0.5">Atelier</p></div>
+        <div className="min-w-0 flex-1"><p className="text-sm font-bold tracking-wide leading-none">OmniCore</p><p className="text-[10px] text-slate-500 mt-0.5">Atelier</p></div>
+        <div className="relative shrink-0" ref={bellRef}>
+          <button
+            onClick={() => setBellOpen(o => !o)}
+            className={`relative p-1.5 rounded-lg transition-colors ${bellOpen ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+            title="Notifications"
+          >
+            <Bell size={15} />
+            {totalNotifs > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none px-0.5 animate-pulse">
+                {totalNotifs > 99 ? '99+' : totalNotifs}
+              </span>
+            )}
+          </button>
+          {bellOpen && (
+            <div className="absolute left-0 top-full mt-1 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+              <div className="px-3 py-2.5 border-b border-slate-700 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-200">Notifications</span>
+                <button onClick={() => setBellOpen(false)} className="text-slate-500 hover:text-slate-300 transition-colors"><X size={12} /></button>
+              </div>
+              <div className="flex gap-2 px-3 py-2 border-b border-slate-700/50">
+                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${unread > 0 ? 'bg-red-500/20 text-red-400' : 'bg-slate-700 text-slate-500'}`}>
+                  <MessageSquare size={9} /> {unread} unread
+                </span>
+                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${unassigned > 0 ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-500'}`}>
+                  <UserPlus size={9} /> {unassigned} unassigned
+                </span>
+              </div>
+              <div className="max-h-60 overflow-y-auto">
+                {recentActivity.length === 0 ? (
+                  <div className="px-3 py-5 text-center">
+                    <CheckCircle2 size={18} className="mx-auto mb-1.5 text-emerald-500/60" />
+                    <p className="text-xs text-slate-500">All caught up!</p>
+                  </div>
+                ) : (
+                  recentActivity.map(conv => (
+                    <button key={conv.id} onClick={() => { onSelectConv(conv.id); setBellOpen(false) }}
+                      className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors border-b border-slate-700/30 last:border-0">
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <span className="text-xs font-medium text-slate-200 truncate">{conv.visitor_name}</span>
+                        <div className="flex gap-1 shrink-0">
+                          {(conv.unread ?? 0) > 0 && (
+                            <span className="bg-red-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 leading-none">{conv.unread}</span>
+                          )}
+                          {!conv.assigned_agent_id && conv.status !== 'closed' && (
+                            <span className="bg-amber-500/80 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 leading-none">OPEN</span>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-400 truncate">{conv.subject || '(No subject)'}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="px-3 py-2 border-t border-slate-700">
+                <button onClick={() => { onNavigate('conversations'); setBellOpen(false) }} className="text-[10px] text-sky-400 hover:text-sky-300 transition-colors">View all in inbox →</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
         {visible.map(item => (
@@ -2268,6 +2341,12 @@ function Sidebar({ active, onNavigate, unread, agent, onLogout }: {
             {item.icon}
             <span>{item.label}</span>
             {item.key === 'conversations' && unread > 0 && <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unread}</span>}
+            {item.key === 'conversations' && unassigned > 0 && unread === 0 && (
+              <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unassigned}</span>
+            )}
+            {item.key === 'conversations' && unread > 0 && unassigned > 0 && (
+              <span className="bg-amber-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unassigned}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -2481,7 +2560,12 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, priority } : c))
   }, [activeId]) // eslint-disable-line
 
-  const totalUnread = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
+  const totalUnread   = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
+  const totalUnassigned = convs.filter(c => !c.assigned_agent_id && c.status !== 'closed' && !c.is_ticket).length
+  const recentActivity  = convs
+    .filter(c => !c.is_ticket && ((c.unread ?? 0) > 0 || (!c.assigned_agent_id && c.status !== 'closed')))
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    .slice(0, 8)
   const activeConv  = convs.find(c => c.id === activeId)
   const dismissToast = useCallback((id: string) => setToasts(t => t.filter(x => x.id !== id)), [])
   const openToastConv = useCallback((convId: string) => { handleSelectConversation(convId); setSection('conversations') }, [handleSelectConversation])
@@ -2492,10 +2576,10 @@ function Dashboard() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
-          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} agent={agent} onLogout={logout} /></div>
+          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} /></div>
         </div>
       )}
-      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} agent={agent} onLogout={logout} /></div>
+      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} /></div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">
