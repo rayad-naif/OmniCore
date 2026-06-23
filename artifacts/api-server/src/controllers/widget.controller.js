@@ -286,6 +286,11 @@ function fmtTime(iso){
   }catch(e){return '';}
 }
 
+function stripHtml(html){
+  if(!html||typeof html!=='string')return html||'';
+  return html.replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\n{3,}/g,'\n\n').trim();
+}
+
 function appendMsg(msg,scroll){
   if(msg.is_internal_note)return;
   var box=qs('#omni-msgs');
@@ -300,7 +305,7 @@ function appendMsg(msg,scroll){
   if(msg.message_body){
     var bbl=ce('div');
     bbl.style.cssText='max-width:78%;padding:10px 13px;border-radius:16px;font-size:13px;line-height:1.55;word-break:break-word;white-space:pre-wrap;'+(isAgent?'border-bottom-right-radius:4px;background:'+COLOR+';color:#fff;':'border-bottom-left-radius:4px;background:#fff;color:#1e293b;border:1px solid #e2e8f0;box-shadow:0 1px 2px rgba(0,0,0,.05);');
-    bbl.textContent=msg.message_body;
+    bbl.textContent=stripHtml(msg.message_body||'');
     wrap.appendChild(bbl);
   }
   var atts=[];
@@ -501,6 +506,7 @@ function open(){
   els.root.style.display='flex';
   els.fab.innerHTML=closeIcon()+'<div id="omni-badge" style="display:none">0</div>';
   setUnread(0);
+  markRead();
   if(!state.loaded&&!state.loading){
     if(!state.visitorName&&!state.sessionToken){
       els.prechat.style.display='flex';
@@ -510,6 +516,11 @@ function open(){
     }
   }else if(state.loaded){
     setTimeout(function(){if(els.msgs)els.msgs.scrollTop=els.msgs.scrollHeight;},50);
+  }
+}
+function markRead(){
+  if(state.socket&&state.connected&&state.conversationId){
+    state.socket.emit('visitor:mark_read',{conversationId:state.conversationId});
   }
 }
 function close(){
@@ -590,7 +601,7 @@ function initSio(){
       }
       state.messages.push(msg);
       appendMsg(msg,true);
-      if(!state.open)setUnread(state.unread+1);
+      if(state.open){markRead();}else{setUnread(state.unread+1);}
     });
   };
   d.head.appendChild(s);

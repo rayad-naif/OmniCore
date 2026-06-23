@@ -174,7 +174,7 @@ function attachSocketServer(httpServer) {
   const io = new Server(httpServer, {
     path: '/api/socket.io',
     cors: {
-      origin: process.env.ALLOWED_ORIGINS?.split(',') ?? '*',
+      origin: true,   // reflect request origin — required for credentials with socket.io
       credentials: true,
     },
     pingTimeout:  20_000,
@@ -264,8 +264,14 @@ function attachSocketServer(httpServer) {
         }
         const enriched = { ...message, sender_name: senderName };
 
-        // Deliver to agents currently viewing this conversation
-        io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+        // Deliver to everyone in the conversation room.
+        // For AGENT messages, exclude the sender (they have the message optimistically).
+        // For VISITOR messages, broadcast to all (agents viewing the conv need it).
+        if (actorType === 'agent') {
+          socket.broadcast.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+        } else {
+          io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+        }
 
         // Also notify ALL tenant agents so the sidebar (inbox) stays live:
         // unread badge, position sort, and toast pop-up — even for agents
@@ -328,6 +334,25 @@ function attachSocketServer(httpServer) {
         typingRegistry.delete(conversationId);
         socket.to(room).emit('agent:typing_stopped', { conversationId });
       }
+    });
+
+    // ── visitor:mark_read ──────────────────────────────────────────────────
+    // Emitted by the widget when the visitor sees new messages.
+    // Stores a timestamp and notifies agents viewing this conversation.
+    socket.on('visitor:mark_read', async ({ conversationId }) => {
+      if (actorType !== 'visitor' || !conversationId) return;
+      try {
+        const conv = await resolveConversation(conversationId, tenantId);
+        if (!conv) return;
+        const readAt = new Date().toISOString();
+        await pool.query(
+          `UPDATE conversations SET visitor_last_read_at = $1 WHERE id = $2`,
+          [readAt, conversationId]
+        );
+        socket.to(`conv:${conversationId}`).emit('visitor:read_receipt', {
+          conversationId, readAt,
+        });
+      } catch { /* non-fatal */ }
     });
 
     // ── visitor:is_typing ───────────────────────────────────────────────────

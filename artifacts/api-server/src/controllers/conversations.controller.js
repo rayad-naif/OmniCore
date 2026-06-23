@@ -165,7 +165,7 @@ router.get('/', async (req, res, next) => {
            c.id, c.status, c.channel, c.priority, c.subject,
            c.created_at, c.updated_at, c.sla_breach_at,
            c.assigned_agent_id, c.is_ticket, c.visitor_id,
-           c.csat_score, c.brand_id,
+           c.csat_score, c.brand_id, c.visitor_last_read_at,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
            a.name                                           AS agent_name,

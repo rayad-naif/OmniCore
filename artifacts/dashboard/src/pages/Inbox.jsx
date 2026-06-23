@@ -29,6 +29,19 @@ const API_URL    = import.meta.env.VITE_API_URL || '/api';
 const SOCKET_URL = (import.meta.env.VITE_API_URL || '/api').replace('/api', '');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Strip HTML tags from legacy rich-text messages so they render as plain text */
+function stripHtml(html) {
+  if (!html || typeof html !== 'string') return html || '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function fmtTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -84,7 +97,12 @@ function ticketsReducer(state, action) {
 function messagesReducer(state, action) {
   switch (action.type) {
     case 'SET':    return action.payload;
-    case 'PUSH':   return [...state, action.payload];
+    case 'PUSH': {
+      // Deduplicate by ID — prevents agent-echo and double visitor events
+      const id = action.payload.id;
+      if (id && state.some(m => m.id === id)) return state;
+      return [...state, action.payload];
+    }
     case 'CLEAR':  return [];
     default: return state;
   }
@@ -201,10 +219,12 @@ function TicketList({ tickets, activeId, onSelect, loading }) {
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
-function MessageBubble({ msg }) {
+function MessageBubble({ msg, visitorReadAt }) {
   const isVisitor  = msg.sender_type === 'visitor';
   const isInternal = msg.is_internal_note;
   const isSystem   = msg.sender_type === 'system';
+  const isRead     = !isVisitor && !isInternal && !isSystem && visitorReadAt
+    && new Date(msg.created_at) <= new Date(visitorReadAt);
 
   if (isSystem) {
     return (
@@ -253,8 +273,13 @@ function MessageBubble({ msg }) {
             )
           ) : null
         )}
-        <p className={`text-[10px] mt-1 ${isVisitor ? 'text-slate-400' : 'text-white/60'}`}>
+        <p className={`text-[10px] mt-1 flex items-center gap-1 ${isVisitor ? 'text-slate-400' : 'text-white/60'}`}>
           {fmtTime(msg.created_at)}
+          {!isVisitor && !isInternal && (
+            <span title={isRead ? 'Seen by visitor' : 'Delivered'} className={isRead ? 'text-blue-300' : 'text-white/40'}>
+              {isRead ? '✓✓' : '✓'}
+            </span>
+          )}
         </p>
       </div>
     </div>
@@ -264,7 +289,7 @@ function MessageBubble({ msg }) {
 // ── Column 2: Chat panel ──────────────────────────────────────────────────────
 function ChatPanel({
   conversation, messages, msgLoading,
-  visitorTyping, socket, onMessageSent,
+  visitorTyping, visitorReadAt, socket, onMessageSent,
   onAiRephrase, aiRephrasing,
   onExport, exporting,
   authFetch,
@@ -459,7 +484,7 @@ function ChatPanel({
         ) : messages.length === 0 ? (
           <p className="text-center text-sm text-slate-400 mt-10">No messages yet.</p>
         ) : (
-          messages.map(msg => <MessageBubble key={msg.id} msg={msg} />)
+          messages.map(msg => <MessageBubble key={msg.id || msg.created_at} msg={msg} visitorReadAt={visitorReadAt} />)
         )}
 
         {/* Visitor typing indicator */}
@@ -724,6 +749,7 @@ export default function Inbox() {
   const [visitorTyping, setVT]       = useState(false);
   const [aiRephrasing,  setAIR]      = useState(false);
   const [telemetryEvents, setTelEv]  = useState([]);
+  const [visitorReadAt,   setVRA]    = useState(null);  // ISO string from visitor:read_receipt
 
   const socketRef       = useRef(null);
   const activeConvIdRef = useRef(null);   // stable ref for socket callbacks
@@ -776,8 +802,11 @@ export default function Inbox() {
       setTelEv(prev => [...prev.slice(-49), ev]);
     });
 
-    // New message from visitor — updates sidebar for all agents (even if conv not open)
+    // New message from visitor — updates sidebar + adds to open conv (dedup-safe)
     socket.on('conversation:visitor_message', ({ conversationId, message }) => {
+      if (conversationId === activeConvIdRef.current && message) {
+        dispatchMessages({ type: 'PUSH', payload: normaliseMsg(message) });
+      }
       dispatchTickets({
         type: 'PATCH',
         id: conversationId,
@@ -792,6 +821,13 @@ export default function Inbox() {
     // New conversation created by widget — prepend to sidebar
     socket.on('conversation:created', (conv) => {
       dispatchTickets({ type: 'PREPEND', payload: { ...conv, unread: true } });
+    });
+
+    // Read receipt — visitor opened/read messages in the widget
+    socket.on('visitor:read_receipt', ({ conversationId, readAt }) => {
+      if (conversationId === activeConvIdRef.current) {
+        setVRA(readAt);
+      }
     });
 
     // Handover: mark ticket open
@@ -824,6 +860,7 @@ export default function Inbox() {
     activeConvIdRef.current = ticket.id;
     setTelEv([]);
     setVT(false);
+    setVRA(ticket.visitor_last_read_at || null);
     dispatchMessages({ type: 'CLEAR' });
 
     // Join socket room
@@ -932,6 +969,7 @@ export default function Inbox() {
           messages={messages}
           msgLoading={msgLoading}
           visitorTyping={visitorTyping}
+          visitorReadAt={visitorReadAt}
           socket={socketRef.current}
           onMessageSent={handleMessageSent}
           onAiRephrase={handleAiRephrase}
@@ -964,7 +1002,7 @@ function normaliseMsg(m) {
     sender_type:      m.sender_type      || m.senderType,
     sender_id:        m.sender_id        || m.senderId,
     sender_name:      m.sender_name      || m.senderName   || '',
-    message_body:     m.message_body     || m.messageBody  || m.body || '',
+    message_body:     stripHtml(m.message_body || m.messageBody || m.body || ''),
     is_internal_note: m.is_internal_note || m.isInternalNote || false,
     attachments_json: atts,
     created_at:       m.created_at       || m.createdAt    || new Date().toISOString(),
