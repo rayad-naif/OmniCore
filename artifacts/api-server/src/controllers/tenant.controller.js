@@ -21,6 +21,7 @@ const {
 }                  = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { pool }     = require('../lib/db');
 const logger       = require('../utils/logger');
 
 const router = Router();
@@ -36,11 +37,17 @@ async function requireSuperAdmin(req, res, next) {
     if (primaryEmail && req.agent.email === primaryEmail) return next();
 
     // Also check DB table for additional super admins
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `SELECT 1 FROM super_admin_emails WHERE email = $1 AND is_active = TRUE LIMIT 1`,
       [req.agent.email]
     );
     if (rows.length) return next();
+
+    // Bootstrap: if no super admin is configured, allow tenant admins
+    const { rows: anyAdmin } = await pool.query(
+      `SELECT 1 FROM super_admin_emails WHERE is_active = TRUE LIMIT 1`
+    );
+    if (!process.env.SUPER_ADMIN_EMAIL && !anyAdmin.length && req.agent.role === 'admin') return next();
 
     return res.status(403).json({ error: 'Forbidden — super admin only' });
   } catch {
@@ -66,7 +73,7 @@ function created(res, data) {
 /** GET /api/tenants — superadmin only */
 router.get('/', requireSuperAdmin, async (req, res, next) => {
   try {
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `SELECT id, company_name, subscription_status,
               lemon_squeezy_customer_id, grace_period_ends_at,
               created_at, updated_at
@@ -80,7 +87,7 @@ router.get('/', requireSuperAdmin, async (req, res, next) => {
 /** GET /api/tenants/:tenantId */
 router.get('/:tenantId', async (req, res, next) => {
   try {
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `SELECT id, company_name, subscription_status,
               lemon_squeezy_customer_id, lemon_squeezy_subscription_id,
               grace_period_ends_at, created_at, updated_at
@@ -99,7 +106,7 @@ router.post('/', requireSuperAdmin, async (req, res, next) => {
     if (!company_name?.trim()) {
       return res.status(400).json({ error: 'company_name is required' });
     }
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `INSERT INTO tenants (company_name, lemon_squeezy_customer_id)
        VALUES ($1, $2)
        RETURNING id, company_name, subscription_status, created_at`,
@@ -122,7 +129,7 @@ router.post('/provision', requireSuperAdmin, async (req, res, next) => {
   if (!admin_name?.trim())   return res.status(400).json({ error: 'admin_name is required' });
   if (!admin_email?.trim())  return res.status(400).json({ error: 'admin_email is required' });
 
-  const client = await req.db.connect();
+  const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
@@ -188,7 +195,7 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
     );
     values.push(req.agent.tenantId);
 
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `UPDATE tenants SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length}
        RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
@@ -216,7 +223,7 @@ router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => 
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     const values     = fields.map(f => req.body[f]);
     values.push(req.params.tenantId);
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `UPDATE tenants SET ${setClauses}
        WHERE id = $${values.length}
        RETURNING id, company_name, subscription_status, updated_at`,
@@ -230,7 +237,7 @@ router.patch('/:tenantId', requireRole('superadmin'), async (req, res, next) => 
 /** DELETE /api/tenants/:tenantId — superadmin only */
 router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) => {
   try {
-    const { rowCount } = await req.db.query(
+    const { rowCount } = await pool.query(
       'DELETE FROM tenants WHERE id = $1',
       [req.params.tenantId]
     );
@@ -246,7 +253,7 @@ router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) =>
 /** GET /api/tenants/:tenantId/brands */
 router.get('/:tenantId/brands', async (req, res, next) => {
   try {
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `SELECT id, brand_name, widget_config_json, allowed_domains_array,
               inbound_email_prefix, ai_confidence_threshold,
               help_center_cname, created_at, updated_at
@@ -262,7 +269,7 @@ router.get('/:tenantId/brands', async (req, res, next) => {
 /** GET /api/tenants/:tenantId/brands/:brandId */
 router.get('/:tenantId/brands/:brandId', async (req, res, next) => {
   try {
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `SELECT id, brand_name, widget_config_json, allowed_domains_array,
               inbound_email_prefix, ai_system_prompt, ai_confidence_threshold,
               help_center_cname, created_at, updated_at
@@ -282,7 +289,7 @@ router.get('/:tenantId/brands/:brandId', async (req, res, next) => {
 router.post('/:tenantId/brands', async (req, res, next) => {
   try {
     // ── Enforce brand limit ─────────────────────────────────────────────────
-    const { rows: limitRows } = await req.db.query(
+    const { rows: limitRows } = await pool.query(
       `SELECT max_brands_allowed,
               (SELECT COUNT(*) FROM brands WHERE tenant_id = $1)::int AS brand_count
        FROM tenants WHERE id = $1`,
@@ -311,7 +318,7 @@ router.post('/:tenantId/brands', async (req, res, next) => {
       return res.status(400).json({ error: 'brand_name is required' });
     }
 
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `INSERT INTO brands
          (tenant_id, brand_name, widget_config_json, allowed_domains_array,
           inbound_email_prefix, ai_system_prompt, ai_confidence_threshold, help_center_cname)
@@ -351,7 +358,7 @@ router.patch('/:tenantId/brands/:brandId', async (req, res, next) => {
     );
     values.push(req.params.brandId, req.params.tenantId);
 
-    const { rows } = await req.db.query(
+    const { rows } = await pool.query(
       `UPDATE brands SET ${setClauses}
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
        RETURNING id, brand_name, updated_at`,
@@ -365,7 +372,7 @@ router.patch('/:tenantId/brands/:brandId', async (req, res, next) => {
 /** DELETE /api/tenants/:tenantId/brands/:brandId */
 router.delete('/:tenantId/brands/:brandId', async (req, res, next) => {
   try {
-    const { rowCount } = await req.db.query(
+    const { rowCount } = await pool.query(
       'DELETE FROM brands WHERE id = $1 AND tenant_id = $2',
       [req.params.brandId, req.params.tenantId]
     );
@@ -402,7 +409,7 @@ router.post(
       const { tenantId, brandId } = req.params;
       const { contentType, filename, size } = req.body || {};
 
-      const { rows } = await req.db.query(
+      const { rows } = await pool.query(
         'SELECT id FROM brands WHERE id = $1 AND tenant_id = $2',
         [brandId, tenantId]
       );

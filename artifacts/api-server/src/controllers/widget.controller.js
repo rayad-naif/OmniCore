@@ -550,7 +550,7 @@ function initSio(){
   if(state.socket)return;
   var s=ce('script');s.src=API_ORIGIN+'/api/socket.io/socket.io.js';
   s.onload=function(){
-    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',transports:['websocket','polling'],reconnectionAttempts:6,reconnectionDelay:1500});
+    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],reconnectionAttempts:6,reconnectionDelay:1500});
     state.socket=sk;
     sk.on('connect',function(){
       state.connected=true;

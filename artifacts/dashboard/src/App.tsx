@@ -14,6 +14,7 @@ import {
   Tag, UserCheck, BarChart2, Star, Filter, Calendar,
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
+  Brain, BookOpen, Link2, Webhook,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -69,6 +70,17 @@ interface UpgradeRequest {
   id: string; tenant_id: string; company_name: string
   agent_name: string; agent_email: string; requested_plan: string
   company_size: string | null; notes: string | null; status: string; created_at: string
+}
+
+interface KnowledgeArticle {
+  id: string; title: string; content: string; tags: string[]
+  brand_id: string | null; is_active: boolean; created_at: string; updated_at: string
+}
+interface SuperAdminEntry {
+  id: string; email: string; added_by: string; is_active: boolean; created_at: string
+}
+interface AIBrandSetting {
+  id: string; brand_name: string; ai_system_prompt: string | null
 }
 
 interface CsatAgent {
@@ -217,6 +229,48 @@ function useApi() {
       const r = await authFetch(`${API}/tenants/provision`, { method: 'POST', body: JSON.stringify({ company_name, admin_name, admin_email, admin_password }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to provision tenant') }
       return r.json() as Promise<{ tenant: SANTenant; agent: AgentRow; temp_password: string }>
+    },
+    listSuperAdmins: async (): Promise<{ primary: string | null; list: SuperAdminEntry[] }> => {
+      const r = await authFetch(`${API}/super-admin/super-admins`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<{ primary: string | null; list: SuperAdminEntry[] }>
+    },
+    addSuperAdmin: async (email: string): Promise<SuperAdminEntry> => {
+      const r = await authFetch(`${API}/super-admin/super-admins`, { method: 'POST', body: JSON.stringify({ email }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed') }
+      return r.json() as Promise<SuperAdminEntry>
+    },
+    removeSuperAdmin: async (id: string): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/super-admins/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error('Failed to remove super admin')
+    },
+    listKnowledge: async (): Promise<KnowledgeArticle[]> => {
+      const r = await authFetch(`${API}/ai/knowledge-base`)
+      if (!r.ok) return []
+      return r.json() as Promise<KnowledgeArticle[]>
+    },
+    createKnowledge: async (data: { title: string; content: string; tags?: string[] }): Promise<KnowledgeArticle> => {
+      const r = await authFetch(`${API}/ai/knowledge-base`, { method: 'POST', body: JSON.stringify(data) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed') }
+      return r.json() as Promise<KnowledgeArticle>
+    },
+    updateKnowledge: async (id: string, data: Partial<{ title: string; content: string; tags: string[]; is_active: boolean }>): Promise<KnowledgeArticle> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+      if (!r.ok) throw new Error('Failed to update article')
+      return r.json() as Promise<KnowledgeArticle>
+    },
+    deleteKnowledge: async (id: string): Promise<void> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error('Failed to delete article')
+    },
+    listAISettings: async (): Promise<AIBrandSetting[]> => {
+      const r = await authFetch(`${API}/ai/settings`)
+      if (!r.ok) return []
+      return r.json() as Promise<AIBrandSetting[]>
+    },
+    updateAISettings: async (brandId: string, prompt: string | null): Promise<void> => {
+      const r = await authFetch(`${API}/ai/settings/${brandId}`, { method: 'PATCH', body: JSON.stringify({ ai_system_prompt: prompt }) })
+      if (!r.ok) throw new Error('Failed to update AI settings')
     },
     getWorkspaceSettings: async (): Promise<{ smtp_config_json?: Record<string, unknown> }> => {
       const r = await authFetch(`${API}/tenants/settings/current`)
@@ -828,7 +882,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   onStatusChange: (status: Status) => void
@@ -840,6 +894,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   agents: AgentRow[]
   currentPage: string | null
   socketConnected: boolean
+  typingWho?: string | null
 }) {
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
@@ -970,6 +1025,16 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <VisitorInfoPanel conv={conv} currentPage={currentPage} />
       </div>
 
+      {typingWho && (
+        <div className="px-4 pb-1 flex items-center gap-1.5">
+          <span className="flex gap-0.5 items-center">
+            <span className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce [animation-delay:300ms]" />
+          </span>
+          <span className="text-xs text-slate-500 italic">{typingWho} is typing…</span>
+        </div>
+      )}
       <EmailComposeBox conv={conv} onSend={onSend} disabled={conv.status === 'closed'} />
     </div>
   )
@@ -1387,7 +1452,14 @@ function CsatSection({ brands }: { brands: Brand[] }) {
 function SettingsSection() {
   const api = useApi()
   const { agent } = useAuth() as { agent: { name: string; email: string; role: string } | null }
-  const [panel, setPanel] = useState<'profile' | 'workspace' | 'smtp' | null>(null)
+  const [panel, setPanel] = useState<'profile' | 'workspace' | 'smtp' | 'ai_training' | 'webhook' | null>(null)
+  const [articles, setArticles]       = useState<KnowledgeArticle[]>([])
+  const [artLoading, setArtLoading]   = useState(false)
+  const [artForm, setArtForm]         = useState({ title: '', content: '', tags: '' })
+  const [artEditing, setArtEditing]   = useState<KnowledgeArticle | null>(null)
+  const [artSaving, setArtSaving]     = useState(false)
+  const [artMsg, setArtMsg]           = useState<{ ok: boolean; text: string } | null>(null)
+  const [webhookUrl, setWebhookUrl]   = useState<string>('')
 
   const [profileForm, setProfile] = useState({ name: agent?.name ?? '', password: '', confirm: '' })
   const [profileSaving, setPS]    = useState(false)
@@ -1430,10 +1502,12 @@ function SettingsSection() {
     finally { setSmtpSaving(false) }
   }
 
-  const panels: { key: 'profile' | 'workspace' | 'smtp'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
-    { key: 'profile',   label: 'Profile',            desc: 'Update your name and password',                     icon: <User size={14} /> },
-    { key: 'workspace', label: 'Workspace Settings', desc: 'Company name, timezone, AI auto-reply',             icon: <Building size={14} />, adminOnly: true },
-    { key: 'smtp',      label: 'SMTP / Email Config',desc: 'Send ticket alerts via your own mail server',       icon: <Mail size={14} />, adminOnly: true },
+  const panels: { key: 'profile' | 'workspace' | 'smtp' | 'ai_training' | 'webhook'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+    { key: 'profile',     label: 'Profile',             desc: 'Update your name and password',                   icon: <User size={14} /> },
+    { key: 'workspace',   label: 'Workspace Settings',  desc: 'Company name, timezone, AI auto-reply',           icon: <Building size={14} />, adminOnly: true },
+    { key: 'smtp',        label: 'SMTP / Email Config', desc: 'Send ticket alerts via your own mail server',     icon: <Mail size={14} />, adminOnly: true },
+    { key: 'ai_training', label: 'AI Training',         desc: 'Knowledge base articles for AI auto-reply',      icon: <Brain size={14} />, adminOnly: true },
+    { key: 'webhook',     label: 'Inbound Email Webhook', desc: 'Receive inbound emails as conversations',       icon: <Webhook size={14} />, adminOnly: true },
   ]
 
   return (
@@ -1514,9 +1588,131 @@ function SettingsSection() {
                   </form>
                 </div>
               )}
+
+              {panel === 'ai_training' && item.key === 'ai_training' && (
+                <AITrainingPanel
+                  articles={articles} loading={artLoading} form={artForm} editing={artEditing} saving={artSaving} msg={artMsg}
+                  onLoad={() => { setArtLoading(true); api.listKnowledge().then(a => { setArticles(a); setArtLoading(false) }).catch(() => setArtLoading(false)) }}
+                  onFormChange={setArtForm}
+                  onEdit={(a) => { setArtEditing(a); setArtForm({ title: a.title, content: a.content, tags: a.tags.join(', ') }) }}
+                  onCancel={() => { setArtEditing(null); setArtForm({ title: '', content: '', tags: '' }) }}
+                  onSave={async () => {
+                    setArtSaving(true); setArtMsg(null)
+                    const tags = artForm.tags.split(',').map(t => t.trim()).filter(Boolean)
+                    try {
+                      if (artEditing) {
+                        const updated = await api.updateKnowledge(artEditing.id, { title: artForm.title, content: artForm.content, tags })
+                        setArticles(prev => prev.map(a => a.id === artEditing.id ? updated : a))
+                        setArtEditing(null)
+                      } else {
+                        const created = await api.createKnowledge({ title: artForm.title, content: artForm.content, tags })
+                        setArticles(prev => [...prev, created])
+                      }
+                      setArtForm({ title: '', content: '', tags: '' })
+                      setArtMsg({ ok: true, text: artEditing ? 'Article updated.' : 'Article created.' })
+                    } catch (err) { setArtMsg({ ok: false, text: (err as Error).message }) }
+                    finally { setArtSaving(false) }
+                  }}
+                  onDelete={async (id) => {
+                    try { await api.deleteKnowledge(id); setArticles(prev => prev.filter(a => a.id !== id)) }
+                    catch { /* ignore */ }
+                  }}
+                  onToggle={async (a) => {
+                    try {
+                      const updated = await api.updateKnowledge(a.id, { is_active: !a.is_active })
+                      setArticles(prev => prev.map(x => x.id === a.id ? updated : x))
+                    } catch { /* ignore */ }
+                  }}
+                />
+              )}
+
+              {panel === 'webhook' && item.key === 'webhook' && (
+                <WebhookPanel webhookUrl={webhookUrl} onLoad={() => setWebhookUrl(window.location.origin.replace('5174','8080').replace('/dashboard','') + '/api/webhooks/email/inbound')} />
+              )}
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function AITrainingPanel({ articles, loading, form, editing, saving, msg, onLoad, onFormChange, onEdit, onCancel, onSave, onDelete, onToggle }: {
+  articles: KnowledgeArticle[]; loading: boolean
+  form: { title: string; content: string; tags: string }; editing: KnowledgeArticle | null
+  saving: boolean; msg: { ok: boolean; text: string } | null
+  onLoad: () => void; onFormChange: (f: { title: string; content: string; tags: string }) => void
+  onEdit: (a: KnowledgeArticle) => void; onCancel: () => void; onSave: () => Promise<void>
+  onDelete: (id: string) => Promise<void>; onToggle: (a: KnowledgeArticle) => Promise<void>
+}) {
+  useEffect(() => { onLoad() }, []) // eslint-disable-line
+  return (
+    <div className="mt-2 p-5 bg-white border border-slate-200 rounded-xl space-y-4">
+      <div>
+        <p className="text-xs font-semibold text-slate-700 mb-1">Knowledge Base Articles</p>
+        <p className="text-[11px] text-slate-400">Articles used by the AI when auto-replying to visitor messages.</p>
+      </div>
+      {msg && <div className={`p-2 rounded text-xs ${msg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{msg.text}</div>}
+      <div className="space-y-2">
+        <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Title *</label><input type="text" value={form.title} onChange={e => onFormChange({ ...form, title: e.target.value })} placeholder="How to reset your password" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+        <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Content *</label><textarea rows={4} value={form.content} onChange={e => onFormChange({ ...form, content: e.target.value })} placeholder="Write the article content here…" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 resize-none" /></div>
+        <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Tags <span className="text-slate-400 font-normal">(comma-separated)</span></label><input type="text" value={form.tags} onChange={e => onFormChange({ ...form, tags: e.target.value })} placeholder="billing, password, account" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+        <div className="flex gap-2">
+          {editing && <button type="button" onClick={onCancel} className="px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>}
+          <button type="button" disabled={saving || !form.title.trim() || !form.content.trim()} onClick={onSave} className="px-4 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : editing ? <><Pencil size={11} /> Update Article</> : <><Plus size={11} /> Add Article</>}</button>
+        </div>
+      </div>
+      <div className="border-t border-slate-100 pt-3">
+        {loading ? <div className="flex items-center gap-2 text-slate-400 text-xs py-4"><RefreshCw size={13} className="animate-spin" /> Loading articles…</div> : articles.length === 0 ? (
+          <div className="text-center py-6"><BookOpen size={24} className="mx-auto text-slate-200 mb-2" /><p className="text-xs text-slate-400">No articles yet. Add your first one above.</p></div>
+        ) : (
+          <div className="space-y-2">
+            {articles.map(a => (
+              <div key={a.id} className="flex items-start justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{a.title}</p>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{a.is_active ? 'Active' : 'Inactive'}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 line-clamp-2">{a.content}</p>
+                  {a.tags.length > 0 && <div className="flex gap-1 mt-1 flex-wrap">{a.tags.map(t => <span key={t} className="text-[10px] bg-sky-50 text-sky-600 px-1.5 py-0.5 rounded">{t}</span>)}</div>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => onToggle(a)} className={`p-1.5 rounded transition-colors ${a.is_active ? 'text-sky-500 hover:bg-sky-50' : 'text-slate-400 hover:bg-slate-100'}`}>{a.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}</button>
+                  <button onClick={() => onEdit(a)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors"><Pencil size={12} /></button>
+                  <button onClick={() => onDelete(a.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={12} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WebhookPanel({ webhookUrl, onLoad }: { webhookUrl: string; onLoad: () => void }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { onLoad() }, []) // eslint-disable-line
+  const copy = () => { navigator.clipboard.writeText(webhookUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }) }
+  return (
+    <div className="mt-2 p-5 bg-white border border-slate-200 rounded-xl space-y-4">
+      <div>
+        <p className="text-xs font-semibold text-slate-700 mb-1">Inbound Email Webhook URL</p>
+        <p className="text-[11px] text-slate-400">Configure your email provider (SendGrid, Resend, Postmark…) to forward inbound emails to this URL. Each email becomes a conversation in your inbox.</p>
+      </div>
+      <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+        <code className="flex-1 text-xs text-slate-700 break-all font-mono">{webhookUrl || 'Loading…'}</code>
+        <button onClick={copy} className="shrink-0 p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors">{copied ? <Check size={14} className="text-emerald-500" /> : <Link2 size={14} />}</button>
+      </div>
+      <div className="p-3 bg-sky-50 border border-sky-100 rounded-lg">
+        <p className="text-[11px] text-sky-700 font-medium mb-1">Setup instructions</p>
+        <ol className="text-[11px] text-sky-600 space-y-1 list-decimal list-inside">
+          <li>Copy the URL above</li>
+          <li>In your email provider, enable Inbound Parse / Webhook and paste the URL</li>
+          <li>Set the routing prefix for each brand in the brand settings</li>
+          <li>Inbound emails are matched by prefix and create or thread conversations automatically</li>
+        </ol>
       </div>
     </div>
   )
@@ -1612,7 +1808,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -1802,11 +1998,9 @@ function SuperAdminSection() {
           </div>
 
           <div className="flex gap-2 mb-5">
-            {(['tenants','requests'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                {t === 'tenants' ? `Tenants (${tenants.length})` : `Upgrade Requests (${requests.length})`}
-              </button>
-            ))}
+            <button onClick={() => setTab('tenants')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'tenants' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Tenants ({tenants.length})</button>
+            <button onClick={() => setTab('requests')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'requests' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Upgrade Requests ({requests.length})</button>
+            <button onClick={() => setTab('super_admins')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'super_admins' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Super Admins</button>
           </div>
 
           {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
@@ -1854,7 +2048,7 @@ function SuperAdminSection() {
                 </table>
               </div>
             </div>
-          ) : (
+          ) : tab === 'requests' ? (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               {requests.length === 0 ? (
                 <div className="text-center py-12 text-slate-400"><Bell size={24} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No upgrade requests</p></div>
@@ -1873,10 +2067,72 @@ function SuperAdminSection() {
                 </div>
               ))}
             </div>
+          ) : (
+            <SuperAdminsPanel api={api} />
           )}
         </div>
       </div>
     </>
+  )
+}
+
+// ─── Super Admins Panel ────────────────────────────────────────────────────────
+function SuperAdminsPanel({ api }: { api: ReturnType<typeof useApi> }) {
+  const [data, setData]       = useState<{ primary: string | null; list: SuperAdminEntry[] } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [email, setEmail]     = useState('')
+  const [adding, setAdding]   = useState(false)
+  const [err, setErr]         = useState<string | null>(null)
+
+  useEffect(() => {
+    api.listSuperAdmins().then(d => { setData(d); setLoading(false) }).catch(() => setLoading(false))
+  }, []) // eslint-disable-line
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!email.trim()) return; setErr(null); setAdding(true)
+    try {
+      const entry = await api.addSuperAdmin(email.trim())
+      setData(prev => prev ? { ...prev, list: [...prev.list, entry] } : prev)
+      setEmail('')
+    } catch (ex) { setErr((ex as Error).message) }
+    finally { setAdding(false) }
+  }
+
+  const handleRemove = async (id: string) => {
+    try { await api.removeSuperAdmin(id); setData(prev => prev ? { ...prev, list: prev.list.filter(e => e.id !== id) } : prev) }
+    catch { /* ignore */ }
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <div>
+        <p className="text-sm font-semibold text-slate-800">Super Admin Access</p>
+        <p className="text-xs text-slate-400 mt-0.5">Super admins can manage all tenants, billing, and platform settings. Changes take effect on next login.</p>
+        {data?.primary && <p className="text-xs text-slate-500 mt-2">Primary super admin (env): <code className="bg-slate-100 px-1 rounded">{data.primary}</code></p>}
+      </div>
+      <form onSubmit={handleAdd} className="flex gap-2">
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="agent@example.com" required className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
+        <button type="submit" disabled={adding} className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium rounded-lg disabled:opacity-50 flex items-center gap-1">{adding ? <><RefreshCw size={11} className="animate-spin" /></> : <><UserPlus size={11} /> Add</>}</button>
+      </form>
+      {err && <p className="text-xs text-red-500">{err}</p>}
+      {loading ? (
+        <div className="flex items-center justify-center py-6 text-slate-400"><RefreshCw size={14} className="animate-spin mr-2" /> Loading…</div>
+      ) : !data?.list.length ? (
+        <div className="text-center py-6"><Shield size={22} className="mx-auto text-slate-200 mb-2" /><p className="text-xs text-slate-400">No additional super admins yet</p></div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {data.list.map(e => (
+            <div key={e.id} className="flex items-center justify-between py-3">
+              <div><p className="text-xs font-medium text-slate-800">{e.email}</p><p className="text-[11px] text-slate-400">Added {new Date(e.created_at).toLocaleDateString()} · by {e.added_by}</p></div>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${e.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{e.is_active ? 'Active' : 'Inactive'}</span>
+                <button onClick={() => handleRemove(e.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={12} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1901,9 +2157,10 @@ function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDis
 }
 
 // ─── Tickets Section ─────────────────────────────────────────────────────────
-function TicketsSection({ tickets, activeId, agents, messages, visitorPages, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
+function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typingInfo, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
   tickets: Conversation[]; activeId: string | null; agents: AgentRow[]
   messages: Record<string, Message[]>; visitorPages: Record<string, string>
+  typingInfo: Record<string, string>
   onSelect: (id: string) => void
   onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   onStatusChange: (status: Status) => void
@@ -1963,7 +2220,7 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, onS
         </div>
       </div>
       {activeTicket ? (
-        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} />
+        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} typingWho={typingInfo[activeId ?? ''] ?? null} />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50 p-8">
           <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4"><Tag size={24} className="text-amber-400" /></div>
@@ -2047,8 +2304,10 @@ function Dashboard() {
   const [agents, setAgents]       = useState<AgentRow[]>([])
   const [brands, setBrands]       = useState<Brand[]>([])
   const [visitorPages, setVisitorPages] = useState<Record<string, string>>({})
+  const [typingInfo, setTypingInfo]     = useState<Record<string, string>>({})
   const socketRef                 = useRef<Socket | null>(null)
   const activeIdRef               = useRef<string | null>(null)
+  const typingTimers              = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
 
@@ -2104,6 +2363,22 @@ function Dashboard() {
     socket.on('visitor:page_change', ({ conversationId, url }: { conversationId: string; url: string }) => {
       setVisitorPages(prev => ({ ...prev, [conversationId]: url }))
     })
+    const clearTyping = (conversationId: string) => {
+      clearTimeout(typingTimers.current[conversationId])
+      setTypingInfo(prev => { const n = { ...prev }; delete n[conversationId]; return n })
+    }
+    const setTyping = (conversationId: string, name: string) => {
+      setTypingInfo(prev => ({ ...prev, [conversationId]: name }))
+      clearTimeout(typingTimers.current[conversationId])
+      typingTimers.current[conversationId] = setTimeout(() => clearTyping(conversationId), 5000)
+    }
+    socket.on('visitor:is_typing',    ({ conversationId, displayName }: { conversationId: string; displayName: string }) => setTyping(conversationId, displayName || 'Visitor'))
+    socket.on('visitor:typing_stopped', ({ conversationId }: { conversationId: string }) => clearTyping(conversationId))
+    socket.on('agent:is_typing',      ({ conversationId, displayName }: { conversationId: string; displayName: string }) => setTyping(conversationId, displayName || 'Agent'))
+    socket.on('agent:typing_stopped', ({ conversationId }: { conversationId: string }) => clearTyping(conversationId))
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission()
+    }
     socket.on('conversation:assigned', ({ conversationId, agentId, agentName }: { conversationId: string; agentId: string | null; agentName: string | null }) => {
       setConvs(prev => prev.map(c => c.id === conversationId ? { ...c, agent_name: agentName, assigned_agent_id: agentId } : c))
     })
@@ -2126,6 +2401,9 @@ function Dashboard() {
           const toast: InboxToast = { id: toastId, convId: conversationId, visitorName: conv.visitor_name, preview: (msg.message_body || '').slice(0, 80), createdAt: Date.now() }
           setToasts(t => [...t.slice(-4), toast])
           setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
+          if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification(`New message from ${conv.visitor_name}`, { body: (msg.message_body || '').slice(0, 80), icon: '/favicon.ico' })
+          }
           return prev
         })
       }
@@ -2235,12 +2513,12 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} /> : <EmptyChat />}
               </>
             )
           )}
           {section === 'tickets' && (
-            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} messages={messages} visitorPages={visitorPages} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
+            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
           )}
           {section === 'csat'      && <CsatSection brands={brands} />}
           {section === 'brands'    && <BrandsSection />}

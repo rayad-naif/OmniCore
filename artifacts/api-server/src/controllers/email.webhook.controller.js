@@ -18,6 +18,8 @@
 
 const crypto = require('crypto');
 const { Router } = require('express');
+const { pool }   = require('../lib/db');
+const logger     = require('../utils/logger');
 
 const router = Router();
 
@@ -156,9 +158,10 @@ function normalisePayload(body) {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/webhooks/inbound-mail
+// POST /api/webhooks/inbound-mail  (legacy)
+// POST /api/webhooks/email/inbound (canonical — shown in Settings UI)
 // ---------------------------------------------------------------------------
-router.post('/inbound-mail', async (req, res) => {
+async function handleInboundEmail(req, res) {
   // Respond immediately — email providers retry on non-2xx within seconds
   res.status(200).json({ received: true });
 
@@ -187,7 +190,7 @@ router.post('/inbound-mail', async (req, res) => {
     }
 
     // 1. Resolve the brand from the routing prefix
-    const { rows: brandRows } = await req.db.query(
+    const { rows: brandRows } = await pool.query(
       `SELECT b.id AS brand_id, b.tenant_id
        FROM brands b
        WHERE b.inbound_email_prefix = $1 LIMIT 1`,
@@ -207,7 +210,7 @@ router.post('/inbound-mail', async (req, res) => {
       .filter(Boolean);
 
     if (candidateIds.length) {
-      const { rows: msgRows } = await req.db.query(
+      const { rows: msgRows } = await pool.query(
         `SELECT m.conversation_id
          FROM messages m
          WHERE m.attachments_json->>'email_message_id' = ANY($1::text[])
@@ -224,7 +227,7 @@ router.post('/inbound-mail', async (req, res) => {
     // 3. If no existing thread, create or find the visitor + conversation
     if (!conversationId) {
       // Upsert visitor by email
-      const { rows: visitorRows } = await req.db.query(
+      const { rows: visitorRows } = await pool.query(
         `INSERT INTO visitors (tenant_id, brand_id, session_token, email)
          VALUES ($1, $2, gen_random_uuid()::text, $3)
          ON CONFLICT DO NOTHING
@@ -233,7 +236,7 @@ router.post('/inbound-mail', async (req, res) => {
       );
       let visitorId = visitorRows[0]?.id;
       if (!visitorId) {
-        const { rows } = await req.db.query(
+        const { rows } = await pool.query(
           `SELECT id FROM visitors WHERE tenant_id = $1 AND brand_id = $2 AND email = $3 LIMIT 1`,
           [tenant_id, brand_id, from]
         );
@@ -245,7 +248,7 @@ router.post('/inbound-mail', async (req, res) => {
         return;
       }
 
-      const { rows: convRows } = await req.db.query(
+      const { rows: convRows } = await pool.query(
         `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject)
          VALUES ($1, $2, $3, 'open', 'email', $4)
          RETURNING id`,
@@ -266,7 +269,7 @@ router.post('/inbound-mail', async (req, res) => {
     // 5. Persist the message (store the email Message-ID for thread linking)
     const attachmentsJson = JSON.stringify([{ email_message_id: parseMessageId(messageId) }]);
 
-    const { rows: newMsg } = await req.db.query(
+    const { rows: newMsg } = await pool.query(
       `INSERT INTO messages
          (conversation_id, sender_type, message_body, attachments_json)
        VALUES ($1, 'visitor', $2, $3::jsonb)
@@ -274,7 +277,7 @@ router.post('/inbound-mail', async (req, res) => {
       [conversationId, cleanBody, attachmentsJson]
     );
 
-    await req.db.query(
+    await pool.query(
       `UPDATE conversations SET updated_at = NOW(), status =
          CASE WHEN status = 'closed' THEN 'open' ELSE status END
        WHERE id = $1`,
@@ -286,10 +289,13 @@ router.post('/inbound-mail', async (req, res) => {
       _io.to(`conv:${conversationId}`).emit('server:new_message', newMsg[0]);
     }
 
-    console.log(`[email:webhook] message appended  conv=${conversationId}  from=${from}`);
+    logger.info({ conversationId, from }, 'email_webhook_message_appended');
   } catch (err) {
-    console.error('[email:webhook] processing error', err);
+    logger.error({ err }, 'email_webhook_processing_error');
   }
-});
+}
+
+router.post('/inbound-mail',  handleInboundEmail);
+router.post('/email/inbound', handleInboundEmail);
 
 module.exports = { router, setIo, stripQuotes };

@@ -52,7 +52,21 @@ Frontend sends `{ body, isInternalNote }` (camelCase) to POST /conversations/:id
 Agents (role=agent) only see conversations assigned to them OR unassigned (assigned_agent_id IS NULL). Applied in conversations.controller.js GET /conversations. Sidebar nav is RBAC-aware: agents see Conversations + Settings only; admins add Brands, Team, Billing; super admins add Super Admin panel.
 
 # Super Admin
-Controlled by SUPER_ADMIN_EMAIL env var. If unset, super-admin endpoints return 503. isSuperAdmin bool is in JWT payload and safeAgent() response. New controllers: agents.controller.js (GET/POST/DELETE agents, PATCH /me), super-admin.controller.js (tenant list, upgrade requests, status/billing PATCH, purge DELETE).
+Controlled by SUPER_ADMIN_EMAIL env var. If unset, super-admin endpoints return 503. isSuperAdmin bool is in JWT payload and safeAgent() response. New controllers: agents.controller.js (GET/POST/DELETE agents, PATCH /me), super-admin.controller.js (tenant list, upgrade requests, status/billing PATCH, purge DELETE). Super admins management panel (add/remove) at GET/POST/DELETE /api/super-admin/super-admins — already fully implemented on backend.
+
+# req.db vs pool — critical pattern
+All controllers must import pool directly: `const { pool } = require('../lib/db')`. Express does NOT attach a `req.db` property — any controller using `req.db.query(...)` will throw "Cannot read properties of undefined". Always use `pool.query()` directly, never `req.db`.
+**Why:** Discovered that tenant.controller.js and email.webhook.controller.js both used req.db throughout, causing all their endpoints to throw 500 errors at runtime.
+
+# Widget socket authentication
+The embeddable widget must pass `auth: { sessionToken: state.sessionToken }` to the socket.io options when calling `w.io(API_ORIGIN, { ..., auth: { sessionToken: state.sessionToken } })`. Without it, the socket middleware rejects the connection as UNAUTHENTICATED.
+**Why:** socket.service.js checks `socket.handshake.auth.sessionToken` to identify widget visitors. Missing auth causes all widget messages to be silently dropped.
+
+# Inbound email webhook routes
+Two routes registered: `/inbound-mail` (legacy) and `/email/inbound` (canonical). Both handled by the same `handleInboundEmail` async function. The Settings UI shows the canonical URL. Handler must call `res.status(200).json({ received: true })` synchronously before doing async DB work — email providers retry on non-2xx.
+
+# Typing indicators — socket events
+Socket events: `visitor:is_typing` → payload `{conversationId, displayName}`, `visitor:typing_stopped` → `{conversationId}`. Same pattern for `agent:is_typing` / `agent:typing_stopped`. Dashboard maintains `typingInfo: Record<string,string>` state with 5s auto-clear timers (stored in `typingTimers` ref). The `typingWho` prop flows into ChatPanel and is displayed above EmailComposeBox as an animated bouncing dots indicator.
 
 # JWT_SECRET
 Set as a shared env var (not secret) for dev convenience. Value is the 96-char hex string beginning `66a10cf1...`. Ensure it is set before starting api-server or login will throw `JWT_SECRET is not configured`.
