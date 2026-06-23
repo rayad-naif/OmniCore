@@ -28,6 +28,25 @@ const router = Router();
 router.use(requireAuth);
 
 // ---------------------------------------------------------------------------
+// Self-healing column migrations
+// ---------------------------------------------------------------------------
+const TENANT_MIGRATIONS = [
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS default_timezone TEXT NOT NULL DEFAULT 'UTC'`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ai_auto_reply_enabled BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ai_feature_enabled BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS smtp_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS custom_domain TEXT`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS smtp_config_json JSONB NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS imap_config_json JSONB NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS webhook_config_json JSONB NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS max_brands_allowed INT NOT NULL DEFAULT 5`,
+  `ALTER TABLE visitors ADD COLUMN IF NOT EXISTS timezone TEXT`,
+];
+TENANT_MIGRATIONS.forEach(sql =>
+  pool.query(sql).catch(err => logger.warn({ err: err.message }, 'tenant_migration_warning'))
+);
+
+// ---------------------------------------------------------------------------
 // Super-admin guard: email matches SUPER_ADMIN_EMAIL env var OR
 // the agent's ID is in the super_admin_emails table (managed by super-admin routes).
 // ---------------------------------------------------------------------------
@@ -168,20 +187,41 @@ router.post('/provision', requireSuperAdmin, async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// WORKSPACE SETTINGS  PATCH /api/tenants/settings  (must be before /:tenantId)
+// WORKSPACE SETTINGS  (must be before /:tenantId)
 // ---------------------------------------------------------------------------
+
+const JSON_FIELDS = new Set(['smtp_config_json', 'imap_config_json', 'webhook_config_json']);
+
+/**
+ * GET /api/tenants/settings/current
+ * Admin only — returns the caller's own tenant settings.
+ */
+router.get('/settings/current', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company_name, default_timezone, ai_auto_reply_enabled,
+              ai_feature_enabled, smtp_feature_enabled, custom_domain,
+              smtp_config_json, imap_config_json, webhook_config_json, updated_at
+       FROM tenants WHERE id = $1`,
+      [req.agent.tenantId]
+    );
+    if (!rows.length) return notFound(res, 'Tenant');
+    res.json(rows[0]);
+  } catch (err) { next(err); }
+});
 
 /**
  * PATCH /api/tenants/settings
  * Admin only — updates the caller's own tenant.
  * Allowed fields: company_name, default_timezone, ai_auto_reply_enabled,
- *                 custom_domain, smtp_config_json, ai_feature_enabled, smtp_feature_enabled
+ *                 custom_domain, smtp_config_json, imap_config_json,
+ *                 webhook_config_json, ai_feature_enabled, smtp_feature_enabled
  */
 router.patch('/settings', requireRole('admin'), async (req, res, next) => {
   try {
     const allowed = [
       'company_name', 'default_timezone', 'ai_auto_reply_enabled',
-      'custom_domain', 'smtp_config_json',
+      'custom_domain', 'smtp_config_json', 'imap_config_json', 'webhook_config_json',
       'ai_feature_enabled', 'smtp_feature_enabled',
     ];
     const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
@@ -191,7 +231,7 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
 
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
     const values     = fields.map(f =>
-      f === 'smtp_config_json' ? JSON.stringify(req.body[f]) : req.body[f]
+      JSON_FIELDS.has(f) ? JSON.stringify(req.body[f]) : req.body[f]
     );
     values.push(req.agent.tenantId);
 
@@ -199,7 +239,8 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
       `UPDATE tenants SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length}
        RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
-                 ai_feature_enabled, smtp_feature_enabled, custom_domain, updated_at`,
+                 ai_feature_enabled, smtp_feature_enabled, custom_domain,
+                 smtp_config_json, imap_config_json, webhook_config_json, updated_at`,
       values
     );
     if (!rows.length) return notFound(res, 'Tenant');

@@ -554,7 +554,7 @@ function initSio(){
     state.socket=sk;
     sk.on('connect',function(){
       state.connected=true;
-      sk.emit('widget:join',{conversationId:state.conversationId});
+      sk.emit('join:conversation',{conversationId:state.conversationId});
       while(msgQueue.length>0)sk.emit('client:send_message',{conversationId:state.conversationId,body:msgQueue.shift()});
       emitPage();
     });

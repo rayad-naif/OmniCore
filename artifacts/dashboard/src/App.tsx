@@ -272,12 +272,12 @@ function useApi() {
       const r = await authFetch(`${API}/ai/settings/${brandId}`, { method: 'PATCH', body: JSON.stringify({ ai_system_prompt: prompt }) })
       if (!r.ok) throw new Error('Failed to update AI settings')
     },
-    getWorkspaceSettings: async (): Promise<{ smtp_config_json?: Record<string, unknown> }> => {
+    getWorkspaceSettings: async (): Promise<{ company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean; custom_domain?: string; smtp_config_json?: Record<string, unknown>; imap_config_json?: Record<string, unknown>; webhook_config_json?: Record<string, unknown> }> => {
       const r = await authFetch(`${API}/tenants/settings/current`)
       if (!r.ok) return {}
-      return r.json() as Promise<{ smtp_config_json?: Record<string, unknown> }>
+      return r.json()
     },
-    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean }): Promise<void> => {
+    updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object; imap_config_json?: object; webhook_config_json?: object; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean }): Promise<void> => {
       const r = await authFetch(`${API}/tenants/settings`, { method: 'PATCH', body: JSON.stringify(patch) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update workspace') }
     },
@@ -1472,6 +1472,25 @@ function SettingsSection() {
   const [smtpForm, setSmtp] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', notification_email: '', enabled: false })
   const [smtpSaving, setSmtpSaving] = useState(false)
   const [smtpMsg, setSmtpMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const [imapForm, setImap] = useState({ host: '', port: '993', user: '', pass: '', folder: 'INBOX', tls: true, enabled: false })
+  const [imapSaving, setImapSaving] = useState(false)
+  const [imapMsg, setImapMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    api.getWorkspaceSettings().then(s => {
+      if (s.company_name !== undefined) setWs(f => ({ ...f, company_name: s.company_name ?? '' }))
+      if (s.default_timezone)           setWs(f => ({ ...f, default_timezone: s.default_timezone ?? 'UTC' }))
+      if (s.ai_auto_reply_enabled !== undefined) setWs(f => ({ ...f, ai_auto_reply_enabled: !!s.ai_auto_reply_enabled }))
+      if (s.ai_feature_enabled   !== undefined) setWs(f => ({ ...f, ai_feature_enabled:   !!s.ai_feature_enabled }))
+      if (s.smtp_feature_enabled !== undefined) setWs(f => ({ ...f, smtp_feature_enabled: !!s.smtp_feature_enabled }))
+      if (s.custom_domain) setWs(f => ({ ...f, custom_domain: s.custom_domain ?? '' }))
+      const sc = s.smtp_config_json
+      if (sc) setSmtp(f => ({ ...f, host: String(sc.host ?? ''), port: String(sc.port ?? '587'), user: String(sc.user ?? ''), from_email: String(sc.from_email ?? ''), notification_email: String(sc.notification_email ?? ''), enabled: !!sc.enabled }))
+      const ic = s.imap_config_json
+      if (ic && Object.keys(ic).length) setImap(f => ({ ...f, host: String(ic.host ?? ''), port: String(ic.port ?? '993'), user: String(ic.user ?? ''), folder: String(ic.folder ?? 'INBOX'), tls: ic.tls !== false, enabled: !!ic.enabled }))
+    }).catch(() => {})
+  }, []) // eslint-disable-line
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault(); setPMsg(null)
