@@ -259,7 +259,11 @@ function MessageBubble({ msg, visitorReadAt }) {
           ? 'bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-bl-sm shadow-sm'
           : 'bg-violet-600 text-white rounded-2xl rounded-br-sm'
         }`}>
-        <p className="whitespace-pre-wrap">{msg.message_body}</p>
+        {isVisitor
+          ? <p className="whitespace-pre-wrap">{msg.message_body}</p>
+          : <div className="[&>p]:m-0 [&>p+p]:mt-1 [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4"
+                 dangerouslySetInnerHTML={{ __html: msg.message_body }} />
+        }
         {Array.isArray(msg.attachments_json) && msg.attachments_json.map((a, i) =>
           a.url ? (
             /\.(png|jpe?g|gif|webp|svg)$/i.test(a.url) ? (
