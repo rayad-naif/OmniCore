@@ -21,15 +21,22 @@ const router = Router();
 router.use(requireAuth);
 
 // ─── Super-admin guard ────────────────────────────────────────────────────────
-function requireSuperAdmin(req, res, next) {
-  const saEmail = process.env.SUPER_ADMIN_EMAIL;
-  if (!saEmail) {
-    return res.status(503).json({ error: 'SUPER_ADMIN_EMAIL not configured' });
-  }
-  if (req.agent.email !== saEmail) {
+async function requireSuperAdmin(req, res, next) {
+  try {
+    const saEmail = process.env.SUPER_ADMIN_EMAIL;
+    if (saEmail && req.agent.email === saEmail) return next();
+
+    // Also check DB table for additional super admins
+    const { rows } = await pool.query(
+      `SELECT 1 FROM super_admin_emails WHERE email = $1 AND is_active = TRUE LIMIT 1`,
+      [req.agent.email]
+    );
+    if (rows.length) return next();
+
+    return res.status(403).json({ error: 'Forbidden — super admin only' });
+  } catch {
     return res.status(403).json({ error: 'Forbidden — super admin only' });
   }
-  next();
 }
 
 router.use(requireSuperAdmin);
@@ -37,6 +44,15 @@ router.use(requireSuperAdmin);
 // ─── Idempotent migrations ────────────────────────────────────────────────────
 (async () => {
   try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS super_admin_emails (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email      TEXT NOT NULL UNIQUE,
+        added_by   TEXT,
+        is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
     await pool.query(`
       ALTER TABLE tenants
         ADD COLUMN IF NOT EXISTS account_status       TEXT    NOT NULL DEFAULT 'active',
@@ -188,6 +204,53 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
     logger.info({ tenantId: req.params.id, by: req.agent.id }, 'tenant_limits_updated');
     return res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+// ─── GET /api/super-admin/super-admins ───────────────────────────────────────
+// Lists all super admin emails (except the primary env var one).
+router.get('/super-admins', async (req, res, next) => {
+  try {
+    const primaryEmail = process.env.SUPER_ADMIN_EMAIL;
+    const { rows } = await pool.query(
+      `SELECT id, email, added_by, is_active, created_at
+       FROM super_admin_emails
+       ORDER BY created_at DESC`
+    );
+    return res.json({ primary: primaryEmail || null, list: rows });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /api/super-admin/super-admins ──────────────────────────────────────
+// Add a new super admin email.
+router.post('/super-admins', async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email?.trim()) return res.status(400).json({ error: 'email is required' });
+    const normalized = email.trim().toLowerCase();
+    const { rows } = await pool.query(
+      `INSERT INTO super_admin_emails (email, added_by)
+       VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET is_active = TRUE, added_by = $2
+       RETURNING id, email, added_by, is_active, created_at`,
+      [normalized, req.agent.email]
+    );
+    logger.info({ email: normalized, by: req.agent.email }, 'super_admin_added');
+    return res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+// ─── DELETE /api/super-admin/super-admins/:id ────────────────────────────────
+// Remove a super admin (deactivate).
+router.delete('/super-admins/:id', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE super_admin_emails SET is_active = FALSE WHERE id = $1 RETURNING email`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    logger.info({ id: req.params.id, by: req.agent.email }, 'super_admin_removed');
+    return res.status(204).end();
   } catch (err) { next(err); }
 });
 

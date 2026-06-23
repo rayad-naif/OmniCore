@@ -303,6 +303,23 @@ function attachSocketServer(httpServer) {
       }
     });
 
+    // ── visitor:is_typing ───────────────────────────────────────────────────
+    // Emitted by the widget when the visitor starts/stops typing.
+    // Forward to all agents watching that conversation.
+    socket.on('visitor:is_typing', ({ conversationId, isTyping }) => {
+      if (actorType !== 'visitor') return;
+      if (!conversationId) return;
+      const room = `conv:${conversationId}`;
+      if (isTyping) {
+        socket.to(room).emit('visitor:is_typing', {
+          conversationId,
+          displayName: socket.data.visitorName || 'Visitor',
+        });
+      } else {
+        socket.to(room).emit('visitor:typing_stopped', { conversationId });
+      }
+    });
+
     // ── visitor:page_change ─────────────────────────────────────────────────
     // Emitted by the widget whenever the visitor navigates to a new URL.
     // Forward to all agents watching that conversation so they see the

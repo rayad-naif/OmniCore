@@ -20,11 +20,33 @@ const {
   PutObjectCommand,
 }                  = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 const logger       = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+
+// ---------------------------------------------------------------------------
+// Super-admin guard: email matches SUPER_ADMIN_EMAIL env var OR
+// the agent's ID is in the super_admin_emails table (managed by super-admin routes).
+// ---------------------------------------------------------------------------
+async function requireSuperAdmin(req, res, next) {
+  try {
+    const primaryEmail = process.env.SUPER_ADMIN_EMAIL;
+    if (primaryEmail && req.agent.email === primaryEmail) return next();
+
+    // Also check DB table for additional super admins
+    const { rows } = await req.db.query(
+      `SELECT 1 FROM super_admin_emails WHERE email = $1 AND is_active = TRUE LIMIT 1`,
+      [req.agent.email]
+    );
+    if (rows.length) return next();
+
+    return res.status(403).json({ error: 'Forbidden — super admin only' });
+  } catch {
+    return res.status(403).json({ error: 'Forbidden — super admin only' });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,7 +64,7 @@ function created(res, data) {
 // ---------------------------------------------------------------------------
 
 /** GET /api/tenants — superadmin only */
-router.get('/', requireRole('superadmin'), async (req, res, next) => {
+router.get('/', requireSuperAdmin, async (req, res, next) => {
   try {
     const { rows } = await req.db.query(
       `SELECT id, company_name, subscription_status,
@@ -71,7 +93,7 @@ router.get('/:tenantId', async (req, res, next) => {
 });
 
 /** POST /api/tenants — superadmin only */
-router.post('/', requireRole('superadmin'), async (req, res, next) => {
+router.post('/', requireSuperAdmin, async (req, res, next) => {
   try {
     const { company_name, lemon_squeezy_customer_id = null } = req.body;
     if (!company_name?.trim()) {
@@ -92,7 +114,7 @@ router.post('/', requireRole('superadmin'), async (req, res, next) => {
  * Creates a new tenant AND its first admin agent atomically.
  * Body: { company_name, admin_name, admin_email, admin_password }
  */
-router.post('/provision', requireRole('superadmin'), async (req, res, next) => {
+router.post('/provision', requireSuperAdmin, async (req, res, next) => {
   const bcrypt = require('bcryptjs');
   const { company_name, admin_name, admin_email, admin_password = 'Welcome1!' } = req.body || {};
 
