@@ -26,7 +26,11 @@ import { useAuth } from '../context/AuthContext';
  */
 
 const API_URL    = import.meta.env.VITE_API_URL || '/api';
-const SOCKET_URL = (import.meta.env.VITE_API_URL || '/api').replace('/api', '');
+// Pass undefined (not empty string) when no explicit origin is set so socket.io
+// falls back to window.location.origin automatically.
+const SOCKET_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '')
+  : undefined;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -777,6 +781,7 @@ export default function Inbox() {
 
   const socketRef       = useRef(null);
   const activeConvIdRef = useRef(null);   // stable ref for socket callbacks
+  const lastMsgIdRef    = useRef(null);   // used by polling to fetch only new messages
 
   // ── Socket.io setup ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -814,19 +819,20 @@ export default function Inbox() {
     });
 
     // Visitor typing indicator
-    socket.on('visitor:is_typing', ({ conversationId: cid, isTyping }) => {
+    // The server only emits 'visitor:is_typing' when isTyping=true and
+    // 'visitor:typing_stopped' when stopped — there is no isTyping field in
+    // the forwarded payload, so we set state directly from the event name.
+    socket.on('visitor:is_typing', ({ conversationId: cid }) => {
       if (cid !== activeConvIdRef.current) return;
-      if (isTyping) {
-        setVT(true);
-        clearTimeout(socket._vtTimer);
-        socket._vtTimer = setTimeout(() => setVT(false), 4000);
-      } else {
+      setVT(true);
+      clearTimeout(socket._vtTimer);
+      socket._vtTimer = setTimeout(() => setVT(false), 4000);
+    });
+    socket.on('visitor:typing_stopped', ({ conversationId: cid }) => {
+      if (cid === activeConvIdRef.current) {
         clearTimeout(socket._vtTimer);
         setVT(false);
       }
-    });
-    socket.on('visitor:typing_stopped', ({ conversationId: cid }) => {
-      if (cid === activeConvIdRef.current) setVT(false);
     });
 
     // Telemetry events
@@ -886,10 +892,33 @@ export default function Inbox() {
       .finally(() => setTL(false));
   }, [agent?.tenantId, authFetch]);
 
+  // ── Polling safety net — catches messages the socket might have missed ────────
+  useEffect(() => {
+    if (!accessToken) return;
+    const interval = setInterval(async () => {
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      try {
+        const res  = await authFetch(`${API_URL}/conversations/${convId}/messages`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const rows = (Array.isArray(data) ? data : data.rows || []).map(normaliseMsg);
+        if (rows.length === 0) return;
+        const latestId = rows[rows.length - 1].id;
+        if (latestId === lastMsgIdRef.current) return; // nothing new
+        lastMsgIdRef.current = latestId;
+        // Push any messages not already in state (dedup by ID inside reducer)
+        rows.forEach(msg => dispatchMessages({ type: 'PUSH', payload: msg }));
+      } catch { /* non-fatal — socket is the primary path */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [accessToken, authFetch]);
+
   // ── Select conversation ──────────────────────────────────────────────────────
   const selectConversation = useCallback(async (ticket) => {
     setActiveConv(ticket);
     activeConvIdRef.current = ticket.id;
+    lastMsgIdRef.current    = null;  // reset poll cursor for new conversation
     setTelEv([]);
     setVT(false);
     setVRA(ticket.visitor_last_read_at || null);
@@ -903,10 +932,10 @@ export default function Inbox() {
     try {
       const res  = await authFetch(`${API_URL}/conversations/${ticket.id}/messages`);
       const data = await res.json();
-      dispatchMessages({
-        type: 'SET',
-        payload: (Array.isArray(data) ? data : data.rows || []).map(normaliseMsg),
-      });
+      const rows = (Array.isArray(data) ? data : data.rows || []).map(normaliseMsg);
+      dispatchMessages({ type: 'SET', payload: rows });
+      // Seed the poll cursor so we only fetch truly new messages
+      if (rows.length > 0) lastMsgIdRef.current = rows[rows.length - 1].id;
     } catch (err) {
       console.error('[Inbox] load messages', err);
     } finally {

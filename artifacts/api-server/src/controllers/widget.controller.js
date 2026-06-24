@@ -643,6 +643,21 @@ function uploadFile(pf,cb){
   }).then(function(r){return r.json();}).then(function(d){cb(null,d);}).catch(function(e){cb(e,null);});
 }
 
+function sendRest(msgBody,attachments,onDone){
+  fetch(API_BASE+'/widget/message',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({conversationId:state.conversationId,sessionToken:state.sessionToken,body:msgBody||'',attachments:attachments||[]})
+  }).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(msg){
+    // Replace the optimistic bubble with the real server message (has real ID)
+    if(onDone)onDone(msg);
+  }).catch(function(){
+    if(onDone)onDone(null);
+  });
+}
+
 function send(){
   var body=(els.inp.value||'').trim();
   var hasFile=!!pendingFile;
@@ -654,28 +669,35 @@ function send(){
   if(hasFile){
     var pf=pendingFile;clearAttach();
     if(sentBody){
-      pendingMessages.add(sentBody);
       appendMsg({id:'opt_'+Date.now(),sender_type:'visitor',message_body:sentBody,is_internal_note:false,created_at:new Date().toISOString()},true);
     }
     uploadFile(pf,function(err,fileData){
       isSending=false;els.snd.disabled=false;
       if(err){appendMsg({id:'err_'+Date.now(),sender_type:'system',message_body:'\u26A0\uFE0F File upload failed.',is_internal_note:false,created_at:new Date().toISOString()},true);return;}
-      fetch(API_BASE+'/widget/message',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({conversationId:state.conversationId,sessionToken:state.sessionToken,body:sentBody||'',attachments:[{url:fileData.url,name:pf.name,type:pf.type}]})
-      }).then(function(r){return r.json();}).then(function(msg){appendMsg(msg,true);}).catch(function(){});
+      sendRest(sentBody||'',[{url:fileData.url,name:pf.name,type:pf.type}],function(msg){
+        if(msg){state.messages.push(msg);}
+      });
     });
     return;
   }
 
+  // ── Text-only message: send via REST (guaranteed delivery + server broadcasts
+  // to socket rooms so agents see it in real-time without a page reload).
+  //
+  // pendingMessages tracks the body so that if the socket echo of this message
+  // arrives before or after the REST response, the server:new_message handler
+  // deduplicates it and doesn't render a second bubble.
   pendingMessages.add(sentBody);
   appendMsg({id:'opt_'+Date.now(),sender_type:'visitor',message_body:sentBody,is_internal_note:false,created_at:new Date().toISOString()},true);
-  if(state.socket&&state.connected){
-    state.socket.emit('client:send_message',{conversationId:state.conversationId,body:sentBody});
-  }else{
-    msgQueue.push(sentBody);
-  }
-  setTimeout(function(){isSending=false;els.snd.disabled=false;},600);
+  sendRest(sentBody,[],function(msg){
+    isSending=false;els.snd.disabled=false;
+    if(msg){
+      // Store real server ID — if the echo already cleared pendingMessages the
+      // ID dedup in server:new_message will catch any late-arriving duplicates.
+      state.messages.push(msg);
+      pendingMessages.delete(sentBody); // clean up if REST callback beat the echo
+    }
+  });
 }
 
 buildDom();
