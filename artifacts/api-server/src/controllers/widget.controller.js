@@ -229,7 +229,7 @@ const WIDGET_JS = `
 /* OmniCore Chat Widget — https://omnicore.chat */
 (function(w,d){
 'use strict';
-var script=d.currentScript;
+var script=d.currentScript||(function(){var ss=d.querySelectorAll('script[src]');for(var i=ss.length-1;i>=0;i--){if(ss[i].src&&ss[i].src.indexOf('widget.js')!==-1)return ss[i];}return null;})();
 if(!script)return;
 var BRAND_ID=script.getAttribute('data-brand-id');
 var LABEL=script.getAttribute('data-label')||'Chat with us';
@@ -431,7 +431,7 @@ function buildDom(){
 
   fab.addEventListener('click',toggle);
   qs('#omni-close-btn').addEventListener('click',close);
-  els.inp.addEventListener('input',autoResize);
+  els.inp.addEventListener('input',function(){autoResize();emitTyping();});
   els.inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
   els.inp.addEventListener('paste',function(e){
     var items=e.clipboardData&&e.clipboardData.items;
@@ -619,6 +619,16 @@ function initSio(){
 function emitPage(){
   if(!state.socket||!state.connected||!state.conversationId)return;
   state.socket.emit('visitor:page_change',{conversationId:state.conversationId,url:w.location.href});
+}
+var _typingTimer=null;
+function emitTyping(){
+  if(!state.socket||!state.connected||!state.conversationId)return;
+  state.socket.emit('visitor:is_typing',{conversationId:state.conversationId,isTyping:true});
+  clearTimeout(_typingTimer);
+  _typingTimer=setTimeout(function(){
+    if(state.socket&&state.connected&&state.conversationId)
+      state.socket.emit('visitor:is_typing',{conversationId:state.conversationId,isTyping:false});
+  },2000);
 }
 var _lastHref=w.location.href;
 setInterval(function(){if(w.location.href!==_lastHref){_lastHref=w.location.href;emitPage();}},1500);

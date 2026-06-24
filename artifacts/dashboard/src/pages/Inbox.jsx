@@ -793,13 +793,21 @@ export default function Inbox() {
       });
     });
 
-    // Visitor typing
-    socket.on('agent:is_typing', () => {
-      setVT(true);
-      clearTimeout(socket._vtTimer);
-      socket._vtTimer = setTimeout(() => setVT(false), 4000);
+    // Visitor typing indicator
+    socket.on('visitor:is_typing', ({ conversationId: cid, isTyping }) => {
+      if (cid !== activeConvIdRef.current) return;
+      if (isTyping) {
+        setVT(true);
+        clearTimeout(socket._vtTimer);
+        socket._vtTimer = setTimeout(() => setVT(false), 4000);
+      } else {
+        clearTimeout(socket._vtTimer);
+        setVT(false);
+      }
     });
-    socket.on('agent:typing_stopped', () => setVT(false));
+    socket.on('visitor:typing_stopped', ({ conversationId: cid }) => {
+      if (cid === activeConvIdRef.current) setVT(false);
+    });
 
     // Telemetry events
     socket.on('server:telemetry', (ev) => {
