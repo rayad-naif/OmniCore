@@ -2428,7 +2428,12 @@ function Dashboard() {
     if (!accessToken) return
     const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], reconnectionAttempts: 5 })
     socketRef.current = socket
-    socket.on('connect',       () => setSocketOk(true))
+    socket.on('connect', () => {
+      setSocketOk(true)
+      // Re-join the active conversation room after every (re)connect so
+      // server:new_message keeps arriving even after a network blip.
+      if (activeIdRef.current) socket.emit('join:conversation', { conversationId: activeIdRef.current })
+    })
     socket.on('disconnect',    () => setSocketOk(false))
     socket.on('connect_error', () => setSocketOk(false))
     socket.on('conversation:created', (conv: Conversation) => {
@@ -2484,6 +2489,13 @@ function Dashboard() {
     // regardless of which conversation they're currently viewing.
     socket.on('conversation:visitor_message', ({ conversationId, message: msg }: { conversationId: string; message: Message }) => {
       if (msg.is_internal_note) return
+      // Dedup-safe fallback: add to message pane in case server:new_message was
+      // missed (e.g. agent wasn't yet in the conv room when the message arrived).
+      setMessages(prev => {
+        const existing = prev[conversationId] ?? []
+        if (existing.some(m => m.id === msg.id)) return prev
+        return { ...prev, [conversationId]: [...existing, msg] }
+      })
       // Update the conversation's position + unread badge in the sidebar
       setConvs(prev => prev.map(c => {
         if (c.id !== conversationId) return c
@@ -2519,6 +2531,24 @@ function Dashboard() {
       .then(msgs => setMessages(prev => ({ ...prev, [activeId]: msgs })))
       .catch(() => setMessages(prev => ({ ...prev, [activeId]: [] })))
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, unread: 0 } : c))
+  }, [activeId]) // eslint-disable-line
+
+  // Polling safety net: every 8 s re-fetch messages for the open conversation.
+  // Catches any message that slipped through during a socket room race or blip.
+  useEffect(() => {
+    if (!activeId) return
+    const interval = setInterval(async () => {
+      try {
+        const msgs = await api.getMessages(activeId)
+        setMessages(prev => {
+          const existing = prev[activeId] ?? []
+          // Only update if the server has more messages than local state
+          if (msgs.length <= existing.length) return prev
+          return { ...prev, [activeId]: msgs }
+        })
+      } catch { /* non-fatal */ }
+    }, 8_000)
+    return () => clearInterval(interval)
   }, [activeId]) // eslint-disable-line
 
   const handleSelectConversation = useCallback((id: string) => {
