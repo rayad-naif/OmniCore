@@ -69,6 +69,16 @@ function broadcastToConversation(conversationId, event, data) {
   _io.to(`conv:${conversationId}`).emit(event, data);
 }
 
+/**
+ * Broadcast an event directly to a visitor's personal room.
+ * Used as a fallback so agent REST-sent messages reach the widget even
+ * when the visitor socket hasn't successfully joined the conv room yet.
+ */
+function broadcastToVisitor(visitorId, event, data) {
+  if (!_io) return;
+  _io.to(`vis:${visitorId}`).emit(event, data);
+}
+
 // ---------------------------------------------------------------------------
 // Auth middleware
 // ---------------------------------------------------------------------------
@@ -214,6 +224,11 @@ function attachSocketServer(httpServer) {
 
         await socket.join(`conv:${conversationId}`);
         socket.data.activeConversation = conversationId;
+
+        // Notify agents in this conv that visitor came online
+        if (actorType === 'visitor') {
+          socket.to(`conv:${conversationId}`).emit('visitor:online', { conversationId });
+        }
 
         ack?.({ ok: true, conversationId });
       } catch (err) {
@@ -442,10 +457,16 @@ function attachSocketServer(httpServer) {
           }
         }
       }
+      if (actorType === 'visitor') {
+        const convId = socket.data.activeConversation;
+        if (convId) {
+          socket.to(`conv:${convId}`).emit('visitor:offline', { conversationId: convId });
+        }
+      }
     });
   });
 
   return io;
 }
 
-module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation };
+module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor };

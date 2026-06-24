@@ -21,7 +21,7 @@ const { requireAuth }           = require('../middleware/auth');
 const { pool }                  = require('../lib/db');
 const { handleExportRequest }   = require('../services/export.service');
 const { sendStatusChangeEmail, sendAgentReplyEmail } = require('../services/email.service');
-const { broadcastToConversation, broadcastToTenant } = require('../services/socket.service');
+const { broadcastToConversation, broadcastToTenant, broadcastToVisitor } = require('../services/socket.service');
 const logger                    = require('../utils/logger');
 const crypto                    = require('crypto');
 const fs                        = require('fs');
@@ -292,7 +292,7 @@ router.post('/:id/messages', async (req, res, next) => {
     if (!messageBody?.trim()) return res.status(400).json({ error: 'message body is required' });
 
     const { rows: convRows } = await pool.query(
-      `SELECT id, status, tenant_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      `SELECT id, status, tenant_id, visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
       [req.params.id, tenantId(req)]
     );
     if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
@@ -301,7 +301,7 @@ router.post('/:id/messages', async (req, res, next) => {
     const { rows: newMsg } = await pool.query(
       `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body, is_internal_note)
        VALUES ($1, 'agent', $2, $3, $4)
-       RETURNING id, conversation_id, sender_type, message_body, is_internal_note, created_at`,
+       RETURNING id, conversation_id, sender_type, message_body, is_internal_note, attachments_json, created_at`,
       [req.params.id, req.agent.id, messageBody.trim(), Boolean(isInternalNote)]
     );
 
@@ -310,6 +310,11 @@ router.post('/:id/messages', async (req, res, next) => {
 
     await pool.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [req.params.id]);
     broadcastToConversation(req.params.id, 'server:new_message', result);
+    // Also deliver directly to the visitor's personal room — guarantees the widget
+    // receives the agent reply even if it hasn't yet joined the conversation room.
+    if (convRows[0].visitor_id) {
+      broadcastToVisitor(convRows[0].visitor_id, 'server:new_message', result);
+    }
     logger.info({ conversationId: req.params.id, agentId: req.agent.id }, 'agent_message_sent');
 
     // Non-blocking: email visitor when agent replies (not for internal notes)

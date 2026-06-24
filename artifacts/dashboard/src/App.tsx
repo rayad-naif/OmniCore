@@ -43,7 +43,7 @@ interface Conversation {
 interface Message {
   id: string; conversation_id: string; sender_type: Sender
   sender_name: string; message_body: string; is_internal_note: boolean
-  created_at: string
+  created_at: string; attachments_json?: string | null
 }
 
 interface Brand {
@@ -330,6 +330,27 @@ function StarRating({ score, size = 'sm' }: { score: number | null | undefined; 
       ))}
     </span>
   )
+}
+
+// ─── Audio notification chime (Web Audio API, no external files) ─────────────
+function playChime() {
+  try {
+    const ctx = new AudioContext()
+    const gain = ctx.createGain()
+    gain.connect(ctx.destination)
+    gain.gain.setValueAtTime(0, ctx.currentTime)
+    gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9)
+    const osc = ctx.createOscillator()
+    osc.connect(gain)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, ctx.currentTime)
+    osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.12)
+    osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.55)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.9)
+    osc.onended = () => ctx.close()
+  } catch { /* AudioContext unavailable */ }
 }
 
 // ─── Logo ─────────────────────────────────────────────────────────────────────
@@ -651,10 +672,12 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
 }
 
 // ─── Message Bubble ───────────────────────────────────────────────────────────
-function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
+function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, readAt }: {
   msg: Message; visitorName: string
   onEdit?: (msgId: string, newBody: string) => Promise<void>
   onDelete?: (msgId: string) => Promise<void>
+  isLastAgentMsg?: boolean
+  readAt?: string | null
 }) {
   const [editing, setEditing]   = useState(false)
   const [editDraft, setDraft]   = useState(msg.message_body)
@@ -680,6 +703,12 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
     finally { setSaving(false) }
   }
 
+  // Parse attachments
+  let attachments: Array<{ url: string; name: string; type?: string }> = []
+  try { if (msg.attachments_json) attachments = JSON.parse(msg.attachments_json) } catch {}
+
+  const seenAt = isLastAgentMsg && readAt && new Date(readAt) > new Date(msg.created_at) ? readAt : null
+
   return (
     <div className={`flex gap-2.5 ${isAgent || isBot ? 'flex-row-reverse' : 'flex-row'}`} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-1 ${isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
@@ -696,21 +725,45 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete }: {
             </div>
           </div>
         ) : (
-          <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${isInternal ? 'bg-amber-50 border border-amber-200 text-amber-900' : isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-50 border border-violet-200 text-violet-900' : 'bg-white border border-slate-200 text-slate-800'}`}>
-            {msg.message_body.trimStart().startsWith('<') ? (
-              <div className="msg-html" dangerouslySetInnerHTML={{ __html: msg.message_body }} />
-            ) : (
-              msg.message_body
+          <>
+            {(msg.message_body || attachments.length === 0) && (
+              <div className={`px-3 py-2 rounded-2xl text-sm leading-relaxed ${isInternal ? 'bg-amber-50 border border-amber-200 text-amber-900' : isAgent ? 'bg-sky-600 text-white' : isBot ? 'bg-violet-50 border border-violet-200 text-violet-900' : 'bg-white border border-slate-200 text-slate-800'}`}>
+                {msg.message_body.trimStart().startsWith('<') ? (
+                  <div className="msg-html" dangerouslySetInnerHTML={{ __html: msg.message_body }} />
+                ) : (
+                  msg.message_body
+                )}
+              </div>
+            )}
+            {attachments.length > 0 && (
+              <div className="flex flex-col gap-1.5 mt-0.5">
+                {attachments.map((att, i) => att.type?.startsWith('image/') ? (
+                  <a key={i} href={att.url} target="_blank" rel="noopener noreferrer">
+                    <img src={att.url} alt={att.name} className="max-w-[200px] max-h-[160px] rounded-xl object-cover border border-slate-200 hover:opacity-90 transition-opacity cursor-pointer" />
+                  </a>
+                ) : (
+                  <a key={i} href={att.url} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${isAgent ? 'bg-sky-500 text-white hover:bg-sky-400' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
+                    <Paperclip size={11} />{att.name || 'File'}
+                  </a>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        <div className={`flex flex-col ${isAgent ? 'items-end' : 'items-start'} gap-0.5`}>
+          <div className={`flex items-center gap-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
+            <span className="text-[10px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            {hovered && !editing && isAgent && (
+              <div className="flex items-center gap-1">
+                {onEdit && <button onClick={() => setEditing(true)} className="p-0.5 text-slate-400 hover:text-slate-600 rounded"><Pencil size={10} /></button>}
+                {onDelete && <button onClick={() => window.confirm('Delete this message?') && onDelete(msg.id)} className="p-0.5 text-slate-400 hover:text-red-500 rounded"><Trash2 size={10} /></button>}
+              </div>
             )}
           </div>
-        )}
-        <div className={`flex items-center gap-2 ${isAgent ? 'flex-row-reverse' : ''}`}>
-          <span className="text-[10px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          {hovered && !editing && isAgent && (
-            <div className="flex items-center gap-1">
-              {onEdit && <button onClick={() => setEditing(true)} className="p-0.5 text-slate-400 hover:text-slate-600 rounded"><Pencil size={10} /></button>}
-              {onDelete && <button onClick={() => window.confirm('Delete this message?') && onDelete(msg.id)} className="p-0.5 text-slate-400 hover:text-red-500 rounded"><Trash2 size={10} /></button>}
-            </div>
+          {seenAt && (
+            <span className="text-[9px] text-sky-400 flex items-center gap-0.5">
+              <CheckCircle2 size={9} />Seen
+            </span>
           )}
         </div>
       </div>
@@ -882,7 +935,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean) => Promise<void>
   onStatusChange: (status: Status) => void
@@ -895,6 +948,8 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   currentPage: string | null
   socketConnected: boolean
   typingWho?: string | null
+  visitorOnline?: boolean
+  visitorReadAt?: string | null
 }) {
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
@@ -957,7 +1012,10 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
             <span title={socketConnected ? 'Real-time connected' : 'Reconnecting…'}>{socketConnected ? <Wifi size={11} className="text-emerald-400" /> : <WifiOff size={11} className="text-slate-300" />}</span>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-slate-400">
-            <span className="font-medium text-slate-600">{conv.visitor_name}</span>
+            <span className="font-medium text-slate-600 flex items-center gap-1.5">
+              {conv.visitor_name}
+              {visitorOnline && <span className="flex items-center gap-0.5 text-[10px] font-semibold text-emerald-500"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />Online</span>}
+            </span>
             {conv.visitor_email && <><span>·</span><span>{conv.visitor_email}</span></>}
             <span>·</span><span className="capitalize">{conv.channel}</span>
             {conv.sla_breach_at && <span className={`flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}><Clock size={10} /> SLA {new Date(conv.sla_breach_at).getTime() < Date.now() ? 'breached' : timeAgo(conv.sla_breach_at)}</span>}
@@ -1019,7 +1077,11 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center"><MessageSquare size={32} className="text-slate-200 mb-2" /><p className="text-sm text-slate-400">No messages yet</p></div>
-          ) : messages.map(m => <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} onEdit={onEditMessage} onDelete={onDeleteMessage} />)}
+          ) : messages.map((m, i) => {
+            const isLastAgent = (m.sender_type === 'agent' || m.sender_type === 'bot') && !m.is_internal_note &&
+              messages.slice(i + 1).every(x => (x.sender_type !== 'agent' && x.sender_type !== 'bot') || x.is_internal_note)
+            return <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} onEdit={onEditMessage} onDelete={onDeleteMessage} isLastAgentMsg={isLastAgent} readAt={isLastAgent ? visitorReadAt : null} />
+          })}
           <div ref={bottomRef} />
         </div>
         <VisitorInfoPanel conv={conv} currentPage={currentPage} />
@@ -2239,7 +2301,7 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
         </div>
       </div>
       {activeTicket ? (
-        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} typingWho={typingInfo[activeId ?? ''] ?? null} />
+        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={false} visitorReadAt={null} />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50 p-8">
           <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4"><Tag size={24} className="text-amber-400" /></div>
@@ -2401,8 +2463,10 @@ function Dashboard() {
   const [toasts, setToasts]       = useState<InboxToast[]>([])
   const [agents, setAgents]       = useState<AgentRow[]>([])
   const [brands, setBrands]       = useState<Brand[]>([])
-  const [visitorPages, setVisitorPages] = useState<Record<string, string>>({})
-  const [typingInfo, setTypingInfo]     = useState<Record<string, string>>({})
+  const [visitorPages, setVisitorPages]   = useState<Record<string, string>>({})
+  const [typingInfo, setTypingInfo]       = useState<Record<string, string>>({})
+  const [visitorOnline, setVisitorOnline] = useState<Record<string, boolean>>({})
+  const [visitorReadAt, setVisitorReadAt] = useState<Record<string, string>>({})
   const socketRef                 = useRef<Socket | null>(null)
   const activeIdRef               = useRef<string | null>(null)
   const typingTimers              = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -2489,6 +2553,7 @@ function Dashboard() {
     // regardless of which conversation they're currently viewing.
     socket.on('conversation:visitor_message', ({ conversationId, message: msg }: { conversationId: string; message: Message }) => {
       if (msg.is_internal_note) return
+      playChime()
       // Dedup-safe fallback: add to message pane in case server:new_message was
       // missed (e.g. agent wasn't yet in the conv room when the message arrived).
       setMessages(prev => {
@@ -2517,6 +2582,15 @@ function Dashboard() {
           return prev
         })
       }
+    })
+    socket.on('visitor:online',  ({ conversationId }: { conversationId: string }) => {
+      setVisitorOnline(prev => ({ ...prev, [conversationId]: true }))
+    })
+    socket.on('visitor:offline', ({ conversationId }: { conversationId: string }) => {
+      setVisitorOnline(prev => ({ ...prev, [conversationId]: false }))
+    })
+    socket.on('visitor:read_receipt', ({ conversationId, readAt }: { conversationId: string; readAt: string }) => {
+      setVisitorReadAt(prev => ({ ...prev, [conversationId]: readAt }))
     })
     return () => { socket.disconnect(); socketRef.current = null }
   }, [accessToken])
@@ -2646,7 +2720,7 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} /> : <EmptyChat />}
               </>
             )
           )}
