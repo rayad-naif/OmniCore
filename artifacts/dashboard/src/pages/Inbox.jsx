@@ -136,24 +136,44 @@ function Spinner({ size = 'md' }) {
 }
 
 // ── Column 1: Ticket list ─────────────────────────────────────────────────────
-function TicketList({ tickets, activeId, onSelect, loading }) {
+function TicketList({ tickets, activeId, onSelect, loading, agentId }) {
   const [filter, setFilter] = useState('open');
+  const [search, setSearch] = useState('');
 
   const visible = tickets.filter(t => {
+    if (filter === 'mine') return t.assigned_agent_id === agentId;
     if (filter === 'all')  return true;
-    if (filter === 'mine') return t.assigned_to_me;
     return t.status !== 'closed';
+  }).filter(t => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (t.visitor_email || '').toLowerCase().includes(q)
+        || (t.visitor_name  || '').toLowerCase().includes(q)
+        || (t.subject       || '').toLowerCase().includes(q);
   });
 
   return (
     <div className="flex flex-col h-full border-r border-slate-200 bg-white">
       {/* Header */}
       <div className="px-4 py-4 border-b border-slate-100">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-bold text-slate-900">Inbox</h2>
           <span className="text-xs font-semibold bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">
             {tickets.filter(t => t.status !== 'closed').length}
           </span>
+        </div>
+        {/* Search */}
+        <div className="relative mb-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search conversations…"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg
+                       placeholder-slate-400 text-slate-800 focus:outline-none focus:ring-2
+                       focus:ring-violet-400/40 focus:border-violet-400" />
         </div>
         {/* Filter pills */}
         <div className="flex gap-1">
@@ -971,6 +991,7 @@ export default function Inbox() {
           activeId={activeConv?.id}
           onSelect={selectConversation}
           loading={ticketLoading}
+          agentId={agent?.id}
         />
       </div>
 
@@ -1008,13 +1029,19 @@ function normaliseMsg(m) {
   let atts = m.attachments_json || m.attachments || [];
   if (typeof atts === 'string') { try { atts = JSON.parse(atts); } catch { atts = []; } }
   if (!Array.isArray(atts)) atts = [];
+  const senderType = m.sender_type || m.senderType || '';
+  const rawBody    = m.message_body || m.messageBody || m.body || '';
+  // Only strip HTML for visitor messages (plain-text input).
+  // Agent messages come from the rich-text editor and must keep their HTML
+  // so dangerouslySetInnerHTML renders them correctly.
+  const body = senderType === 'visitor' ? stripHtml(rawBody) : rawBody;
   return {
     id:               m.id,
     conversation_id:  m.conversation_id  || m.conversationId,
-    sender_type:      m.sender_type      || m.senderType,
+    sender_type:      senderType,
     sender_id:        m.sender_id        || m.senderId,
     sender_name:      m.sender_name      || m.senderName   || '',
-    message_body:     stripHtml(m.message_body || m.messageBody || m.body || ''),
+    message_body:     body,
     is_internal_note: m.is_internal_note || m.isInternalNote || false,
     attachments_json: atts,
     created_at:       m.created_at       || m.createdAt    || new Date().toISOString(),

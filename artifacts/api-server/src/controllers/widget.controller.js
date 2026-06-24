@@ -603,6 +603,7 @@ function initSio(){
     sk.on('disconnect',function(){state.connected=false;});
     sk.on('server:new_message',function(msg){
       if(msg.is_internal_note)return;
+      if(msg.id&&state.messages.some(function(m){return m.id===msg.id;}))return;
       if(msg.sender_type==='visitor'&&pendingMessages.has(msg.message_body)){
         pendingMessages.delete(msg.message_body);
         state.messages.push(msg);

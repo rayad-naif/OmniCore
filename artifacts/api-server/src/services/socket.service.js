@@ -147,7 +147,7 @@ async function touchConversation(conversationId) {
 // ---------------------------------------------------------------------------
 async function resolveConversation(conversationId, tenantId) {
   const { rows } = await pool.query(
-    `SELECT id, status, assigned_agent_id, tenant_id, brand_id
+    `SELECT id, status, assigned_agent_id, tenant_id, brand_id, visitor_id
      FROM conversations WHERE id = $1 AND tenant_id = $2`,
     [conversationId, tenantId]
   );
@@ -192,6 +192,11 @@ function attachSocketServer(httpServer) {
     // (e.g. conversation:created from the widget session endpoint)
     if (actorType === 'agent' && tenantId) {
       socket.join(`tenant:${tenantId}`);
+    }
+    // Visitors auto-join a personal room so agent replies reach them even if
+    // they haven't yet successfully joined the conv room (race conditions, reconnects).
+    if (actorType === 'visitor' && socket.data.visitorId) {
+      socket.join(`vis:${socket.data.visitorId}`);
     }
 
     // ── Join a conversation room ─────────────────────────────────────────────
@@ -268,7 +273,13 @@ function attachSocketServer(httpServer) {
         // For AGENT messages, exclude the sender (they have the message optimistically).
         // For VISITOR messages, broadcast to all (agents viewing the conv need it).
         if (actorType === 'agent') {
+          // Broadcast to conv room (excludes agent sender — they have optimistic UI).
+          // Also emit directly to visitor's personal room so the widget receives it
+          // even if it missed the conv room join (reconnect race condition).
           socket.broadcast.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+          if (conv.visitor_id) {
+            io.to(`vis:${conv.visitor_id}`).emit('server:new_message', enriched);
+          }
         } else {
           io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
         }
