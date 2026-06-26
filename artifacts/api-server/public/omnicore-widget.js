@@ -207,6 +207,105 @@
     STATE.socket.on('server:handover_required', function () {
       appendSystemNotice('You\'ve been connected to a human agent.');
     });
+
+    STATE.socket.on('conversation:closed', function (data) {
+      if (data && data.trigger_csat) {
+        showCsatSurvey();
+      } else {
+        appendSystemNotice('This conversation has been closed.');
+        showStartNewChatButton();
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CSAT survey — injected inline when agent triggers CSAT on close
+  // ─────────────────────────────────────────────────────────────────────────
+  function showCsatSurvey() {
+    ensureRefs();
+    var saved = loadSession();
+
+    var pending = null;
+    try { pending = localStorage.getItem('omnicore_csat_pending'); } catch (e) {}
+    if (pending === 'done') return;
+
+    var el = document.createElement('div');
+    el.id  = 'oc-csat';
+    el.style.cssText = 'background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:13px';
+    el.innerHTML =
+      '<p style="margin:0 0 8px;font-weight:600;color:#166534">How was your experience?</p>' +
+      '<div id="oc-csat-stars" style="display:flex;gap:6px;margin-bottom:8px">' +
+        [1,2,3,4,5].map(function(n) {
+          return '<button data-score="' + n + '" style="font-size:24px;background:none;border:none;cursor:pointer;opacity:.4;transition:opacity .15s" title="' + n + ' star' + (n > 1 ? 's' : '') + '">★</button>';
+        }).join('') +
+      '</div>' +
+      '<p id="oc-csat-thanks" style="display:none;color:#166534;font-size:12px;margin:0">Thank you for your feedback!</p>';
+
+    _msgsEl.appendChild(el);
+    _msgsEl.scrollTop = _msgsEl.scrollHeight;
+
+    var stars = el.querySelectorAll('#oc-csat-stars button');
+    stars.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var score = parseInt(btn.getAttribute('data-score'), 10);
+        stars.forEach(function (s, i) { s.style.opacity = i < score ? '1' : '.25'; });
+        el.querySelector('#oc-csat-thanks').style.display = 'block';
+        el.querySelector('#oc-csat-stars').style.pointerEvents = 'none';
+        try { localStorage.setItem('omnicore_csat_pending', 'done'); } catch(e) {}
+
+        if (STATE.socket && STATE.conversationId) {
+          STATE.socket.emit('visitor:csat_submitted', {
+            conversationId: STATE.conversationId,
+            score:          score,
+          });
+        }
+      });
+    });
+  }
+
+  function showStartNewChatButton() {
+    ensureRefs();
+    var el = document.createElement('div');
+    el.style.cssText = 'text-align:center;padding:10px 0';
+    var btn = document.createElement('button');
+    btn.textContent = '+ Start a new chat';
+    btn.style.cssText =
+      'background:var(--oc-primary);color:#fff;border:none;border-radius:8px;' +
+      'padding:7px 16px;font-size:13px;cursor:pointer;font-family:inherit';
+    btn.addEventListener('click', function () {
+      startFreshChat();
+      el.remove();
+    });
+    el.appendChild(btn);
+    _msgsEl.appendChild(el);
+    _msgsEl.scrollTop = _msgsEl.scrollHeight;
+  }
+
+  function startFreshChat() {
+    try {
+      sessionStorage.removeItem('omnicore_token');
+      sessionStorage.removeItem('omnicore_conv');
+      localStorage.removeItem('omnicore_csat_pending');
+    } catch (e) {}
+    STATE.sessionToken   = null;
+    STATE.conversationId = null;
+    STATE.messages       = [];
+    STATE.offlineQueue   = [];
+    if (STATE.socket) { STATE.socket.disconnect(); STATE.socket = null; }
+    STATE.isConnected = false;
+
+    ensureRefs();
+    _msgsEl.innerHTML = '';
+
+    apiPost('/widget/session', { brandId: CONFIG.brandId, force_new: true })
+      .then(function (data) {
+        STATE.sessionToken   = data.sessionToken;
+        STATE.conversationId = data.conversationId;
+        storeSession(data.sessionToken, data.conversationId);
+        pushMessage({ id: uuid(), senderType: 'bot', body: CONFIG.welcomeMsg, createdAt: new Date().toISOString() });
+        loadSocketIO(function () { if (global.io) connectSocket(); });
+      })
+      .catch(function (err) { console.error('[OmniCore] New chat failed', err); });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -668,6 +767,42 @@
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 100) + 'px';
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SPA URL tracking — patches history.pushState / replaceState and
+  // popstate / hashchange so SPAs that never trigger full page loads
+  // still emit visitor:page_change telemetry to the agent dashboard.
+  // ─────────────────────────────────────────────────────────────────────────
+  var _lastTrackedUrl = location.href;
+
+  function trackPageChange() {
+    var currentUrl = location.href;
+    if (currentUrl === _lastTrackedUrl) return;
+    _lastTrackedUrl = currentUrl;
+    emitTelemetry('page_view', { url: currentUrl, title: document.title });
+    if (STATE.socket && STATE.isConnected && STATE.conversationId) {
+      STATE.socket.emit('visitor:page_change', {
+        conversationId: STATE.conversationId,
+        url:  currentUrl,
+        path: location.pathname + location.search,
+      });
+    }
+  }
+
+  (function patchHistory() {
+    var _push    = history.pushState;
+    var _replace = history.replaceState;
+    history.pushState = function () {
+      _push.apply(history, arguments);
+      debounce(trackPageChange, 100)();
+    };
+    history.replaceState = function () {
+      _replace.apply(history, arguments);
+      debounce(trackPageChange, 100)();
+    };
+    global.addEventListener('popstate',    function () { debounce(trackPageChange, 100)(); });
+    global.addEventListener('hashchange',  function () { debounce(trackPageChange, 100)(); });
+  })();
 
   // ─────────────────────────────────────────────────────────────────────────
   // 14. Boot sequence

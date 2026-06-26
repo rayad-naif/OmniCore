@@ -26,7 +26,7 @@ type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resol
 type Channel     = 'email' | 'widget' | 'api'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp' | 'contacts'
+type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp' | 'contacts' | 'canned_responses'
 type StatusFilter = 'all' | Status
 type AuthView    = 'login' | 'signup' | 'forgot' | 'reset'
 
@@ -107,6 +107,10 @@ interface ContactConversation {
   priority: string; created_at: string; updated_at: string
   csat_score: number | null; brand_name: string; agent_name: string | null
   referrer_url?: string | null
+}
+
+interface CannedResponse {
+  id: string; name: string; body: string; shortcut: string | null; created_at: string
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
@@ -372,6 +376,22 @@ function useApi() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+    },
+    listCannedResponses: async (): Promise<CannedResponse[]> => {
+      const r = await authFetch(`${API}/canned-responses`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<CannedResponse[]>
+    },
+    createCannedResponse: async (name: string, body: string, shortcut?: string): Promise<CannedResponse> => {
+      const r = await authFetch(`${API}/canned-responses`, {
+        method: 'POST', body: JSON.stringify({ name, body, shortcut }),
+      })
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<CannedResponse>
+    },
+    deleteCannedResponse: async (id: string): Promise<void> => {
+      const r = await authFetch(`${API}/canned-responses/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error(`${r.status}`)
     },
   }), [authFetch, agent?.tenantId])()
 }
@@ -3417,6 +3437,113 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
   )
 }
 
+// ─── Canned Responses Settings ────────────────────────────────────────────────
+function CannedResponsesSection() {
+  const api = useApi()
+  const [responses, setResponses] = useState<CannedResponse[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [form, setForm]           = useState({ name: '', body: '', shortcut: '' })
+  const [saving, setSaving]       = useState(false)
+  const [msg, setMsg]             = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    api.listCannedResponses()
+      .then(setResponses)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, []) // eslint-disable-line
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault(); setMsg(null)
+    if (!form.name.trim() || !form.body.trim()) { setMsg({ ok: false, text: 'Name and body are required.' }); return }
+    setSaving(true)
+    try {
+      const created = await api.createCannedResponse(form.name, form.body, form.shortcut || undefined)
+      setResponses(r => [...r, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setForm({ name: '', body: '', shortcut: '' })
+      setMsg({ ok: true, text: 'Canned response saved.' })
+    } catch (err) { setMsg({ ok: false, text: (err as Error).message }) }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this canned response?')) return
+    try { await api.deleteCannedResponse(id); setResponses(r => r.filter(x => x.id !== id)) }
+    catch { /* non-fatal */ }
+  }
+
+  return (
+    <div className="p-8 max-w-3xl mx-auto">
+      <h2 className="text-xl font-bold text-slate-900 mb-1 flex items-center gap-2">
+        <Zap size={20} className="text-amber-500" /> Canned Responses
+      </h2>
+      <p className="text-sm text-slate-500 mb-6">
+        Reusable reply templates for common questions. Agents pick them from the ⚡ button in the inbox.
+      </p>
+
+      <form onSubmit={handleCreate} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+        <h3 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2"><Plus size={14} /> New Canned Response</h3>
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">Name / Title *</label>
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. Greeting" required
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">Shortcut <span className="text-slate-400 font-normal">(optional)</span></label>
+            <input value={form.shortcut} onChange={e => setForm(f => ({ ...f, shortcut: e.target.value }))}
+              placeholder="e.g. /greet"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500" />
+          </div>
+        </div>
+        <div className="mb-4">
+          <label className="text-xs font-medium text-slate-600 mb-1 block">Reply Body *</label>
+          <textarea value={form.body} onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
+            rows={4} required placeholder="Type the reply template here…"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none" />
+        </div>
+        {msg && <p className={`text-xs mb-3 ${msg.ok ? 'text-emerald-600' : 'text-red-500'}`}>{msg.text}</p>}
+        <button type="submit" disabled={saving}
+          className="px-4 py-2 bg-sky-600 text-white text-sm font-semibold rounded-lg hover:bg-sky-700 disabled:opacity-50 transition-colors">
+          {saving ? 'Saving…' : 'Save Response'}
+        </button>
+      </form>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-slate-400">
+          <RefreshCw size={18} className="animate-spin mr-2" /> Loading…
+        </div>
+      ) : responses.length === 0 ? (
+        <div className="text-center py-12 text-slate-400">
+          <Zap size={32} className="mx-auto mb-2 opacity-20" />
+          <p className="text-sm">No canned responses yet. Create one above.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {responses.map(r => (
+            <div key={r.id} className="bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-start">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-semibold text-slate-800">{r.name}</span>
+                  {r.shortcut && (
+                    <span className="text-[10px] font-mono bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded">{r.shortcut}</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 whitespace-pre-wrap line-clamp-3">{r.body}</p>
+              </div>
+              <button onClick={() => handleDelete(r.id)} title="Delete"
+                className="shrink-0 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout }: {
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
@@ -3440,8 +3567,9 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
   const items: { key: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
-    { key: 'contacts',      icon: <Users size={16} />,         label: 'Contacts' },
-    { key: 'csat',          icon: <BarChart2 size={16} />,     label: 'CSAT', adminOnly: true },
+    { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts' },
+    { key: 'canned_responses', icon: <Zap size={16} />,        label: 'Canned Responses', adminOnly: true },
+    { key: 'csat',            icon: <BarChart2 size={16} />,   label: 'CSAT', adminOnly: true },
     { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', adminOnly: true },
     { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', adminOnly: true },
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', adminOnly: true },
@@ -3836,8 +3964,9 @@ function Dashboard() {
           {section === 'tickets' && (
             <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} brands={brands} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
           )}
-          {section === 'contacts'    && <ContactsSection brands={brands} socketRef={socketRef} />}
-          {section === 'csat'        && <CsatSection brands={brands} />}
+          {section === 'contacts'         && <ContactsSection brands={brands} socketRef={socketRef} />}
+          {section === 'canned_responses' && <CannedResponsesSection />}
+          {section === 'csat'             && <CsatSection brands={brands} />}
           {section === 'ai_training' && <AITrainingSection />}
           {section === 'smtp'        && <SMTPSection />}
           {section === 'brands'      && <BrandsSection />}

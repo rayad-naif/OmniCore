@@ -1,0 +1,60 @@
+Role: Senior Full-Stack Architect.
+Task: We need to implement several key features and stabilize existing ones. Please review Inbox.jsx, ChatPanel.jsx, omnicore-widget.js, conversations.controller.js, widget.controller.js, and visitors.controller.js to understand the current architecture.
+
+Once you understand the structure, please implement the following requirements:
+
+1. Contact Deduplication (Email + Brand Isolation)
+
+Update the visitor creation/lookup logic. A visitor should be identified by both email AND brand_id.
+
+If a visitor with that email already exists under that specific brand_id, reuse their existing visitor_id and update their last_seen timestamp. Do not create duplicate contacts in the database for the same brand.
+
+2. Agent-Controlled CSAT (Strict Enforcement)
+
+The CSAT survey should never trigger automatically on close. It must only trigger if the agent explicitly selected "Close & Request CSAT" (passing trigger_csat: true via the socket).
+
+Widget Logic: If a CSAT is triggered, save a pending flag in localStorage. If this flag exists when the widget loads or starts a session, block the chat UI and force the survey to display.
+
+Submission: Only remove the localStorage pending flag after the POST request to submit the CSAT rating returns a successful response.
+
+3. Identity-Preserving New Chat & Dashboard Sync
+
+After submitting a CSAT or clicking "Start New Chat", do NOT clear the visitor's session token.
+
+Pass a flag (e.g., force_new: true) to the session endpoint to generate a brand new conversation_id for that existing user, preserving their name and email.
+
+Auto-Sync: The backend must emit a conversation:created socket event. Inbox.jsx must listen for this event and instantly add the new conversation to the agent's sidebar without requiring a page reload.
+
+4. Universal File Previews (Dashboard & Widget)
+
+In both the Agent Chat (Inbox.jsx) and the Client Widget (omnicore-widget.js), update the message rendering logic to handle attachments.
+
+If the attachment_url is an image (.png, .jpg, .jpeg, .gif, .webp), render it as a styled <img> tag.
+
+If it is a document (.pdf, .csv, .txt, etc.), render it as a clickable "Download File" link or card that opens in a new tab.
+
+5. Agent File Uploads & Image Pasting
+
+In the Agent Chat input area, add a paperclip icon linked to a hidden <input type="file" />.
+
+Add an onPaste handler to the text area to intercept clipboard images.
+
+When a file is selected or pasted, upload it via the backend API, show a loading/ready indicator, and include the returned URL in the message payload as attachment_url.
+
+6. Canned Responses (Settings & Inbox)
+
+Backend: Create a table/schema and API endpoints (GET/POST/DELETE) for Canned Responses, linked to the tenant_id.
+
+Settings UI: Add a section for the tenant to manage their canned responses.
+
+Inbox UI: Add a Lightning Bolt (⚡) icon near the chat input. Clicking it should open a menu of the canned responses. Selecting one should paste the text into the agent's input field.
+
+7. Widget URL Tracking Fix
+
+The current URL tracking fails on Single Page Applications (SPAs).
+
+Update omnicore-widget.js to override the browser's History API (pushState and replaceState) and listen for popstate.
+
+Whenever the URL changes invisibly, emit the visitor:page_change socket event so the dashboard's Sidebar shows the accurate, clickable tracking URL.
+
+Please write the code to implement these updates, ensuring all edge cases are handled cleanly.
