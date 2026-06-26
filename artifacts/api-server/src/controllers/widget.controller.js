@@ -371,19 +371,51 @@ function startPolling(){
     var url=API_BASE+'/widget/messages?tok='+encodeURIComponent(state.sessionToken)+'&cid='+encodeURIComponent(state.conversationId)+(_lastMsgTime?'&after='+encodeURIComponent(_lastMsgTime):'');
     fetch(url).then(function(r){return r.ok?r.json():[];}).then(function(msgs){
       if(!Array.isArray(msgs)||!msgs.length)return;
+      var hadNew=false;
       msgs.forEach(function(msg){
         if(msg.is_internal_note)return;
         if(state.messages.some(function(m){return m.id===msg.id;}))return;
         state.messages.push(msg);
         appendMsg(msg,true);
+        if(msg.sender_type==='agent'||msg.sender_type==='bot'){hadNew=true;}
         if(!state.open){setUnread(state.unread+1);}else{markRead();}
       });
+      if(hadNew)playChime();
       var last=msgs[msgs.length-1];
       if(last&&last.created_at)_lastMsgTime=last.created_at;
     }).catch(function(){});
   },3000);
 }
 function stopPolling(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}}
+
+function playChime(){
+  try{
+    var ac=new(w.AudioContext||w.webkitAudioContext)();
+    var osc=ac.createOscillator();var gain=ac.createGain();
+    osc.connect(gain);gain.connect(ac.destination);
+    osc.type='sine';osc.frequency.value=880;
+    gain.gain.setValueAtTime(0.3,ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.45);
+    osc.start(ac.currentTime);osc.stop(ac.currentTime+0.45);
+  }catch(e){}
+}
+
+function showClosedChip(){
+  if(els.inp){els.inp.disabled=true;els.inp.placeholder='Conversation closed';}
+  if(els.snd)els.snd.disabled=true;
+  var box=qs('#omni-msgs');
+  if(!box)return;
+  var notice=ce('div');notice.style.cssText='text-align:center;padding:14px 8px 4px;';
+  var chip=ce('span');chip.style.cssText='display:inline-block;padding:4px 12px;background:#fee2e2;color:#991b1b;border-radius:999px;font-size:11px;font-weight:600;';
+  chip.textContent='Conversation closed';
+  notice.appendChild(chip);box.appendChild(notice);
+  var newBtn=ce('button');
+  newBtn.textContent='Start new chat';
+  newBtn.style.cssText='margin:14px auto 4px;display:block;padding:9px 22px;background:'+COLOR+';color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;';
+  newBtn.addEventListener('click',startFreshChat);
+  box.appendChild(newBtn);
+  box.scrollTop=box.scrollHeight;
+}
 
 function markReadRest(){
   if(!state.sessionToken||!state.conversationId)return;
@@ -821,9 +853,6 @@ function startSession(){
     _lastMsgTime=state.messages.length?state.messages[state.messages.length-1].created_at:null;
     startPolling();
     initSio();
-    if(data.previousConversationClosed&&data.closedConversationId){
-      showCsatSurvey(data.closedConversationId);
-    }
   })
   .catch(function(){
     state.loading=false;
@@ -858,12 +887,16 @@ function initSio(){
       }
       state.messages.push(msg);
       appendMsg(msg,true);
+      if(msg.sender_type==='agent'||msg.sender_type==='bot'){playChime();}
       if(state.open){markRead();}else{setUnread(state.unread+1);}
     });
     sk.on('conversation:closed',function(data){
-      var cid=data&&data.conversationId||state.conversationId;
-      try{if(cid)localStorage.setItem(CSAT_KEY,cid);}catch(e){}
-      showCsatSurvey(cid);
+      var cid=(data&&data.conversationId)||state.conversationId;
+      if(data&&data.trigger_csat){
+        showCsatSurvey(cid);
+      }else{
+        showClosedChip();
+      }
     });
   };
   d.head.appendChild(s);

@@ -320,12 +320,14 @@ function ChatPanel({
   visitorTyping, visitorReadAt, visitorOnline, socket, onMessageSent,
   onAiRephrase, aiRephrasing,
   onExport, exporting,
-  authFetch,
+  authFetch, onConvClosed,
 }) {
   const [draft, setDraft]             = useState('');
   const [isInternal, setInternal]     = useState(false);
   const [sending, setSending]         = useState(false);
   const [pendingFile, setPendingFile] = useState(null);   // { file, name, type, dataUrl }
+  const [closeModal, setCloseModal]   = useState(false);
+  const [closing, setClosing]         = useState(false);
   const messagesEndRef                = useRef(null);
   const textareaRef                   = useRef(null);
   const fileInputRef                  = useRef(null);
@@ -348,7 +350,25 @@ function ChatPanel({
   }, [messages, visitorTyping]);
 
   // Reset draft when switching conversations
-  useEffect(() => { setDraft(''); setInternal(false); setPendingFile(null); }, [conversation?.id]);
+  useEffect(() => { setDraft(''); setInternal(false); setPendingFile(null); setCloseModal(false); }, [conversation?.id]);
+
+  async function handleCloseConv(triggerCsat) {
+    if (closing) return;
+    setClosing(true);
+    try {
+      await authFetch(`${API_URL}/conversations/${conversation.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'closed', trigger_csat: triggerCsat }),
+      });
+      onConvClosed?.(conversation.id);
+    } catch (e) {
+      console.error('close conv failed', e);
+    } finally {
+      setClosing(false);
+      setCloseModal(false);
+    }
+  }
 
   function handleFileSelect(e) {
     const file = e.target.files?.[0];
@@ -506,12 +526,52 @@ function ChatPanel({
             {exporting ? 'Exporting…' : 'Export PDF'}
           </button>
           {/* Close conversation */}
-          <button className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600
-                             bg-slate-100 hover:bg-slate-200 transition-colors">
-            Close
-          </button>
+          {conversation.status !== 'closed' && (
+            <button
+              onClick={() => setCloseModal(true)}
+              disabled={closing}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600
+                         bg-slate-100 hover:bg-slate-200 disabled:opacity-50 transition-colors">
+              {closing ? 'Closing…' : 'Close'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Close-conversation modal */}
+      {closeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+             onClick={() => !closing && setCloseModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 mb-1">Close conversation</h3>
+            <p className="text-sm text-slate-500 mb-5">
+              Do you want to ask the visitor for feedback before closing?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => handleCloseConv(true)}
+                disabled={closing}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-sky-600 text-white
+                           hover:bg-sky-700 disabled:opacity-50 transition-colors">
+                {closing ? 'Closing…' : '⭐ Close & Request CSAT'}
+              </button>
+              <button
+                onClick={() => handleCloseConv(false)}
+                disabled={closing}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700
+                           hover:bg-slate-200 disabled:opacity-50 transition-colors">
+                Close Only
+              </button>
+              <button
+                onClick={() => setCloseModal(false)}
+                disabled={closing}
+                className="w-full py-2 rounded-xl text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -894,6 +954,11 @@ export default function Inbox() {
       dispatchTickets({ type: 'PATCH', id: conversationId, patch: { status: 'open', unread: true } });
     });
 
+    // Status changes (e.g. conversation closed by agent)
+    socket.on('conversation:status_changed', ({ conversationId, status }) => {
+      dispatchTickets({ type: 'PATCH', id: conversationId, patch: { status } });
+    });
+
     return () => { socket.disconnect(); socketRef.current = null; };
   }, [accessToken]);
 
@@ -1057,6 +1122,7 @@ export default function Inbox() {
           onExport={handleExport}
           exporting={exporting}
           authFetch={authFetch}
+          onConvClosed={(convId) => dispatchTickets({ type: 'PATCH', id: convId, patch: { status: 'closed' } })}
         />
       </div>
 

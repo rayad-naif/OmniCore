@@ -215,6 +215,7 @@ router.get('/:id', async (req, res, next) => {
 // ─── PATCH /api/conversations/:id ─────────────────────────────────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
+    const trigger_csat = req.body.trigger_csat; // boolean, not persisted but forwarded in socket event
     const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject', 'is_ticket', 'csat_score'];
     const fields  = Object.keys(req.body).filter(k => ALLOWED.includes(k));
     if (!fields.length) return res.status(400).json({ error: 'No valid fields provided' });
@@ -250,11 +251,15 @@ router.patch('/:id', async (req, res, next) => {
         conversationId: req.params.id,
         status: newStatus,
       });
-      // Notify the visitor directly so the widget can react (e.g. show CSAT survey)
+      // Notify the visitor directly so the widget can react (e.g. show CSAT survey).
+      // trigger_csat tells the widget whether to show the star-rating survey.
       if (oldVisitorId) {
-        broadcastToVisitor(oldVisitorId, 'conversation:closed', {
+        const closedPayload = {
           conversationId: req.params.id,
-        });
+          trigger_csat: newStatus === 'closed' ? Boolean(trigger_csat) : false,
+        };
+        broadcastToVisitor(oldVisitorId, 'conversation:closed', closedPayload);
+        broadcastToConversation(req.params.id, 'conversation:closed', closedPayload);
       }
     }
 

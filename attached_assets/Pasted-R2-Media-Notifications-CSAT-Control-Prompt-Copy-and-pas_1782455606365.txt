@@ -1,0 +1,56 @@
+R2 Media, Notifications & CSAT Control" Prompt
+Copy and paste this exactly into your Replit AI Agent:
+
+"Role: Senior Full-Stack Architect.
+
+Task: Implement Cloudflare R2 media uploads, client-side audio notifications, Agent-controlled CSAT dispatch, rich-text/image rendering, and an auto-new-chat feature for the widget. Do not summarize or plan. Output the exact code overwrites.
+
+Part 1: Cloudflare R2 Upload Pipeline (Backend)
+
+Install @aws-sdk/client-s3 and multer.
+
+Create a new controller upload.controller.js (or add to an existing one). Configure an S3Client using Cloudflare R2 credentials from process.env (Account ID/Endpoint, Access Key, Secret Key, and Bucket Name).
+
+Create a POST /api/upload endpoint using multer memory storage. It must upload the file buffer to R2 using a unique UUID filename and return the public URL of the uploaded asset in the JSON response: { url: "..." }.
+
+Part 2: Rich Agent Input & File Handling (Frontend)
+
+In ChatPanel.jsx (Input Area): Replace the standard <textarea> with a rich input container.
+
+Add an 'Attachment' (paperclip) icon that triggers a hidden <input type="file" />.
+
+Add an onPaste handler to intercept pasted files (e.clipboardData.files).
+
+When a file is selected or pasted, immediately POST it to /api/upload using FormData.
+
+Take the returned R2 URL and attach it to the message payload sent to POST /api/conversations/:id/messages as attachment_url or within the body.
+
+Add a basic native Emoji picker toggle.
+
+Part 3: Fix Empty Image Bubbles (Renderer)
+
+In ChatPanel.jsx and omnicore-widget.js: Update the message mapping logic. If a message contains an attachment_url, or if the text itself matches an image URL pattern (.png, .jpg, .jpeg, .gif, .webp), render an <img src={url} style="max-width: 250px; border-radius: 8px;" alt="attachment" /> instead of an empty text bubble. Allow clicking the image to open it in a new tab.
+
+Part 4: Client-Side Chime (Audio Notification)
+
+In omnicore-widget.js: Add a base64 encoded short pop/chime .mp3 string as a constant.
+
+Inside the socket listener and polling loop, whenever a new message from the agent arrives, execute new Audio(chimeData).play() wrapped in a try/catch to handle browser autoplay restrictions.
+
+Part 5: Agent-Controlled CSAT Survey
+
+In Inbox.jsx / ChatPanel.jsx: Modify the 'Close Conversation' button. It must open a modal with two distinct buttons: 'Close & Request CSAT' and 'Close Only'.
+
+Update PATCH /api/conversations/:id to accept a trigger_csat boolean.
+
+In omnicore-widget.js: Only set the localStorage CSAT pending block if the closed socket event explicitly passes the trigger_csat: true flag.
+
+Part 6: Auto-New Chat (Widget)
+
+In omnicore-widget.js: When a chat is closed, inject a clear "Start New Conversation" button into the DOM, or automatically clear the session and call startSession() so the widget does not sit in a dead state.
+
+Rules:
+
+Output the exact React component code for ChatPanel.jsx and the R2 Express controller.
+
+Output the exact vanilla JavaScript updates for omnicore-widget.js. No placeholders.
