@@ -15,6 +15,7 @@ const bcrypt     = require('bcryptjs');
 const crypto     = require('crypto');
 const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
+const { sendPasswordResetEmail } = require('../services/email.service');
 
 const router = Router();
 

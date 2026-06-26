@@ -16,6 +16,7 @@ const { Router }   = require('express');
 const { pool }     = require('../lib/db');
 const { requireAuth } = require('../middleware/auth');
 const logger       = require('../utils/logger');
+const { sendPlatformSmtpTestEmail, sendAccountUpdateEmail } = require('../services/email.service');
 
 const router = Router();
 router.use(requireAuth);
@@ -40,6 +41,20 @@ async function requireSuperAdmin(req, res, next) {
 }
 
 router.use(requireSuperAdmin);
+
+// ─── Helper: notify a tenant's active admins about an account change ──────────
+async function notifyTenantAdmins(tenantId, subject, heading, message) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT email, name FROM agents
+       WHERE tenant_id = $1 AND role = 'admin' AND is_active = TRUE`,
+      [tenantId]
+    );
+    await Promise.all(rows.map(a => sendAccountUpdateEmail({ to: a.email, subject, heading, message })));
+  } catch (err) {
+    logger.warn({ err: err.message, tenantId }, 'tenant_admin_notify_failed');
+  }
+}
 
 // ─── Idempotent migrations ────────────────────────────────────────────────────
 (async () => {
@@ -79,6 +94,15 @@ router.use(requireSuperAdmin);
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS platform_settings (
+        id               INT PRIMARY KEY DEFAULT 1,
+        smtp_config_json JSONB NOT NULL DEFAULT '{}',
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT platform_settings_singleton CHECK (id = 1)
+      )
+    `);
+    await pool.query(`INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
     logger.info('super_admin_migrations_ok');
   } catch (err) {
     logger.warn({ err }, 'super_admin_migration_warning');
@@ -134,6 +158,17 @@ router.patch('/tenants/:id/status', async (req, res, next) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
     logger.info({ tenantId: req.params.id, account_status, by: req.agent.id }, 'tenant_status_changed');
+
+    const suspended = account_status === 'suspended';
+    notifyTenantAdmins(
+      req.params.id,
+      `Your OmniCore account has been ${suspended ? 'suspended' : 'reactivated'}`,
+      `Account ${suspended ? 'suspended' : 'reactivated'}`,
+      suspended
+        ? 'Your OmniCore workspace has been suspended. Please contact support if you believe this is an error.'
+        : 'Good news — your OmniCore workspace has been reactivated and is available again.'
+    );
+
     return res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -157,6 +192,16 @@ router.patch('/tenants/:id/billing', async (req, res, next) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
     logger.info({ tenantId: req.params.id, fields, by: req.agent.id }, 'tenant_billing_updated');
+
+    if (fields.includes('plan') && req.body.plan) {
+      notifyTenantAdmins(
+        req.params.id,
+        'Your OmniCore plan has changed',
+        'Plan updated',
+        `Your workspace plan is now "${req.body.plan}". This change is effective immediately.`
+      );
+    }
+
     return res.json(rows[0]);
   } catch (err) { next(err); }
 });
@@ -252,6 +297,66 @@ router.delete('/super-admins/:id', async (req, res, next) => {
     logger.info({ id: req.params.id, by: req.agent.email }, 'super_admin_removed');
     return res.status(204).end();
   } catch (err) { next(err); }
+});
+
+// ─── GET /api/super-admin/platform-smtp ──────────────────────────────────────
+// Returns the platform SMTP config with the password masked.
+router.get('/platform-smtp', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT smtp_config_json FROM platform_settings WHERE id = 1`);
+    const cfg = rows[0]?.smtp_config_json || {};
+    const { pass, ...safe } = cfg;
+    return res.json({ ...safe, pass_set: Boolean(pass) });
+  } catch (err) { next(err); }
+});
+
+// ─── PUT /api/super-admin/platform-smtp ──────────────────────────────────────
+// Upsert the single-row platform SMTP config. A blank password preserves the
+// stored one (so the UI never needs to re-enter it). Never returns the password.
+router.put('/platform-smtp', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const { rows } = await pool.query(`SELECT smtp_config_json FROM platform_settings WHERE id = 1`);
+    const existing = rows[0]?.smtp_config_json || {};
+
+    const cfg = {
+      host:       String(body.host ?? existing.host ?? '').trim(),
+      port:       parseInt(body.port ?? existing.port ?? 587, 10) || 587,
+      secure:     body.secure !== undefined ? Boolean(body.secure) : Boolean(existing.secure),
+      user:       String(body.user ?? existing.user ?? '').trim(),
+      from_email: String(body.from_email ?? existing.from_email ?? '').trim(),
+      enabled:    body.enabled !== undefined ? Boolean(body.enabled) : Boolean(existing.enabled),
+      pass:       (body.pass && String(body.pass).length) ? String(body.pass) : (existing.pass || ''),
+    };
+
+    await pool.query(
+      `INSERT INTO platform_settings (id, smtp_config_json, updated_at)
+       VALUES (1, $1, NOW())
+       ON CONFLICT (id) DO UPDATE SET smtp_config_json = $1, updated_at = NOW()`,
+      [JSON.stringify(cfg)]
+    );
+    logger.info({ by: req.agent.email }, 'platform_smtp_updated');
+    const { pass, ...safe } = cfg;
+    return res.json({ ...safe, pass_set: Boolean(pass) });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /api/super-admin/platform-smtp/test ────────────────────────────────
+router.post('/platform-smtp/test', async (req, res) => {
+  try {
+    const result = await sendPlatformSmtpTestEmail(req.body?.to);
+    return res.json({ ok: true, to: result.to, message: `Test email sent to ${result.to}` });
+  } catch (err) {
+    const status = err.status || 500;
+    const message = err.responseCode
+      ? `SMTP error ${err.responseCode}: ${err.response}`
+      : (err.code === 'EAUTH' ? 'Authentication failed — check your username and password'
+        : err.code === 'ECONNREFUSED' ? 'Connection refused — check host and port'
+        : err.code === 'ETIMEDOUT' ? 'Connection timed out — check host and port'
+        : err.message || 'Unknown SMTP error');
+    logger.warn({ err: err.message, by: req.agent.email }, 'platform_smtp_test_failed');
+    return res.status(status).json({ ok: false, message });
+  }
 });
 
 // ─── DELETE /api/super-admin/tenants/:id/purge ───────────────────────────────

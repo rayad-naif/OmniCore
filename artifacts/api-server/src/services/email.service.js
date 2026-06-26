@@ -286,38 +286,167 @@ async function sendSmtpTestEmail(tenantId) {
   return { ok: true, to };
 }
 
+// ---------------------------------------------------------------------------
+// Platform (super-admin) SMTP — powers system/transactional emails
+// (password reset, agent invite, account/plan notifications). This is owned
+// by the super admin and is independent of any per-tenant SMTP config.
+// ---------------------------------------------------------------------------
+
 /**
- * Send a password reset link to an agent.
+ * Read the single-row platform SMTP config.
+ * Returns the config object only when usable (enabled + host + pass + a
+ * username or from_email), otherwise null. Tolerates a missing table so the
+ * app degrades gracefully before the migration has run.
+ */
+async function getPlatformSmtpConfig() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT smtp_config_json FROM platform_settings WHERE id = 1`
+    );
+    if (!rows.length) return null;
+    const cfg = rows[0].smtp_config_json;
+    if (!cfg || !cfg.enabled || !cfg.host || !cfg.pass || (!cfg.user && !cfg.from_email)) return null;
+    return cfg;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'platform_smtp_config_load_failed');
+    return null;
+  }
+}
+
+/**
+ * Send a system/transactional email via platform SMTP.
+ * Non-throwing — returns true if sent, false if skipped (no platform SMTP
+ * configured) or if sending failed. Safe for fire-and-forget notifications.
+ */
+async function sendSystemEmail({ to, subject, title, preview, bodyHtml, footer }) {
+  if (!to) return false;
+  const cfg = await getPlatformSmtpConfig();
+  if (!cfg) {
+    logger.info({ to, subject }, 'system_email_no_platform_smtp_skipped');
+    return false;
+  }
+  const html = brandedEmail({ title: title || subject, preview, bodyHtml: bodyHtml || '', footer });
+  try {
+    await buildTransporter(cfg).sendMail({ from: fromAddress(cfg), to, subject, html });
+    logger.info({ to, subject }, 'system_email_sent');
+    return true;
+  } catch (err) {
+    logger.warn({ err: err.message, to, subject }, 'system_email_failed');
+    return false;
+  }
+}
+
+/**
+ * Verify platform SMTP and send a test email.
+ * Throws (with descriptive message) on error — used by the test endpoint.
+ */
+async function sendPlatformSmtpTestEmail(toOverride) {
+  const cfg = await getPlatformSmtpConfig();
+  if (!cfg) throw Object.assign(new Error('Platform SMTP not configured or not enabled'), { status: 400 });
+
+  const transporter = buildTransporter(cfg);
+  await transporter.verify();
+
+  const to = toOverride || fromAddress(cfg);
+  await transporter.sendMail({
+    from:    fromAddress(cfg),
+    to,
+    subject: 'OmniCore Platform SMTP Test — connection verified',
+    html:    brandedEmail({
+      title:    'Platform SMTP connection test',
+      preview:  'Your platform email configuration is working correctly.',
+      bodyHtml: `<p style="font-size:13px;color:#64748b;">
+        This confirms OmniCore can send system emails — password resets, account invites,
+        and plan/account notifications — from <strong>${fromAddress(cfg)}</strong>.
+      </p>`,
+      footer: 'Sent from OmniCore platform SMTP test.',
+    }),
+  });
+
+  logger.info({ to }, 'platform_smtp_test_email_sent');
+  return { ok: true, to };
+}
+
+/**
+ * Send a welcome/invite email with a link for the new agent to set their own
+ * password. Uses platform SMTP. Returns true if sent, false otherwise.
+ */
+async function sendAgentInviteEmail({ to, name, inviteLink, companyName }) {
+  const bodyHtml = `<p style="font-size:14px;color:#475569;margin:0 0 16px;">
+      You've been invited to join ${companyName ? `<strong>${companyName}</strong> on ` : ''}OmniCore.
+      Set your password to activate your account and get started.
+    </p>
+    <p style="margin:0 0 20px;">
+      <a href="${inviteLink}" style="display:inline-block;padding:10px 20px;background:#0284c7;color:#fff;font-size:14px;font-weight:600;text-decoration:none;border-radius:8px;">
+        Set Your Password
+      </a>
+    </p>
+    <p style="font-size:12px;color:#94a3b8;">This invite link expires in 7 days.</p>`;
+  return sendSystemEmail({
+    to,
+    subject: "You've been invited to OmniCore",
+    title:   `Welcome${name ? `, ${name}` : ''}`,
+    preview: 'Set your password to get started.',
+    bodyHtml,
+    footer:  'You received this because an administrator invited you to OmniCore.',
+  });
+}
+
+/**
+ * Notify a tenant admin about an account or plan change. Uses platform SMTP.
+ */
+async function sendAccountUpdateEmail({ to, subject, heading, message }) {
+  return sendSystemEmail({
+    to,
+    subject,
+    title:    heading,
+    preview:  message,
+    bodyHtml: `<p style="font-size:13px;color:#64748b;">${message}</p>`,
+    footer:   'You received this because you administer an OmniCore workspace.',
+  });
+}
+
+/**
+ * Send a password reset link. Prefers platform SMTP (works for any tenant,
+ * including brand-new ones), falling back to the tenant's own SMTP config.
+ * Returns true if an email was sent, false otherwise.
  */
 async function sendPasswordResetEmail(tenantId, agentEmail, agentName, resetLink) {
-  let cfg;
-  try { cfg = await getTenantSmtpConfig(tenantId); } catch { cfg = null; }
-
-  if (!cfg) {
-    logger.info({ tenantId, agentEmail }, 'password_reset_no_smtp_skipped');
-    return;
-  }
-
-  const html = brandedEmail({
-    title:    'Reset your password',
-    preview:  `Hi ${agentName}, we received a request to reset your OmniCore password.`,
-    bodyHtml: `<p style="margin:0 0 20px;">
+  const preview  = `Hi ${agentName}, we received a request to reset your OmniCore password.`;
+  const bodyHtml = `<p style="margin:0 0 20px;">
       <a href="${resetLink}" style="display:inline-block;padding:10px 20px;background:#0284c7;color:#fff;font-size:14px;font-weight:600;text-decoration:none;border-radius:8px;">
         Reset Password
       </a>
     </p>
-    <p style="font-size:12px;color:#94a3b8;">This link expires in 1 hour. If you didn't request this, ignore this email.</p>`,
-    footer: 'You received this because a password reset was requested for your OmniCore account.',
-  });
+    <p style="font-size:12px;color:#94a3b8;">This link expires in 1 hour. If you didn't request this, ignore this email.</p>`;
+  const footer   = 'You received this because a password reset was requested for your OmniCore account.';
 
+  // 1. Try platform SMTP first.
+  const sentViaPlatform = await sendSystemEmail({
+    to: agentEmail, subject: 'OmniCore: Reset your password',
+    title: 'Reset your password', preview, bodyHtml, footer,
+  });
+  if (sentViaPlatform) return true;
+
+  // 2. Fall back to the tenant's own SMTP config.
+  let cfg;
+  try { cfg = await getTenantSmtpConfig(tenantId); } catch { cfg = null; }
+  if (!cfg) {
+    logger.info({ tenantId, agentEmail }, 'password_reset_no_smtp_skipped');
+    return false;
+  }
+
+  const html = brandedEmail({ title: 'Reset your password', preview, bodyHtml, footer });
   try {
     await buildTransporter(cfg).sendMail({
       from: fromAddress(cfg), to: agentEmail,
       subject: 'OmniCore: Reset your password', html,
     });
     logger.info({ tenantId, agentEmail }, 'password_reset_email_sent');
+    return true;
   } catch (err) {
     logger.warn({ err, tenantId, agentEmail }, 'password_reset_email_failed');
+    return false;
   }
 }
 
@@ -328,4 +457,9 @@ module.exports = {
   sendPasswordResetEmail,
   sendTicketCreatedEmail,
   sendSmtpTestEmail,
+  getPlatformSmtpConfig,
+  sendSystemEmail,
+  sendPlatformSmtpTestEmail,
+  sendAgentInviteEmail,
+  sendAccountUpdateEmail,
 };
