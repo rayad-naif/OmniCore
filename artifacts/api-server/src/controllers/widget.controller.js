@@ -133,7 +133,7 @@ router.post('/session', async (req, res, next) => {
           } catch { /* non-fatal */ }
         }
 
-        // Recent public messages
+        // Recent public messages (exclude internal notes and system messages)
         const { rows: messages } = await pool.query(
           `SELECT m.id, m.conversation_id, m.sender_type, m.message_body, m.attachments_json,
                   m.is_internal_note, m.created_at,
@@ -142,6 +142,7 @@ router.post('/session', async (req, res, next) => {
            LEFT JOIN agents   a   ON (m.sender_type IN ('agent','bot') AND a.id   = m.sender_id)
            LEFT JOIN visitors vis ON (m.sender_type = 'visitor'        AND vis.id = m.sender_id)
            WHERE m.conversation_id = $1 AND m.is_internal_note = FALSE
+             AND m.sender_type != 'system'
            ORDER BY m.created_at ASC LIMIT 60`,
           [convId]
         );
@@ -342,6 +343,7 @@ router.get('/messages', async (req, res, next) => {
        LEFT JOIN agents   a   ON (m.sender_type IN ('agent','bot') AND a.id   = m.sender_id)
        LEFT JOIN visitors vis ON (m.sender_type = 'visitor'        AND vis.id = m.sender_id)
        WHERE m.conversation_id = $1 AND m.is_internal_note = FALSE
+         AND m.sender_type != 'system'
          ${after ? 'AND m.created_at > $2' : ''}
        ORDER BY m.created_at ASC LIMIT 40`,
       params
@@ -529,6 +531,7 @@ function openLightbox(src){
 
 function appendMsg(msg,scroll){
   if(msg.is_internal_note)return;
+  if(msg.sender_type==='system')return;
   var box=qs('#omni-msgs');
   if(!box)return;
   var isAgent=msg.sender_type==='agent'||msg.sender_type==='bot';
@@ -1000,10 +1003,12 @@ function initSio(){
       sk.emit('join:conversation',{conversationId:state.conversationId});
       while(msgQueue.length>0)sk.emit('client:send_message',{conversationId:state.conversationId,body:msgQueue.shift()});
       emitPage();
+      emitPageView();
     });
     sk.on('disconnect',function(){state.connected=false;});
     sk.on('server:new_message',function(msg){
       if(msg.is_internal_note)return;
+      if(msg.sender_type==='system')return;
       if(msg.id&&state.messages.some(function(m){return m.id===msg.id;}))return;
       if(msg.sender_type==='visitor'&&pendingMessages.has(msg.message_body)){
         pendingMessages.delete(msg.message_body);
@@ -1041,8 +1046,29 @@ function emitTyping(){
       state.socket.emit('visitor:is_typing',{conversationId:state.conversationId,isTyping:false});
   },2000);
 }
+function emitPageView(){
+  if(!state.socket||!state.connected||!state.conversationId)return;
+  var path=w.location.pathname+(w.location.search||'')+(w.location.hash||'');
+  state.socket.emit('client:page_view',{conversationId:state.conversationId,url:w.location.href,path:path});
+}
 var _lastHref=w.location.href;
-setInterval(function(){if(w.location.href!==_lastHref){_lastHref=w.location.href;emitPage();}},1500);
+var _pvTimer=null;
+function onUrlChange(){
+  var href=w.location.href;
+  if(href===_lastHref)return;
+  _lastHref=href;
+  emitPage();
+  clearTimeout(_pvTimer);
+  _pvTimer=setTimeout(emitPageView,300);
+}
+(function(){
+  var origPush=w.history.pushState.bind(w.history);
+  var origReplace=w.history.replaceState.bind(w.history);
+  w.history.pushState=function(){origPush.apply(this,arguments);onUrlChange();};
+  w.history.replaceState=function(){origReplace.apply(this,arguments);onUrlChange();};
+})();
+w.addEventListener('popstate',onUrlChange);
+w.addEventListener('hashchange',onUrlChange);
 
 function uploadFile(pf,cb){
   var comma=pf.dataUrl.indexOf(',');

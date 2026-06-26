@@ -410,6 +410,39 @@ function attachSocketServer(httpServer) {
       });
     });
 
+    // ── client:page_view ────────────────────────────────────────────────────
+    // Emitted by the widget on each URL change (debounced 300 ms) and on init.
+    // Inserts a system message into the conversation timeline so agents see a
+    // timestamped trail of pages the visitor visited.
+    socket.on('client:page_view', async ({ conversationId, path }) => {
+      if (actorType !== 'visitor') return;
+      if (!conversationId || !path) return;
+      try {
+        const conv = await resolveConversation(conversationId, tenantId);
+        if (!conv) return;
+
+        const content = `Visited: ${path}`;
+        const { rows } = await pool.query(
+          `INSERT INTO messages
+             (conversation_id, sender_type, message_body, is_internal_note, attachments_json)
+           VALUES ($1, 'system', $2, false, '[]')
+           RETURNING id, conversation_id, sender_type, message_body, is_internal_note,
+                     attachments_json, created_at`,
+          [conversationId, content]
+        );
+        const msg = { ...rows[0], sender_name: 'System' };
+
+        // Broadcast only to agents watching this conversation (not back to visitor)
+        socket.to(`conv:${conversationId}`).emit('server:new_message', msg);
+
+        // Update visitor last_seen_at
+        await pool.query(
+          `UPDATE visitors SET last_seen_at = NOW() WHERE id = $1`,
+          [socket.data.visitorId]
+        );
+      } catch { /* non-fatal */ }
+    });
+
     // ── client:telemetry_update ─────────────────────────────────────────────
     socket.on('client:telemetry_update', async ({ conversationId, event, meta }) => {
       try {

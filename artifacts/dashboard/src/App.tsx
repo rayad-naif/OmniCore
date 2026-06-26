@@ -26,7 +26,7 @@ type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resol
 type Channel     = 'email' | 'widget' | 'api'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp'
+type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp' | 'contacts'
 type StatusFilter = 'all' | Status
 type AuthView    = 'login' | 'signup' | 'forgot' | 'reset'
 
@@ -93,6 +93,18 @@ interface CsatAgent {
   five_star: number; four_star: number; three_star: number; two_star: number; one_star: number
   rated_count: number; avg_first_response_minutes: number | null
   closed_today: number; participated_today: number
+}
+
+interface Contact {
+  id: string; display_name: string; email: string | null
+  brand_name: string; brand_id: string; location_city: string | null
+  last_seen_at: string; created_at: string; conversation_count: number
+}
+
+interface ContactConversation {
+  id: string; status: string; channel: string; subject: string | null
+  priority: string; created_at: string; updated_at: string
+  csat_score: number | null; brand_name: string; agent_name: string | null
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
@@ -331,6 +343,17 @@ function useApi() {
       const r = await authFetch(`${API}/conversations/csat${qs}`)
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<CsatAgent[]>
+    },
+    listContacts: async (params?: Record<string, string>): Promise<{ contacts: Contact[]; pagination: { page: number; limit: number; total: number; pages: number } }> => {
+      const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+      const r = await authFetch(`${API}/contacts${qs}`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<{ contacts: Contact[]; pagination: { page: number; limit: number; total: number; pages: number } }>
+    },
+    getContactConversations: async (visitorId: string): Promise<ContactConversation[]> => {
+      const r = await authFetch(`${API}/contacts/${visitorId}/conversations`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<ContactConversation[]>
     },
   }), [authFetch, agent?.tenantId])()
 }
@@ -759,11 +782,17 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
   const isSystem  = msg.sender_type === 'system'
   const isInternal = msg.is_internal_note
 
-  if (isSystem) return (
-    <div className="flex justify-center">
-      <span className="text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{msg.message_body}</span>
-    </div>
-  )
+  if (isSystem) {
+    const isPageView = msg.message_body.startsWith('Visited:')
+    return (
+      <div className="flex justify-center my-1">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full italic">
+          {isPageView && <Link2 size={9} className="shrink-0 text-slate-400" />}
+          {msg.message_body}
+        </span>
+      </div>
+    )
+  }
 
   const handleSave = async () => {
     if (!editDraft.trim() || !onEdit) return
@@ -2943,6 +2972,234 @@ function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPa
   )
 }
 
+// ─── Contacts Section ─────────────────────────────────────────────────────────
+function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: React.MutableRefObject<Socket | null> }) {
+  const api = useApi()
+  const [contacts, setContacts]         = useState<Contact[]>([])
+  const [total, setTotal]               = useState(0)
+  const [pages, setPages]               = useState(1)
+  const [page, setPage]                 = useState(1)
+  const [search, setSearch]             = useState('')
+  const [brandFilter, setBrandFilter]   = useState('')
+  const [loading, setLoading]           = useState(true)
+  const [selected, setSelected]         = useState<Contact | null>(null)
+  const [convHistory, setConvHistory]   = useState<ContactConversation[]>([])
+  const [panelLoading, setPanelLoading] = useState(false)
+  const LIMIT = 25
+
+  const load = useCallback(async (p = 1) => {
+    setLoading(true)
+    try {
+      const params: Record<string, string> = { page: String(p), limit: String(LIMIT) }
+      if (search) params.search = search
+      if (brandFilter) params.brand_id = brandFilter
+      const data = await api.listContacts(params)
+      setContacts(data.contacts)
+      setTotal(data.pagination.total)
+      setPages(data.pagination.pages)
+      setPage(p)
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [api, search, brandFilter]) // eslint-disable-line
+
+  useEffect(() => { load(1) }, [search, brandFilter]) // eslint-disable-line
+
+  useEffect(() => {
+    const socket = socketRef.current
+    if (!socket) return
+    const handler = () => load(page)
+    socket.on('conversation:created', handler)
+    return () => { socket.off('conversation:created', handler) }
+  }, [socketRef, page, load])
+
+  const openPanel = async (c: Contact) => {
+    setSelected(c)
+    setConvHistory([])
+    setPanelLoading(true)
+    try {
+      const rows = await api.getContactConversations(c.id)
+      setConvHistory(rows)
+    } catch { /* ignore */ }
+    finally { setPanelLoading(false) }
+  }
+
+  const statusColor: Record<string, string> = {
+    open: 'bg-sky-100 text-sky-700', closed: 'bg-slate-100 text-slate-500',
+    pending: 'bg-amber-50 text-amber-700', ai_handling: 'bg-violet-100 text-violet-700',
+    resolved: 'bg-emerald-50 text-emerald-700', in_progress: 'bg-indigo-50 text-indigo-700',
+    waiting_on_customer: 'bg-orange-50 text-orange-700', submitted: 'bg-blue-50 text-blue-700',
+  }
+
+  return (
+    <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 bg-white shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h1 className="text-lg font-semibold text-slate-800">Contacts</h1>
+              <p className="text-xs text-slate-500 mt-0.5">{total} visitor{total !== 1 ? 's' : ''} across all brands</p>
+            </div>
+            <button onClick={() => load(page)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-medium transition-colors">
+              <RefreshCw size={12} /> Refresh
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text" placeholder="Search by name or email…"
+                value={search} onChange={e => setSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400"
+              />
+            </div>
+            <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)}
+              className="px-2 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400">
+              <option value="">All Brands</option>
+              {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-32 text-slate-400 text-sm">
+              <RefreshCw size={14} className="animate-spin mr-2" /> Loading contacts…
+            </div>
+          ) : contacts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+              <Users size={28} className="mb-2 opacity-40" />
+              <p className="text-sm">{search || brandFilter ? 'No contacts match your filters.' : 'No contacts yet.'}</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm border-collapse">
+              <thead className="sticky top-0 bg-slate-50 z-10">
+                <tr className="border-b border-slate-200">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Email</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Brand</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Location</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Last Seen</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Conversations</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contacts.map(c => (
+                  <tr key={c.id}
+                    onClick={() => openPanel(c)}
+                    className={`border-b border-slate-100 cursor-pointer transition-colors hover:bg-sky-50/60 ${selected?.id === c.id ? 'bg-sky-50 border-l-2 border-l-sky-500' : ''}`}>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-[11px] font-bold shrink-0">
+                          {c.display_name[0]?.toUpperCase() || '?'}
+                        </div>
+                        <span className="text-slate-800 font-medium text-xs truncate max-w-[140px]">{c.display_name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500 truncate max-w-[160px]">{c.email || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{c.brand_name}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{c.location_city || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-400">{timeAgo(c.last_seen_at)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[11px] font-medium">
+                        <MessageCircle size={10} /> {c.conversation_count}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {pages > 1 && (
+          <div className="px-6 py-3 border-t border-slate-200 bg-white flex items-center justify-between shrink-0">
+            <span className="text-xs text-slate-500">Page {page} of {pages} ({total} total)</span>
+            <div className="flex gap-1.5">
+              <button disabled={page <= 1} onClick={() => load(page - 1)}
+                className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                ← Prev
+              </button>
+              <button disabled={page >= pages} onClick={() => load(page + 1)}
+                className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div className="w-80 border-l border-slate-200 bg-white flex flex-col shrink-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-200 flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 mb-0.5">
+                <div className="w-8 h-8 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-[12px] font-bold shrink-0">
+                  {selected.display_name[0]?.toUpperCase() || '?'}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{selected.display_name}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{selected.email || 'No email'}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                  <Building size={9} /> {selected.brand_name}
+                </span>
+                {selected.location_city && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                    <Globe size={9} /> {selected.location_city}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                  <Clock size={9} /> {timeAgo(selected.last_seen_at)}
+                </span>
+              </div>
+            </div>
+            <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-600 transition-colors shrink-0 mt-0.5">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Conversation History</span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {panelLoading ? (
+              <div className="flex items-center justify-center h-20 text-slate-400 text-xs">
+                <RefreshCw size={12} className="animate-spin mr-1.5" /> Loading…
+              </div>
+            ) : convHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-24 text-slate-400">
+                <MessageSquare size={20} className="mb-1.5 opacity-40" />
+                <p className="text-xs">No conversations yet.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {convHistory.map(conv => (
+                  <div key={conv.id} className="px-4 py-3 hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor[conv.status] ?? 'bg-slate-100 text-slate-500'}`}>
+                        {conv.status.replace(/_/g, ' ')}
+                      </span>
+                      <span className="text-[10px] text-slate-400">{timeAgo(conv.created_at)}</span>
+                    </div>
+                    <p className="text-xs text-slate-700 truncate mb-0.5">{conv.subject || '(No subject)'}</p>
+                    <div className="flex items-center gap-2">
+                      {conv.agent_name && <span className="text-[10px] text-slate-400 truncate">{conv.agent_name}</span>}
+                      {conv.csat_score && <StarRating score={conv.csat_score} />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout }: {
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
@@ -2966,6 +3223,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
   const items: { key: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
+    { key: 'contacts',      icon: <Users size={16} />,         label: 'Contacts' },
     { key: 'csat',          icon: <BarChart2 size={16} />,     label: 'CSAT', adminOnly: true },
     { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', adminOnly: true },
     { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', adminOnly: true },
@@ -3361,6 +3619,7 @@ function Dashboard() {
           {section === 'tickets' && (
             <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} brands={brands} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
           )}
+          {section === 'contacts'    && <ContactsSection brands={brands} socketRef={socketRef} />}
           {section === 'csat'        && <CsatSection brands={brands} />}
           {section === 'ai_training' && <AITrainingSection />}
           {section === 'smtp'        && <SMTPSection />}
