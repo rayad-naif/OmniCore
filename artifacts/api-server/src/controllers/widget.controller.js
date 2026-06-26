@@ -506,7 +506,7 @@ function stripHtml(html){
 
 function resolveUrl(url){
   if(!url)return '';
-  if(/^https?:\/\//.test(url))return url;
+  if(url.indexOf('://')!==-1)return url;
   return API_ORIGIN+url;
 }
 
@@ -558,7 +558,7 @@ function appendMsg(msg,scroll){
   atts.forEach(function(att){
     var fullUrl=resolveUrl(att.url||att.attachment_url||'');
     if(!fullUrl)return;
-    var isImg=(att.type&&att.type.startsWith('image/'))||/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(fullUrl);
+    var isImg=(att.type&&att.type.startsWith('image/'))||/\\.(png|jpe?g|gif|webp|svg)(\\?|$)/i.test(fullUrl);
     var aw=ce('div');aw.style.cssText='max-width:78%;margin-top:6px;';
     if(isImg){
       var thumb=ce('img');
@@ -1073,9 +1073,8 @@ function sendRest(msgBody,attachments,onDone){
   });
 }
 function resetAndRestart(){
-  try{if(state.conversationId)localStorage.setItem(CSAT_KEY,state.conversationId);}catch(e){}
   isSending=false;
-  showCsatSurvey(state.conversationId);
+  showClosedChip();
 }
 
 function send(){

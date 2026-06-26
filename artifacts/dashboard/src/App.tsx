@@ -1016,7 +1016,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
-  onStatusChange: (status: Status) => void
+  onStatusChange: (status: Status, triggerCsat?: boolean) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
@@ -1078,6 +1078,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
 
   const nextStatus: Partial<Record<Status, Status>> = { open: 'closed', pending: 'open', ai_handling: 'open', closed: 'open', submitted: 'in_progress', in_progress: 'resolved', waiting_on_customer: 'in_progress', resolved: 'closed' }
   const statusActionLabel: Partial<Record<Status, string>> = { open: 'Close', pending: 'Reopen', ai_handling: 'Take over', closed: 'Reopen', submitted: 'Start', in_progress: 'Resolve', waiting_on_customer: 'Resume', resolved: 'Close' }
+  const [csatDialog, setCsatDialog] = useState(false)
 
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full bg-slate-50">
@@ -1115,7 +1116,32 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           {!conv.is_ticket && nextStatus[conv.status] && (
-            <button onClick={() => onStatusChange(nextStatus[conv.status]!)} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all">{statusActionLabel[conv.status]}</button>
+            <button
+              onClick={() => {
+                const next = nextStatus[conv.status]!
+                if (next === 'closed') { setCsatDialog(true) } else { onStatusChange(next) }
+              }}
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-all"
+            >{statusActionLabel[conv.status]}</button>
+          )}
+          {csatDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setCsatDialog(false)}>
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-xs w-full mx-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold text-slate-900 mb-1">Close conversation</h3>
+                <p className="text-xs text-slate-500 mb-5">Send a satisfaction survey to the visitor before closing?</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setCsatDialog(false); onStatusChange('closed', true) }}
+                    className="flex-1 py-2 text-xs font-semibold text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors"
+                  >Send Survey &amp; Close</button>
+                  <button
+                    onClick={() => { setCsatDialog(false); onStatusChange('closed', false) }}
+                    className="flex-1 py-2 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+                  >Just Close</button>
+                </div>
+                <button onClick={() => setCsatDialog(false)} className="mt-3 w-full text-xs text-slate-400 hover:text-slate-600 text-center">Cancel</button>
+              </div>
+            </div>
           )}
           <button onClick={handleExport} disabled={exporting} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-all">{exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}PDF</button>
           <div ref={menuRef} className="relative">
@@ -2322,7 +2348,7 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
   typingInfo: Record<string, string>
   onSelect: (id: string) => void
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
-  onStatusChange: (status: Status) => void
+  onStatusChange: (status: Status, triggerCsat?: boolean) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
@@ -2724,9 +2750,11 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, updated_at: msg.created_at } : c))
   }, [activeId]) // eslint-disable-line
 
-  const handleStatusChange = useCallback(async (status: Status) => {
+  const handleStatusChange = useCallback(async (status: Status, triggerCsat?: boolean) => {
     if (!activeId) return
-    await api.patchConversation(activeId, { status })
+    const patch: Record<string, unknown> = { status }
+    if (triggerCsat !== undefined) patch.trigger_csat = triggerCsat
+    await api.patchConversation(activeId, patch)
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, status } : c))
   }, [activeId]) // eslint-disable-line
 
