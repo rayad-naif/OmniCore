@@ -782,6 +782,18 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
   )
 }
 
+// ─── URL allow-list sanitizer ─────────────────────────────────────────────────
+// Only allow http: and https: URLs. Any other scheme (javascript:, data:, etc.)
+// returns null so the caller can fall back to plain text.
+function safeHref(raw: string): string | null {
+  try {
+    const { protocol } = new URL(raw)
+    return protocol === 'http:' || protocol === 'https:' ? raw : null
+  } catch {
+    return null
+  }
+}
+
 // ─── Message Bubble ───────────────────────────────────────────────────────────
 function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, readAt }: {
   msg: Message; visitorName: string
@@ -802,12 +814,26 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
 
   if (isSystem) {
     const isPageView = msg.message_body.startsWith('Visited:')
+    const rawUrl = isPageView ? msg.message_body.replace(/^Visited:\s*/, '').trim() : null
+    const pageUrl = rawUrl ? safeHref(rawUrl) : null
     return (
       <div className="flex justify-center my-1">
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full italic">
-          {isPageView && <Link2 size={9} className="shrink-0 text-slate-400" />}
-          {msg.message_body}
-        </span>
+        {pageUrl ? (
+          <a
+            href={pageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 hover:bg-slate-200 hover:text-sky-600 px-3 py-1 rounded-full italic transition-colors"
+          >
+            <Link2 size={9} className="shrink-0" />
+            {msg.message_body}
+          </a>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full italic">
+            {isPageView && <Link2 size={9} className="shrink-0 text-slate-400" />}
+            {msg.message_body}
+          </span>
+        )}
       </div>
     )
   }
@@ -924,7 +950,16 @@ function PageJourneyGroup({ msgs }: { msgs: Message[] }) {
             {entries.map((e, i) => (
               <div key={i} className="flex items-start gap-2 text-[10px]">
                 <span className="text-slate-400 shrink-0 tabular-nums">{i + 1}.</span>
-                <span className="text-slate-700 break-all flex-1 font-mono">{e.url}</span>
+                {safeHref(e.url) ? (
+                  <a
+                    href={safeHref(e.url)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sky-600 hover:text-sky-800 hover:underline break-all flex-1 font-mono"
+                  >{e.url}</a>
+                ) : (
+                  <span className="text-slate-700 break-all flex-1 font-mono">{e.url}</span>
+                )}
                 <span className="text-slate-400 shrink-0 whitespace-nowrap">
                   {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
