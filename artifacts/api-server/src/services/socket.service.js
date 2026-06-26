@@ -187,8 +187,8 @@ function attachSocketServer(httpServer) {
       origin: true,   // reflect request origin — required for credentials with socket.io
       credentials: true,
     },
-    pingTimeout:  20_000,
-    pingInterval: 10_000,
+    pingTimeout:  8_000,
+    pingInterval: 5_000,
   });
 
   _io = io;
@@ -460,7 +460,12 @@ function attachSocketServer(httpServer) {
       if (actorType === 'visitor') {
         const convId = socket.data.activeConversation;
         if (convId) {
-          socket.to(`conv:${convId}`).emit('visitor:offline', { conversationId: convId });
+          // Notify agents in conv room + all agents in tenant room so the
+          // "online" badge clears even if the agent hasn't opened this conv.
+          io.to(`conv:${convId}`).emit('visitor:offline', { conversationId: convId });
+          if (tenantId) {
+            io.to(`tenant:${tenantId}`).emit('visitor:offline', { conversationId: convId });
+          }
         }
       }
     });

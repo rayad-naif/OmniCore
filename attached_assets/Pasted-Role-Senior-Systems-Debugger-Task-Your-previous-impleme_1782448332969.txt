@@ -1,0 +1,41 @@
+Role: Senior Systems Debugger.
+
+Task: Your previous implementation completely failed. The widget does not sync without a reload, CSAT is missing, read receipts are broken, and ghost connections remain when the page is closed. Stop summarizing. Overwrite the code with these exact hardcoded fixes immediately.
+
+Fix 1: The CSAT Blocker (LocalStorage)
+
+In omnicore-widget.js: When a conversation is closed (either via a 409 REST response or socket event), execute localStorage.setItem('omni_csat_pending', currentConvId).
+
+Modify startSession(): Before it even attempts to create a new chat, it MUST check localStorage.getItem('omni_csat_pending'). If that exists, it must instantly render the CSAT survey HTML, hide the chat input, and return; (blocking any new conversation).
+
+Once the survey is submitted via REST, localStorage.removeItem('omni_csat_pending') and THEN call startSession() to open a fresh chat.
+
+Fix 2: Hardwired Message Polling (The Reload Fix)
+
+The socket connection is silently failing.
+
+In omnicore-widget.js: Inside startSession(), write a setInterval that fires every 3000ms. It must call a GET /api/widget/messages?conv_id={id} endpoint.
+
+Take the response and inject any new messages into the DOM using .innerHTML.
+
+This interval must be tied to a window.omniPoll variable so it can be cleared when the widget is closed.
+
+Fix 3: Kill Ghost Connections (Disconnect Event)
+
+In socket.service.js (Backend): The server is not registering when the visitor closes the tab.
+
+Inside the io.on('connection') block, you MUST add a strict socket.on('disconnect') handler.
+
+When the visitor disconnects, explicitly emit visitor:offline to the specific tenantId room so the React dashboard instantly removes the "real time connected" marker.
+
+Fix 4: Read Receipts (Focus Event)
+
+In omnicore-widget.js: Add an event listener to the chat <textarea> for the focus event.
+
+When the visitor clicks the input, immediately fire a REST PATCH /api/widget/conversations/{id}/read to mark messages as read.
+
+The backend controller for this route MUST emit visitor:read_receipt to the agent's room to update the checkmarks in the dashboard UI.
+
+Rules:
+
+Do not tell me what you are going to do. Just output the completely rewritten omnicore-widget.js functions, the updated socket.service.js disconnect block, and the read receipt controller.

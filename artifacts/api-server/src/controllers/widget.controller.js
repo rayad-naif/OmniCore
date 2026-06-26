@@ -31,7 +31,7 @@ try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch(e) {}
 // ── CORS: allow any origin (widget is embedded on customer sites) ─────────────
 router.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(204).end();
   next();
@@ -299,6 +299,29 @@ router.get('/messages', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── PATCH /api/widget/conversations/:id/read ──────────────────────────────────
+// Called by the widget on textarea focus to mark messages as read.
+// Emits visitor:read_receipt to the conversation room so agents see the receipt.
+router.patch('/conversations/:id/read', async (req, res, next) => {
+  try {
+    const { sessionToken } = req.body || {};
+    const convId = req.params.id;
+    if (!sessionToken) return res.status(400).json({ error: 'sessionToken required' });
+    const { rows: vRows } = await pool.query(
+      'SELECT id FROM visitors WHERE session_token = $1', [sessionToken]
+    );
+    if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
+    const { rows: cRows } = await pool.query(
+      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2', [convId, vRows[0].id]
+    );
+    if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
+    const readAt = new Date().toISOString();
+    await pool.query('UPDATE conversations SET visitor_last_read_at = $1 WHERE id = $2', [readAt, convId]);
+    broadcastToConversation(convId, 'visitor:read_receipt', { conversationId: convId, readAt });
+    return res.json({ ok: true, readAt });
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/widget/widget.js ─────────────────────────────────────────────────
 const WIDGET_JS = `
 /* OmniCore Chat Widget — https://omnicore.chat */
@@ -317,6 +340,7 @@ var SK='omnicore_sid_'+BRAND_ID;
 var CK='omnicore_cid_'+BRAND_ID;
 var VNK='omnicore_vname_'+BRAND_ID;
 var VEK='omnicore_vemail_'+BRAND_ID;
+var CSAT_KEY='omni_csat_pending_'+BRAND_ID;
 
 var state={
   open:false,loaded:false,loading:false,
@@ -343,7 +367,7 @@ var _lastMsgTime=null;
 function startPolling(){
   if(_pollTimer)return;
   _pollTimer=setInterval(function(){
-    if(!state.sessionToken||!state.conversationId||!state.open)return;
+    if(!state.sessionToken||!state.conversationId)return;
     var url=API_BASE+'/widget/messages?tok='+encodeURIComponent(state.sessionToken)+'&cid='+encodeURIComponent(state.conversationId)+(_lastMsgTime?'&after='+encodeURIComponent(_lastMsgTime):'');
     fetch(url).then(function(r){return r.ok?r.json():[];}).then(function(msgs){
       if(!Array.isArray(msgs)||!msgs.length)return;
@@ -357,9 +381,17 @@ function startPolling(){
       var last=msgs[msgs.length-1];
       if(last&&last.created_at)_lastMsgTime=last.created_at;
     }).catch(function(){});
-  },5000);
+  },3000);
 }
 function stopPolling(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}}
+
+function markReadRest(){
+  if(!state.sessionToken||!state.conversationId)return;
+  fetch(API_BASE+'/widget/conversations/'+encodeURIComponent(state.conversationId)+'/read',{
+    method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sessionToken:state.sessionToken})
+  }).catch(function(){});
+}
 
 function ce(tag){return d.createElement(tag);}
 function qs(sel,el){return(el||d).querySelector(sel);}
@@ -438,6 +470,7 @@ function appendMsg(msg,scroll){
 
 function showCsatSurvey(convId){
   var targetConvId=convId||state.conversationId;
+  try{if(targetConvId)localStorage.setItem(CSAT_KEY,targetConvId);}catch(e){}
   if(!qs('#omni-msgs')){
     state.csatPending=true;state.csatConvId=targetConvId;return;
   }
@@ -511,10 +544,30 @@ function submitCsat(score,convId){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({conversationId:convId||state.conversationId,sessionToken:state.sessionToken,score:score})
   }).then(function(r){return r.json();}).then(function(){
+    try{localStorage.removeItem(CSAT_KEY);}catch(e){}
     if(fbk)fbk.textContent='Thank you for your feedback! \u2764\ufe0f';
+    var box=qs('#omni-msgs');
+    if(box){
+      var newBtn=ce('button');
+      newBtn.textContent='Start new chat';
+      newBtn.style.cssText='margin:14px auto 4px;display:block;padding:9px 22px;background:'+COLOR+';color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;';
+      newBtn.addEventListener('click',startFreshChat);
+      box.appendChild(newBtn);
+      box.scrollTop=box.scrollHeight;
+    }
   }).catch(function(){
+    try{localStorage.removeItem(CSAT_KEY);}catch(e){}
     if(fbk)fbk.textContent='Thank you for your feedback! \u2764\ufe0f';
   });
+}
+function startFreshChat(){
+  state.loaded=false;state.messages=[];state.csatShown=false;state.csatPending=false;state.csatConvId=null;
+  if(els.msgs){while(els.msgs.firstChild)els.msgs.removeChild(els.msgs.firstChild);}
+  if(els.inp){els.inp.disabled=false;els.inp.placeholder='Type a message\u2026';}
+  if(els.snd)els.snd.disabled=false;
+  stopPolling();_lastMsgTime=null;
+  if(state.socket){try{state.socket.disconnect();}catch(e){}state.socket=null;state.connected=false;}
+  startSession();
 }
 
 function buildDom(){
@@ -611,6 +664,7 @@ function buildDom(){
   fab.addEventListener('click',toggle);
   qs('#omni-close-btn').addEventListener('click',close);
   els.inp.addEventListener('input',function(){autoResize();emitTyping();});
+  els.inp.addEventListener('focus',function(){if(state.open&&state.conversationId){markRead();markReadRest();}});
   els.inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
   els.inp.addEventListener('paste',function(e){
     var items=e.clipboardData&&e.clipboardData.items;
@@ -730,6 +784,14 @@ function showChat(){
 }
 
 function startSession(){
+  var csatPendingId=null;
+  try{csatPendingId=localStorage.getItem(CSAT_KEY);}catch(e){}
+  if(csatPendingId){
+    state.loading=false;state.loaded=true;
+    showChat();
+    showCsatSurvey(csatPendingId);
+    return;
+  }
   if(state.loading)return;
   state.loading=true;
   showLoading();
@@ -798,7 +860,11 @@ function initSio(){
       appendMsg(msg,true);
       if(state.open){markRead();}else{setUnread(state.unread+1);}
     });
-    sk.on('conversation:closed',function(data){showCsatSurvey(data&&data.conversationId||state.conversationId);});
+    sk.on('conversation:closed',function(data){
+      var cid=data&&data.conversationId||state.conversationId;
+      try{if(cid)localStorage.setItem(CSAT_KEY,cid);}catch(e){}
+      showCsatSurvey(cid);
+    });
   };
   d.head.appendChild(s);
 }
@@ -849,12 +915,9 @@ function sendRest(msgBody,attachments,onDone){
   });
 }
 function resetAndRestart(){
-  state.loaded=false;state.messages=[];state.csatShown=false;state.csatPending=false;state.csatConvId=null;
-  if(els.msgs){while(els.msgs.firstChild)els.msgs.removeChild(els.msgs.firstChild);}
-  if(els.inp){els.inp.disabled=false;els.inp.placeholder='Type a message\u2026';}
-  if(els.snd)els.snd.disabled=false;
-  stopPolling();_lastMsgTime=null;
-  startSession();
+  try{if(state.conversationId)localStorage.setItem(CSAT_KEY,state.conversationId);}catch(e){}
+  isSending=false;
+  showCsatSurvey(state.conversationId);
 }
 
 function send(){
