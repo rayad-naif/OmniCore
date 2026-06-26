@@ -1,6 +1,7 @@
 'use strict';
 
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const R2_ENABLED = !!(
   process.env.R2_ACCESS_KEY_ID &&
@@ -62,4 +63,15 @@ async function streamFromR2(key, res) {
   }
 }
 
-module.exports = { R2_ENABLED, uploadToR2, streamFromR2 };
+/**
+ * Generate a short-lived presigned GET URL for an R2 object.
+ * @param {string} key
+ * @param {number} [expiresIn=3600]  seconds until expiry
+ * @returns {Promise<string>}
+ */
+async function getPresignedGetUrl(key, expiresIn = 3600) {
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  return await getSignedUrl(client(), command, { expiresIn });
+}
+
+module.exports = { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl };

@@ -21,7 +21,7 @@ const path                  = require('path');
 const { pool }              = require('../lib/db');
 const logger                = require('../utils/logger');
 const { broadcastToTenant, broadcastToConversation } = require('../services/socket.service');
-const { R2_ENABLED, uploadToR2, streamFromR2 } = require('../lib/r2');
+const { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl } = require('../lib/r2');
 
 const router = Router();
 
@@ -31,9 +31,11 @@ try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch(e) {}
 
 // ── CORS: allow any origin (widget is embedded on customer sites) ─────────────
 router.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Origin',   '*');
+  res.setHeader('Access-Control-Allow-Methods',  'GET, POST, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers',  'Content-Type');
+  // Override helmet's same-origin CORP — widget files are intentionally cross-origin
+  res.setHeader('Cross-Origin-Resource-Policy',  'cross-origin');
   if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
@@ -218,15 +220,17 @@ router.post('/upload', express.json({ limit: '20mb' }), async (req, res, next) =
 });
 
 // ── GET /api/widget/files/:name ───────────────────────────────────────────────
-// Serves files from R2 (if configured) or local disk fallback.
+// Serves files from R2 (presigned-URL redirect) or local disk fallback.
+// Using redirect avoids streaming issues and helmet CORP conflicts.
 router.get('/files/:name', async (req, res, next) => {
   try {
     const name     = path.basename(req.params.name);
     const filePath = path.join(UPLOADS_DIR, name);
     if (fs.existsSync(filePath)) return res.sendFile(filePath);
     if (R2_ENABLED) {
-      const served = await streamFromR2(name, res);
-      if (served) return;
+      // Redirect to a short-lived presigned URL — browser loads directly from R2
+      const signedUrl = await getPresignedGetUrl(name, 3600);
+      return res.redirect(302, signedUrl);
     }
     return res.status(404).json({ error: 'File not found' });
   } catch (err) { next(err); }
@@ -614,35 +618,76 @@ function showCsatSurvey(convId){
   box.appendChild(card);
   box.scrollTop=box.scrollHeight;
   if(state.open)setUnread(0);
+  var selectedScore=0;
   for(var i=1;i<=5;i++){
     (function(score){
       var btn=ce('button');
-      btn.style.cssText='background:none;border:none;font-size:28px;cursor:pointer;color:#e2e8f0;padding:0;line-height:1;transition:color .12s;';
+      btn.style.cssText='background:none;border:none;font-size:28px;cursor:pointer;color:#e2e8f0;padding:0;line-height:1;transition:color .15s;';
       btn.textContent='\u2605';
       btn.setAttribute('aria-label',score+' star'+(score>1?'s':''));
       btn.addEventListener('mouseenter',function(){
-        if(stars.dataset.picked)return;
+        if(stars.dataset.locked)return;
         var bs=stars.querySelectorAll('button');
         for(var j=0;j<bs.length;j++){bs[j].style.color=j<score?COLOR:'#e2e8f0';}
       });
       btn.addEventListener('mouseleave',function(){
-        if(stars.dataset.picked)return;
+        if(stars.dataset.locked)return;
         var bs=stars.querySelectorAll('button');
-        for(var j=0;j<bs.length;j++){bs[j].style.color='#e2e8f0';}
+        for(var j=0;j<bs.length;j++){bs[j].style.color=j<selectedScore?COLOR:'#e2e8f0';}
       });
       btn.addEventListener('click',function(){
-        if(stars.dataset.picked)return;
-        stars.dataset.picked='1';
+        if(stars.dataset.locked)return;
+        selectedScore=score;
         var bs=stars.querySelectorAll('button');
-        for(var j=0;j<bs.length;j++){
-          bs[j].style.color=j<score?COLOR:'#e2e8f0';
-          bs[j].disabled=true;bs[j].style.cursor='default';
-        }
-        submitCsat(score,targetConvId);
+        for(var j=0;j<bs.length;j++){bs[j].style.color=j<score?COLOR:'#e2e8f0';}
+        if(fbk)fbk.textContent='';
       });
       stars.appendChild(btn);
     })(i);
   }
+  var actions=ce('div');
+  actions.style.cssText='display:flex;gap:8px;margin-top:14px;justify-content:center;';
+  var sendBtn=ce('button');
+  sendBtn.textContent='Send Rating';
+  sendBtn.style.cssText='flex:1;max-width:140px;padding:8px 0;background:'+COLOR+';color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .12s;';
+  var skipBtn=ce('button');
+  skipBtn.textContent='Just Close';
+  skipBtn.style.cssText='flex:1;max-width:130px;padding:8px 0;background:#f1f5f9;color:#475569;border:none;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:opacity .12s;';
+  function lockCsatActions(){
+    sendBtn.disabled=true;skipBtn.disabled=true;
+    sendBtn.style.opacity='0.5';skipBtn.style.opacity='0.5';
+    stars.dataset.locked='1';
+    var bs=stars.querySelectorAll('button');
+    for(var j=0;j<bs.length;j++){bs[j].disabled=true;bs[j].style.cursor='default';}
+  }
+  sendBtn.addEventListener('click',function(){
+    if(sendBtn.disabled)return;
+    if(!selectedScore){
+      if(fbk)fbk.textContent='Please pick a star rating first.';
+      fbk.style.color='#ef4444';
+      return;
+    }
+    lockCsatActions();
+    submitCsat(selectedScore,targetConvId);
+  });
+  skipBtn.addEventListener('click',function(){
+    if(skipBtn.disabled)return;
+    lockCsatActions();
+    try{localStorage.removeItem(CSAT_KEY);}catch(e){}
+    if(fbk)fbk.textContent='';
+    var box2=qs('#omni-msgs');
+    if(box2){
+      var nb=ce('button');
+      nb.textContent='Start new chat';
+      nb.style.cssText='margin:14px auto 4px;display:block;padding:9px 22px;background:'+COLOR+';color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;';
+      nb.addEventListener('click',startFreshChat);
+      box2.appendChild(nb);
+      box2.scrollTop=box2.scrollHeight;
+    }
+  });
+  actions.appendChild(sendBtn);
+  actions.appendChild(skipBtn);
+  card.appendChild(actions);
 }
 
 function submitCsat(score,convId){
