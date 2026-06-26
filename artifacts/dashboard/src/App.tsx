@@ -2629,9 +2629,20 @@ function AITrainingSection() {
 }
 
 // ─── SMTP Section ─────────────────────────────────────────────────────────────
+/** Extract the domain part from an email address, e.g. "support@omni.irofficial.com" → "omni.irofficial.com" */
+function extractEmailDomain(email: string): string {
+  const at = email.trim().lastIndexOf('@')
+  return at !== -1 ? email.trim().slice(at + 1).toLowerCase() : ''
+}
+
 function SMTPSection() {
   const api = useApi()
-  const [form, setForm] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', notification_email: '', enabled: false })
+  const [form, setForm] = useState({
+    host: '', port: '587', user: '', pass: '',
+    from_email: '', notification_email: '',
+    inbound_email_domain: '', enabled: false,
+  })
+  const [domainAutoFilled, setDomainAutoFilled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [testing, setTesting] = useState(false)
@@ -2639,17 +2650,40 @@ function SMTPSection() {
   useEffect(() => {
     api.getWorkspaceSettings().then(s => {
       const sc = s.smtp_config_json as Record<string, unknown> | null | undefined
-      if (sc) setForm(f => ({
-        ...f,
-        host: String(sc.host ?? ''),
-        port: String(sc.port ?? '587'),
-        user: String(sc.user ?? ''),
-        from_email: String(sc.from_email ?? ''),
-        notification_email: String(sc.notification_email ?? ''),
-        enabled: Boolean(sc.enabled),
-      }))
+      if (sc) {
+        const savedDomain = String(sc.inbound_email_domain ?? '')
+        setForm(f => ({
+          ...f,
+          host: String(sc.host ?? ''),
+          port: String(sc.port ?? '587'),
+          user: String(sc.user ?? ''),
+          from_email: String(sc.from_email ?? ''),
+          notification_email: String(sc.notification_email ?? ''),
+          inbound_email_domain: savedDomain,
+          enabled: Boolean(sc.enabled),
+        }))
+        // Mark as auto-filled only if no explicit domain was saved
+        if (!savedDomain && sc.from_email) setDomainAutoFilled(true)
+      }
     }).catch(() => {})
   }, []) // eslint-disable-line
+
+  // When from_email changes, auto-populate the domain field if the user
+  // hasn't manually touched it
+  const handleFromEmailChange = (val: string) => {
+    setForm(f => {
+      const nextDomain = (!f.inbound_email_domain || domainAutoFilled)
+        ? extractEmailDomain(val)
+        : f.inbound_email_domain
+      return { ...f, from_email: val, inbound_email_domain: nextDomain }
+    })
+    setDomainAutoFilled(true)
+  }
+
+  const handleDomainChange = (val: string) => {
+    setDomainAutoFilled(false) // user took manual control
+    setForm(f => ({ ...f, inbound_email_domain: val }))
+  }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault(); setMsg(null); setSaving(true)
@@ -2660,6 +2694,7 @@ function SMTPSection() {
           user: form.user.trim(), pass: form.pass || undefined,
           from_email: form.from_email.trim(),
           notification_email: form.notification_email.trim() || undefined,
+          inbound_email_domain: form.inbound_email_domain.trim() || undefined,
           enabled: form.enabled,
         }
       })
@@ -2674,6 +2709,8 @@ function SMTPSection() {
     setMsg({ ok: true, text: 'Test email queued. Check your inbox at ' + (form.notification_email || form.from_email || '(no address)') + ' in a few seconds.' })
     setTesting(false)
   }
+
+  const derivedDomain = extractEmailDomain(form.from_email)
 
   return (
     <div className="flex-1 overflow-auto p-6 bg-slate-50">
@@ -2696,7 +2733,33 @@ function SMTPSection() {
             </div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={form.pass} onChange={e => setForm(f => ({ ...f, pass: e.target.value }))} placeholder="Leave blank to keep existing" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
-            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={form.from_email} onChange={e => setForm(f => ({ ...f, from_email: e.target.value }))} placeholder="support@yourcompany.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={form.from_email} onChange={e => handleFromEmailChange(e.target.value)} placeholder="support@yourcompany.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+
+            {/* Inbound Email Domain */}
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                Inbound Email Domain
+                <span className="ml-1.5 text-slate-400 font-normal">(for reply threading)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={form.inbound_email_domain}
+                  onChange={e => handleDomainChange(e.target.value)}
+                  placeholder={derivedDomain || 'inbound.yourcompany.com'}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 pr-20"
+                />
+                {domainAutoFilled && form.inbound_email_domain && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-sky-500 font-medium bg-sky-50 px-1.5 py-0.5 rounded">auto</span>
+                )}
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">
+                {domainAutoFilled
+                  ? `Auto-extracted from your From Email. Replies to tickets will use reply+conv_…@${form.inbound_email_domain}.`
+                  : 'The domain your inbound mail provider receives on. Leave blank to use the same domain as your From Email.'}
+              </p>
+            </div>
+
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Notification Email <span className="text-slate-400 font-normal">(receives alerts for new visitor messages)</span></label><input type="email" value={form.notification_email} onChange={e => setForm(f => ({ ...f, notification_email: e.target.value }))} placeholder="owner@yourcompany.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
             <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
               <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email notifications on ticket status changes and new messages</p></div>
@@ -2719,7 +2782,7 @@ function SMTPSection() {
             <div><strong>SendGrid:</strong> smtp.sendgrid.net : 587</div>
             <div><strong>Resend:</strong> smtp.resend.com : 465</div>
             <div><strong>Postmark:</strong> smtp.postmarkapp.com : 587</div>
-            <div><strong>Gmail:</strong> smtp.gmail.com : 587</div>
+            <div><strong>Mailgun:</strong> smtp.mailgun.org : 465</div>
           </div>
         </div>
       </div>

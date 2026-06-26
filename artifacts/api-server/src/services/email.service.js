@@ -57,13 +57,24 @@ function fromAddress(cfg) {
  * address, which the inbound webhook parses to route directly into the right
  * conversation without relying on In-Reply-To headers.
  *
- * Format: reply+conv_<uuid>@<INBOUND_EMAIL_DOMAIN>
- * Set INBOUND_EMAIL_DOMAIN in your environment (e.g. inbound.omni.irofficial.com).
- * If unset the Reply-To header is omitted (header-based threading still works).
+ * Format: reply+conv_<uuid>@<domain>
+ *
+ * Domain resolution order:
+ *  1. cfg.inbound_email_domain  (saved in SMTP settings UI)
+ *  2. domain part of cfg.from_email  (auto-extracted fallback)
+ *  3. INBOUND_EMAIL_DOMAIN env var   (server-level fallback)
+ *
+ * If none of the above resolve, Reply-To is omitted and header-based
+ * threading (In-Reply-To / References) continues to work as a fallback.
  */
-function replyToAddress(conversationId) {
-  const domain = process.env.INBOUND_EMAIL_DOMAIN;
-  if (!domain || !conversationId) return null;
+function replyToAddress(conversationId, cfg) {
+  if (!conversationId) return null;
+  let domain = (cfg && cfg.inbound_email_domain) || process.env.INBOUND_EMAIL_DOMAIN || null;
+  if (!domain && cfg && cfg.from_email) {
+    const at = (cfg.from_email || '').lastIndexOf('@');
+    if (at !== -1) domain = cfg.from_email.slice(at + 1);
+  }
+  if (!domain) return null;
   return `reply+conv_${conversationId}@${domain}`;
 }
 
@@ -141,7 +152,7 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
   }
   if (!cfg) return;
 
-  const replyTo = replyToAddress(conversationId);
+  const replyTo = replyToAddress(conversationId, cfg);
   const footer  = replyTo
     ? 'Simply reply to this email — your reply will be routed directly back to your support thread.'
     : 'You received this because you have an open support ticket. Do not reply directly to this email.';
