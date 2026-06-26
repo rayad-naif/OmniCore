@@ -215,6 +215,78 @@ async function sendNewVisitorMessageEmail(tenantId, conversationId, visitorName,
 }
 
 /**
+ * Send a ticket-created confirmation to the visitor.
+ * Triggered when an agent converts a conversation to a ticket.
+ */
+async function sendTicketCreatedEmail(tenantId, conversationId, ticketNumber, visitorEmail, subject) {
+  if (!visitorEmail) return;
+  let cfg;
+  try { cfg = await getTenantSmtpConfig(tenantId); } catch (err) {
+    logger.warn({ err, tenantId }, 'smtp_config_load_failed'); return;
+  }
+  if (!cfg) return;
+
+  const replyTo  = replyToAddress(conversationId, cfg);
+  const mailOpts = {
+    from: fromAddress(cfg), to: visitorEmail,
+    subject: `Your ticket has been created — #${ticketNumber}`,
+    html: brandedEmail({
+      title:   `Ticket #${ticketNumber} created`,
+      preview: subject ? `Regarding: <em>${subject}</em>` : undefined,
+      bodyHtml: `
+        <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:16px;margin:0 0 16px;">
+          <p style="margin:0;font-size:13px;color:#0369a1;font-weight:600;">Ticket number: <span style="font-size:18px;">#${ticketNumber}</span></p>
+        </div>
+        <p style="font-size:13px;color:#64748b;">
+          Our support team has received your message and will get back to you shortly.
+          Use the ticket number above if you need to reference this case.
+        </p>
+        ${replyTo ? `<p style="font-size:13px;color:#64748b;">You can also reply directly to this email to add more information to your ticket.</p>` : ''}`,
+      footer: 'You received this because you submitted a support request.',
+    }),
+  };
+  if (replyTo) mailOpts.replyTo = replyTo;
+
+  try {
+    await buildTransporter(cfg).sendMail(mailOpts);
+    logger.info({ tenantId, conversationId, ticketNumber, visitorEmail }, 'ticket_created_email_sent');
+  } catch (err) {
+    logger.warn({ err, tenantId, conversationId }, 'ticket_created_email_failed');
+  }
+}
+
+/**
+ * Send a test email to verify SMTP config.
+ * Returns { ok: true } or throws with a descriptive message.
+ */
+async function sendSmtpTestEmail(tenantId) {
+  const cfg = await getTenantSmtpConfig(tenantId);
+  if (!cfg) throw Object.assign(new Error('SMTP not configured or not enabled'), { status: 400 });
+
+  const transporter = buildTransporter(cfg);
+  await transporter.verify(); // throws if credentials/host are wrong
+
+  const to = cfg.notification_email || fromAddress(cfg);
+  await transporter.sendMail({
+    from:    fromAddress(cfg),
+    to,
+    subject: 'OmniCore SMTP Test — connection verified',
+    html:    brandedEmail({
+      title:    'SMTP connection test',
+      preview:  'Your SMTP configuration is working correctly.',
+      bodyHtml: `<p style="font-size:13px;color:#64748b;">
+        This message confirms that OmniCore can send emails on behalf of <strong>${fromAddress(cfg)}</strong>.<br/>
+        All ticket notifications and status updates will be delivered from this address.
+      </p>`,
+      footer: 'Sent from OmniCore SMTP test.',
+    }),
+  });
+
+  logger.info({ tenantId, to }, 'smtp_test_email_sent');
+  return { ok: true, to };
+}
+
+/**
  * Send a password reset link to an agent.
  */
 async function sendPasswordResetEmail(tenantId, agentEmail, agentName, resetLink) {
@@ -254,4 +326,6 @@ module.exports = {
   sendAgentReplyEmail,
   sendNewVisitorMessageEmail,
   sendPasswordResetEmail,
+  sendTicketCreatedEmail,
+  sendSmtpTestEmail,
 };

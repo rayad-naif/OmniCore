@@ -36,6 +36,7 @@ interface Conversation {
   agent_name?: string | null; brand_name: string; updated_at: string
   sla_breach_at?: string | null; unread?: number
   is_ticket?: boolean; assigned_agent_id?: string | null
+  ticket_number?: number | null
   visitor_id?: string; visitor_timezone?: string | null
   csat_score?: number | null; brand_id?: string
 }
@@ -307,6 +308,10 @@ function useApi() {
     updateWorkspace: async (patch: { company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; custom_domain?: string; smtp_config_json?: object; imap_config_json?: object; webhook_config_json?: object; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean }): Promise<void> => {
       const r = await authFetch(`${API}/tenants/settings`, { method: 'PATCH', body: JSON.stringify(patch) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update workspace') }
+    },
+    testSmtp: async (): Promise<{ ok: boolean; message: string }> => {
+      const r = await authFetch(`${API}/tenants/smtp/test`, { method: 'POST' })
+      return r.json() as Promise<{ ok: boolean; message: string }>
     },
     editMessage: async (convId: string, msgId: string, body: string): Promise<void> => {
       const r = await authFetch(`${API}/conversations/${convId}/messages/${msgId}`, { method: 'PATCH', body: JSON.stringify({ body }) })
@@ -602,6 +607,7 @@ function ConversationRow({ conv, isActive, onClick }: { conv: Conversation; isAc
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <StatusBadge status={conv.status} /><ChannelIcon channel={conv.channel} />
+          {conv.ticket_number && <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">#{conv.ticket_number}</span>}
           {conv.csat_score && <StarRating score={conv.csat_score} />}
           {conv.sla_breach_at && <span className={`text-[10px] flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}>{breached && <AlertTriangle size={9} />} SLA</span>}
         </div>
@@ -1142,6 +1148,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-0.5">
             <h3 className="text-sm font-semibold text-slate-900 truncate">{conv.subject || '(No subject)'}</h3>
+            {conv.ticket_number && <span className="text-[11px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full shrink-0">#{conv.ticket_number}</span>}
             <StatusBadge status={conv.status} />
             <span title={socketConnected ? 'Real-time connected' : 'Reconnecting…'}>{socketConnected ? <Wifi size={11} className="text-emerald-400" /> : <WifiOff size={11} className="text-slate-300" />}</span>
           </div>
@@ -2705,9 +2712,14 @@ function SMTPSection() {
 
   const handleTest = async () => {
     setTesting(true); setMsg(null)
-    await new Promise(r => setTimeout(r, 1200))
-    setMsg({ ok: true, text: 'Test email queued. Check your inbox at ' + (form.notification_email || form.from_email || '(no address)') + ' in a few seconds.' })
-    setTesting(false)
+    try {
+      const result = await api.testSmtp()
+      setMsg({ ok: result.ok, text: result.message })
+    } catch {
+      setMsg({ ok: false, text: 'Request failed — make sure SMTP is saved and enabled first.' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   const derivedDomain = extractEmailDomain(form.from_email)

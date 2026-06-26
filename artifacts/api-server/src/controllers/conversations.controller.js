@@ -20,7 +20,7 @@ const { Router }                = require('express');
 const { requireAuth }           = require('../middleware/auth');
 const { pool }                  = require('../lib/db');
 const { handleExportRequest }   = require('../services/export.service');
-const { sendStatusChangeEmail, sendAgentReplyEmail } = require('../services/email.service');
+const { sendStatusChangeEmail, sendAgentReplyEmail, sendTicketCreatedEmail } = require('../services/email.service');
 const { broadcastToConversation, broadcastToTenant, broadcastToVisitor } = require('../services/socket.service');
 const logger                    = require('../utils/logger');
 const crypto                    = require('crypto');
@@ -37,6 +37,14 @@ router.use(requireAuth);
 // ─── One-time migrations ───────────────────────────────────────────────────────
 pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN NOT NULL DEFAULT false`)
   .catch(err => { if (!err.message?.includes('already exists')) logger.warn({ err: err.message }, 'is_ticket_migration_warning'); });
+
+// Ticket number — global auto-incrementing sequence, unique per conversation
+pool.query(`CREATE SEQUENCE IF NOT EXISTS conversations_ticket_number_seq START 10001 INCREMENT 1`)
+  .catch(() => {});
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ticket_number INT`)
+  .catch(() => {});
+pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS conversations_ticket_number_uidx ON conversations (ticket_number) WHERE ticket_number IS NOT NULL`)
+  .catch(() => {});
 
 pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
   .catch(() => {});
@@ -226,24 +234,44 @@ router.patch('/:id', async (req, res, next) => {
     if (!fields.length) return res.status(400).json({ error: 'No valid fields provided' });
 
     const { rows: beforeRows } = await pool.query(
-      `SELECT status, visitor_id, assigned_agent_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      `SELECT status, visitor_id, assigned_agent_id, is_ticket, ticket_number, subject FROM conversations WHERE id = $1 AND tenant_id = $2`,
       [req.params.id, tenantId(req)]
     );
     if (!beforeRows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    const { status: oldStatus, visitor_id: oldVisitorId, assigned_agent_id: oldAgentId } = beforeRows[0];
+    const { status: oldStatus, visitor_id: oldVisitorId, assigned_agent_id: oldAgentId, is_ticket: wasTicket, subject: convSubject } = beforeRows[0];
 
-    const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values     = fields.map(f => { const v = req.body[f]; return (v === '' || v === undefined) ? null : v; });
+    // When converting to ticket, assign ticket_number in the same UPDATE
+    const convertingToTicket = fields.includes('is_ticket') && req.body.is_ticket === true && !wasTicket;
+
+    let setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+    const values   = fields.map(f => { const v = req.body[f]; return (v === '' || v === undefined) ? null : v; });
+
+    if (convertingToTicket) {
+      setClauses += `, ticket_number = nextval('conversations_ticket_number_seq')`;
+    }
     values.push(req.params.id, tenantId(req));
 
     const { rows } = await pool.query(
       `UPDATE conversations SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
-       RETURNING id, status, priority, assigned_agent_id, is_ticket, csat_score, updated_at`,
+       RETURNING id, status, priority, assigned_agent_id, is_ticket, ticket_number, csat_score, updated_at`,
       values
     );
     if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    logger.info({ conversationId: req.params.id, fields }, 'conversation_patched');
+    logger.info({ conversationId: req.params.id, fields, ticket_number: rows[0].ticket_number }, 'conversation_patched');
+
+    // Send ticket-created confirmation email to visitor (non-blocking)
+    if (convertingToTicket && rows[0].ticket_number) {
+      const ticketNum = rows[0].ticket_number;
+      pool.query(
+        `SELECT v.email FROM visitors v WHERE v.id = $1`,
+        [oldVisitorId]
+      ).then(({ rows: vr }) => {
+        if (vr[0]?.email) {
+          sendTicketCreatedEmail(tenantId(req), req.params.id, ticketNum, vr[0].email, convSubject).catch(() => {});
+        }
+      }).catch(() => {});
+    }
 
     const newStatus = rows[0].status;
     if (fields.includes('status') && newStatus !== oldStatus) {

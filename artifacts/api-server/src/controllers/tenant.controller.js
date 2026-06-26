@@ -23,6 +23,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { pool }     = require('../lib/db');
 const logger       = require('../utils/logger');
+const { sendSmtpTestEmail } = require('../services/email.service');
 
 const router = Router();
 router.use(requireAuth);
@@ -247,6 +248,27 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
     logger.info({ tenantId: req.agent.tenantId, fields }, 'workspace_settings_updated');
     res.json(rows[0]);
   } catch (err) { next(err); }
+});
+
+/**
+ * POST /api/tenants/smtp/test
+ * Admin only — verifies SMTP credentials and sends a real test email.
+ */
+router.post('/smtp/test', requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await sendSmtpTestEmail(req.agent.tenantId);
+    res.json({ ok: true, to: result.to, message: `Test email sent to ${result.to}` });
+  } catch (err) {
+    const status = err.status || 500;
+    const message = err.responseCode
+      ? `SMTP error ${err.responseCode}: ${err.response}`
+      : (err.code === 'EAUTH' ? 'Authentication failed — check your username and password'
+        : err.code === 'ECONNREFUSED' ? 'Connection refused — check host and port'
+        : err.code === 'ETIMEDOUT' ? 'Connection timed out — check host and port'
+        : err.message || 'Unknown SMTP error');
+    logger.warn({ err: err.message, tenantId: req.agent.tenantId }, 'smtp_test_failed');
+    res.status(status).json({ ok: false, message });
+  }
 });
 
 /** PATCH /api/tenants/:tenantId — superadmin only */
