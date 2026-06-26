@@ -244,6 +244,18 @@ router.patch('/:id', async (req, res, next) => {
       pool.query(`SELECT email FROM visitors WHERE id = $1`, [oldVisitorId])
         .then(({ rows: vRows }) => sendStatusChangeEmail(tenantId(req), req.params.id, oldStatus, newStatus, vRows[0]?.email))
         .catch(() => {});
+
+      // Broadcast status change to agents viewing this conversation
+      broadcastToConversation(req.params.id, 'conversation:status_changed', {
+        conversationId: req.params.id,
+        status: newStatus,
+      });
+      // Notify the visitor directly so the widget can react (e.g. show CSAT survey)
+      if (oldVisitorId) {
+        broadcastToVisitor(oldVisitorId, 'conversation:closed', {
+          conversationId: req.params.id,
+        });
+      }
     }
 
     const newAgentId = rows[0].assigned_agent_id;

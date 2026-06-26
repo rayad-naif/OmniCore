@@ -224,6 +224,35 @@ router.post('/message', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── POST /api/widget/csat ─────────────────────────────────────────────────────
+// Visitor submits a satisfaction score (1–5) after a conversation is closed.
+router.post('/csat', async (req, res, next) => {
+  try {
+    const { conversationId, sessionToken, score } = req.body || {};
+    if (!conversationId || !sessionToken || score === undefined || score === null) {
+      return res.status(400).json({ error: 'conversationId, sessionToken, and score are required' });
+    }
+    const s = parseInt(score, 10);
+    if (isNaN(s) || s < 1 || s > 5) {
+      return res.status(400).json({ error: 'score must be an integer between 1 and 5' });
+    }
+    const { rows: vRows } = await pool.query(
+      'SELECT id FROM visitors WHERE session_token = $1',
+      [sessionToken]
+    );
+    if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
+    const { rows } = await pool.query(
+      `UPDATE conversations SET csat_score = $1, updated_at = NOW()
+       WHERE id = $2 AND visitor_id = $3
+       RETURNING id`,
+      [s, conversationId, vRows[0].id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    logger.info({ conversationId, score: s }, 'widget_csat_submitted');
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/widget/widget.js ─────────────────────────────────────────────────
 const WIDGET_JS = `
 /* OmniCore Chat Widget — https://omnicore.chat */
@@ -248,7 +277,8 @@ var state={
   sessionToken:null,conversationId:null,
   messages:[],socket:null,connected:false,
   brandName:LABEL,unread:0,
-  visitorName:null,visitorEmail:null
+  visitorName:null,visitorEmail:null,
+  csatShown:false
 };
 try{
   state.sessionToken=localStorage.getItem(SK);
@@ -297,16 +327,16 @@ function appendMsg(msg,scroll){
   if(!box)return;
   var isAgent=msg.sender_type==='agent'||msg.sender_type==='bot';
   var wrap=ce('div');
-  wrap.style.cssText='display:flex;flex-direction:column;align-items:'+(isAgent?'flex-end':'flex-start')+';gap:2px;margin-bottom:12px;';
+  wrap.style.cssText='display:flex;flex-direction:column;align-items:'+(isAgent?'flex-start':'flex-end')+';gap:2px;margin-bottom:12px;';
   var lbl=ce('span');
-  lbl.style.cssText='font-size:10px;color:#94a3b8;'+(isAgent?'margin-right:8px':'margin-left:8px');
+  lbl.style.cssText='font-size:10px;color:#94a3b8;'+(isAgent?'margin-left:8px':'margin-right:8px');
   lbl.textContent=(isAgent?(msg.sender_name||'Agent'):(state.visitorName||'You'))+' \u00b7 '+fmtTime(msg.created_at);
   wrap.appendChild(lbl);
   if(msg.message_body){
     var bbl=ce('div');
     var baseStyle='max-width:78%;padding:10px 13px;border-radius:16px;font-size:13px;line-height:1.55;word-break:break-word;';
-    var agentStyle='border-bottom-right-radius:4px;background:'+COLOR+';color:#fff;';
-    var visitorStyle='border-bottom-left-radius:4px;background:#fff;color:#1e293b;border:1px solid #e2e8f0;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:pre-wrap;';
+    var agentStyle='border-bottom-left-radius:4px;background:#f1f5f9;color:#1e293b;border:1px solid #e2e8f0;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:pre-wrap;';
+    var visitorStyle='border-bottom-right-radius:4px;background:'+COLOR+';color:#fff;';
     bbl.style.cssText=baseStyle+(isAgent?agentStyle:visitorStyle);
     if(isAgent){
       bbl.innerHTML=msg.message_body||'';
@@ -328,7 +358,7 @@ function appendMsg(msg,scroll){
       aw.appendChild(img);
     }else{
       var lnk=ce('a');lnk.href=API_ORIGIN+att.url;lnk.target='_blank';
-      lnk.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:500;'+(isAgent?'background:rgba(255,255,255,.2);color:#fff;':'background:#f1f5f9;color:#334155;');
+      lnk.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:500;'+(isAgent?'background:#e2e8f0;color:#334155;':'background:rgba(255,255,255,.2);color:#fff;');
       lnk.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'+escHtml(att.name||'File');
       aw.appendChild(lnk);
     }
@@ -336,6 +366,83 @@ function appendMsg(msg,scroll){
   });
   box.appendChild(wrap);
   if(scroll!==false)box.scrollTop=box.scrollHeight;
+}
+
+function showCsatSurvey(){
+  if(state.csatShown)return;
+  state.csatShown=true;
+  if(els.inp){els.inp.disabled=true;els.inp.placeholder='Conversation closed';}
+  if(els.snd)els.snd.disabled=true;
+  var box=qs('#omni-msgs');
+  if(!box)return;
+  var notice=ce('div');
+  notice.style.cssText='text-align:center;padding:14px 8px 2px;';
+  var chip=ce('span');
+  chip.style.cssText='display:inline-block;padding:4px 12px;background:#fee2e2;color:#991b1b;border-radius:999px;font-size:11px;font-weight:600;';
+  chip.textContent='Conversation closed';
+  notice.appendChild(chip);
+  box.appendChild(notice);
+  var card=ce('div');
+  card.style.cssText='margin:12px 14px 6px;padding:18px 14px;background:#fff;border-radius:14px;border:1px solid #e2e8f0;text-align:center;';
+  var title=ce('p');
+  title.style.cssText='font-size:14px;font-weight:700;color:#0f172a;margin:0 0 4px;';
+  title.textContent='How did we do?';
+  var sub=ce('p');
+  sub.style.cssText='font-size:12px;color:#64748b;margin:0 0 14px;';
+  sub.textContent='Rate your support experience';
+  var stars=ce('div');
+  stars.id='omni-csat-stars';
+  stars.style.cssText='display:flex;justify-content:center;gap:8px;margin-bottom:10px;';
+  var fbk=ce('p');
+  fbk.id='omni-csat-fbk';
+  fbk.style.cssText='font-size:12px;color:#94a3b8;margin:0;min-height:16px;';
+  card.appendChild(title);card.appendChild(sub);card.appendChild(stars);card.appendChild(fbk);
+  box.appendChild(card);
+  box.scrollTop=box.scrollHeight;
+  if(state.open)setUnread(0);
+  for(var i=1;i<=5;i++){
+    (function(score){
+      var btn=ce('button');
+      btn.style.cssText='background:none;border:none;font-size:28px;cursor:pointer;color:#e2e8f0;padding:0;line-height:1;transition:color .12s;';
+      btn.textContent='\u2605';
+      btn.setAttribute('aria-label',score+' star'+(score>1?'s':''));
+      btn.addEventListener('mouseenter',function(){
+        if(stars.dataset.picked)return;
+        var bs=stars.querySelectorAll('button');
+        for(var j=0;j<bs.length;j++){bs[j].style.color=j<score?COLOR:'#e2e8f0';}
+      });
+      btn.addEventListener('mouseleave',function(){
+        if(stars.dataset.picked)return;
+        var bs=stars.querySelectorAll('button');
+        for(var j=0;j<bs.length;j++){bs[j].style.color='#e2e8f0';}
+      });
+      btn.addEventListener('click',function(){
+        if(stars.dataset.picked)return;
+        stars.dataset.picked='1';
+        var bs=stars.querySelectorAll('button');
+        for(var j=0;j<bs.length;j++){
+          bs[j].style.color=j<score?COLOR:'#e2e8f0';
+          bs[j].disabled=true;bs[j].style.cursor='default';
+        }
+        submitCsat(score);
+      });
+      stars.appendChild(btn);
+    })(i);
+  }
+}
+
+function submitCsat(score){
+  var fbk=qs('#omni-csat-fbk');
+  if(fbk)fbk.textContent='Submitting\u2026';
+  fetch(API_BASE+'/widget/csat',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({conversationId:state.conversationId,sessionToken:state.sessionToken,score:score})
+  }).then(function(r){return r.json();}).then(function(){
+    if(fbk)fbk.textContent='Thank you for your feedback! \u2764\ufe0f';
+  }).catch(function(){
+    if(fbk)fbk.textContent='Thank you for your feedback! \u2764\ufe0f';
+  });
 }
 
 function buildDom(){
@@ -592,7 +699,7 @@ function initSio(){
   if(state.socket)return;
   var s=ce('script');s.src=API_ORIGIN+'/api/socket.io/socket.io.js';
   s.onload=function(){
-    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],reconnectionAttempts:6,reconnectionDelay:1500});
+    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],reconnectionDelay:1500});
     state.socket=sk;
     sk.on('connect',function(){
       state.connected=true;
@@ -613,6 +720,7 @@ function initSio(){
       appendMsg(msg,true);
       if(state.open){markRead();}else{setUnread(state.unread+1);}
     });
+    sk.on('conversation:closed',function(){showCsatSurvey();});
   };
   d.head.appendChild(s);
 }
