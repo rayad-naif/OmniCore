@@ -288,19 +288,26 @@ function MessageBubble({ msg, visitorReadAt }) {
           : <div className="[&>p]:m-0 [&>p+p]:mt-1 [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4"
                  dangerouslySetInnerHTML={{ __html: msg.message_body }} />
         }
-        {Array.isArray(msg.attachments_json) && msg.attachments_json.map((a, i) =>
-          a.url ? (
-            /\.(png|jpe?g|gif|webp|svg)$/i.test(a.url) ? (
-              <img key={i} src={a.url} alt={a.name || 'attachment'}
-                className="mt-2 max-w-[220px] rounded-xl border border-white/20 object-cover" />
+        {(() => {
+          let atts = msg.attachments_json;
+          if (typeof atts === 'string') { try { atts = JSON.parse(atts); } catch { atts = []; } }
+          if (!Array.isArray(atts) || !atts.length) return null;
+          return atts.map((a, i) => {
+            const url = a.url || a.attachment_url;
+            if (!url) return null;
+            const isImg = /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) || (a.type && a.type.startsWith('image/'));
+            return isImg ? (
+              <img key={i} src={url} alt={a.name || 'attachment'}
+                className="mt-2 max-w-[220px] rounded-xl border border-white/20 object-cover cursor-pointer"
+                onClick={() => window.open(url, '_blank')} />
             ) : (
-              <a key={i} href={a.url} target="_blank" rel="noreferrer"
-                className="mt-1.5 flex items-center gap-1 text-xs underline opacity-80 hover:opacity-100">
-                📎 {a.name || 'attachment'}
+              <a key={i} href={url} target="_blank" rel="noreferrer"
+                className="mt-1.5 flex items-center gap-1.5 text-xs underline opacity-80 hover:opacity-100">
+                📎 {a.name || 'Download File'}
               </a>
-            )
-          ) : null
-        )}
+            );
+          });
+        })()}
         <p className={`text-[10px] mt-1 flex items-center gap-1 ${isVisitor ? 'text-slate-400' : 'text-white/60'}`}>
           {fmtTime(msg.created_at)}
           {!isVisitor && !isInternal && (

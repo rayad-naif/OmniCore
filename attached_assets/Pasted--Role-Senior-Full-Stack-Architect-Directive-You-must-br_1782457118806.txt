@@ -1,0 +1,38 @@
+"Role: Senior Full-Stack Architect.
+Directive: You must briefly read Inbox.jsx, ChatPanel.jsx (if separate), omnicore-widget.js, conversations.controller.js, and widget.controller.js to understand the current state. After reading, you MUST execute the actual file overwrites. Do not stop at the planning phase.
+
+Feature 1: Agent-Controlled CSAT
+
+Backend: Modify PATCH /api/conversations/:id to accept a trigger_csat boolean. Pass this flag into the conversation:closed socket broadcast.
+
+Dashboard: Replace the 'Close' button in the chat header with a Modal containing two buttons: "Close & Request CSAT" (trigger_csat: true) and "Close Only" (trigger_csat: false).
+
+Widget: Update the socket listener for conversation:closed. If trigger_csat is true, save the pending state to localStorage and trigger the survey. If false, show a 'Conversation Closed' UI state with a 'Start New Chat' button, bypassing the survey entirely.
+
+Feature 2: Auto-Sync New Chat (Preserving Identity)
+
+Backend: Update the session initialization endpoint (POST /api/widget/session). If the request body contains { force_new: true }, do not return the existing closed conversation. Instead, generate a brand new conversation using the existing session_token / visitor_id. Emit conversation:created to the tenant's socket room.
+
+Widget: When a user submits the CSAT or clicks 'Start New Chat', DO NOT delete omni_session from localStorage. Call the session endpoint with force_new: true to get a fresh conversation_id while keeping their name/email intact.
+
+Dashboard: Ensure Inbox.jsx listens for socket.on('conversation:created') and instantly pushes the new ticket into the UI state without requiring a browser refresh.
+
+Feature 3: Agent Image Pasting & Attachment Uploads (R2)
+
+Backend: Ensure there is an upload route (e.g., POST /api/upload) using multer and @aws-sdk/client-s3 configured for Cloudflare R2 that returns the public URL.
+
+Dashboard: In the chat input area, add a hidden <input type="file" /> triggered by an Attachment (paperclip) icon. Add an onPaste handler to intercept images.
+
+Upload Flow: Upload the file to the R2 endpoint, store the returned URL in a local React state (pendingAttachment), display a "File ready" indicator, and send it as attachment_url when the agent clicks Send.
+
+Feature 4 & 5: Universal File Previews (Dashboard & Widget)
+
+Dashboard & Widget Renderers: Update the message mapping functions in both Inbox.jsx and omnicore-widget.js.
+
+Check the attachment_url (or URL string in the body).
+
+If Image (.jpg, .png, .gif, .webp): Render an <img> tag with styling (max-width: 250px, border-radius: 8px).
+
+If Document (.pdf, .csv, .txt, etc.): Render a styled, clickable <a> tag saying "📎 Download File" that opens in a new tab.
+
+Execution Rule: Review the files, state your plan in 3 sentences max, and then write the code modifications."

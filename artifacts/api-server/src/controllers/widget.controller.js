@@ -43,7 +43,7 @@ router.get('/health', (_req, res) => res.json({ ok: true }));
 // ── POST /api/widget/session ──────────────────────────────────────────────────
 router.post('/session', async (req, res, next) => {
   try {
-    const { brandId, sessionToken, visitorName, visitorEmail, timezone } = req.body || {};
+    const { brandId, sessionToken, visitorName, visitorEmail, timezone, forceNew } = req.body || {};
     if (!brandId) return res.status(400).json({ error: 'brandId is required' });
 
     // ── Returning visitor ──────────────────────────────────────────────────────
@@ -69,25 +69,65 @@ router.post('/session', async (req, res, next) => {
           );
         }
 
+        const { rows: bRows }   = await pool.query('SELECT brand_name FROM brands WHERE id = $1', [brandId]);
+        const { rows: visData } = await pool.query('SELECT display_name FROM visitors WHERE id = $1', [visitorId]);
+        const brandName = bRows[0]?.brand_name || 'Support';
+
+        // ── force_new: always create a fresh conversation, preserve visitor identity ──
+        if (forceNew) {
+          const { rows: nc } = await pool.query(
+            `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
+             VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
+            [tenantId, brandId, visitorId]
+          );
+          const newConvId = nc[0].id;
+          try {
+            broadcastToTenant(tenantId, 'conversation:created', {
+              id: newConvId,
+              status: 'open', channel: 'widget', priority: 'normal', subject: null,
+              visitor_name: visData[0]?.display_name || visitorName || 'Visitor',
+              visitor_email: visitorEmail || null,
+              agent_name: null, brand_name: brandName,
+              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+              sla_breach_at: null, assigned_agent_id: null, unread: 0,
+              visitor_id: visitorId,
+            });
+          } catch { /* non-fatal */ }
+          logger.info({ brandId, visitorId, conversationId: newConvId }, 'widget_force_new_conversation');
+          return res.json({
+            sessionToken,
+            conversationId: newConvId,
+            messages: [],
+            brandName,
+            visitorName: visData[0]?.display_name || visitorName || null,
+          });
+        }
+
         // Find the most recent conversation (any status) so we can detect closures
         let { rows: cRows } = await pool.query(
           `SELECT id, status FROM conversations WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [visitorId]
         );
         let convId = cRows[0]?.id;
-        let previousConversationClosed = false;
-        let closedConversationId = null;
         if (!convId || cRows[0]?.status === 'closed') {
-          if (convId) { // previous conversation existed but was closed
-            previousConversationClosed = true;
-            closedConversationId = convId;
-          }
           const { rows: nc } = await pool.query(
             `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
              VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
             [tenantId, brandId, visitorId]
           );
           convId = nc[0].id;
+          try {
+            broadcastToTenant(tenantId, 'conversation:created', {
+              id: convId,
+              status: 'open', channel: 'widget', priority: 'normal', subject: null,
+              visitor_name: visData[0]?.display_name || visitorName || 'Visitor',
+              visitor_email: visitorEmail || null,
+              agent_name: null, brand_name: brandName,
+              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+              sla_breach_at: null, assigned_agent_id: null, unread: 0,
+              visitor_id: visitorId,
+            });
+          } catch { /* non-fatal */ }
         }
 
         // Recent public messages
@@ -103,17 +143,12 @@ router.post('/session', async (req, res, next) => {
           [convId]
         );
 
-        const { rows: bRows }  = await pool.query('SELECT brand_name FROM brands WHERE id = $1', [brandId]);
-        const { rows: visData } = await pool.query('SELECT display_name FROM visitors WHERE id = $1', [visitorId]);
-
         return res.json({
           sessionToken,
           conversationId: convId,
           messages,
-          brandName:   bRows[0]?.brand_name || 'Support',
+          brandName,
           visitorName: visData[0]?.display_name || visitorName || null,
-          previousConversationClosed,
-          closedConversationId,
         });
       }
     }
@@ -599,7 +634,9 @@ function startFreshChat(){
   if(els.snd)els.snd.disabled=false;
   stopPolling();_lastMsgTime=null;
   if(state.socket){try{state.socket.disconnect();}catch(e){}state.socket=null;state.connected=false;}
-  startSession();
+  // Keep sessionToken/visitorName in state and localStorage (preserves visitor identity).
+  // Pass forceNew so the server creates a fresh conversation without recreating the visitor.
+  startSession(true);
 }
 
 function buildDom(){
@@ -815,10 +852,10 @@ function showChat(){
   if(els.composer)els.composer.style.display='flex';
 }
 
-function startSession(){
+function startSession(forceNew){
   var csatPendingId=null;
   try{csatPendingId=localStorage.getItem(CSAT_KEY);}catch(e){}
-  if(csatPendingId){
+  if(csatPendingId&&!forceNew){
     state.loading=false;state.loaded=true;
     showChat();
     showCsatSurvey(csatPendingId);
@@ -834,7 +871,8 @@ function startSession(){
       brandId:BRAND_ID,sessionToken:state.sessionToken,
       visitorName:state.visitorName||null,
       visitorEmail:state.visitorEmail||null,
-      timezone:tz||null
+      timezone:tz||null,
+      forceNew:forceNew||false
     })
   })
   .then(function(r){return r.json();})
