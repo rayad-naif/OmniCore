@@ -355,6 +355,22 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<ContactConversation[]>
     },
+    exportContactsCsv: async (params?: Record<string, string>): Promise<void> => {
+      const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+      const r = await authFetch(`${API}/contacts/export${qs}`)
+      if (!r.ok) throw new Error(`Export failed (${r.status})`)
+      const blob = await r.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      const cd   = r.headers.get('content-disposition') ?? ''
+      const match = cd.match(/filename="?([^";\r\n]+)"?/)
+      a.href     = url
+      a.download = match?.[1] ?? `contacts-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    },
   }), [authFetch, agent?.tenantId])()
 }
 
@@ -3068,6 +3084,7 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
   const [selected, setSelected]         = useState<Contact | null>(null)
   const [convHistory, setConvHistory]   = useState<ContactConversation[]>([])
   const [panelLoading, setPanelLoading] = useState(false)
+  const [exporting, setExporting]       = useState(false)
   const LIMIT = 25
 
   const load = useCallback(async (p = 1) => {
@@ -3094,6 +3111,17 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
     socket.on('conversation:created', handler)
     return () => { socket.off('conversation:created', handler) }
   }, [socketRef, page, load])
+
+  const handleExportCsv = async () => {
+    setExporting(true)
+    try {
+      const params: Record<string, string> = {}
+      if (search) params.search = search
+      if (brandFilter) params.brand_id = brandFilter
+      await api.exportContactsCsv(Object.keys(params).length ? params : undefined)
+    } catch (err) { alert((err as Error).message) }
+    finally { setExporting(false) }
+  }
 
   const openPanel = async (c: Contact) => {
     setSelected(c)
@@ -3122,9 +3150,20 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
               <h1 className="text-lg font-semibold text-slate-800">Contacts</h1>
               <p className="text-xs text-slate-500 mt-0.5">{total} visitor{total !== 1 ? 's' : ''} across all brands</p>
             </div>
-            <button onClick={() => load(page)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-medium transition-colors">
-              <RefreshCw size={12} /> Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExportCsv}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                title={search || brandFilter ? 'Export filtered contacts as CSV' : 'Export all contacts as CSV'}
+              >
+                {exporting ? <RefreshCw size={12} className="animate-spin" /> : <FileDown size={12} />}
+                Export CSV
+              </button>
+              <button onClick={() => load(page)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-medium transition-colors">
+                <RefreshCw size={12} /> Refresh
+              </button>
+            </div>
           </div>
           <div className="flex gap-2">
             <div className="relative flex-1">
