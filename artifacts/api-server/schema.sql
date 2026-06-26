@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     priority            TEXT        NOT NULL DEFAULT 'normal'
                                     CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
     csat_score          SMALLINT    CHECK (csat_score BETWEEN 1 AND 5),
+    csat_requested      BOOLEAN     NOT NULL DEFAULT false,
     sla_breach_at       TIMESTAMPTZ,
     subject             TEXT,
     channel             TEXT        NOT NULL DEFAULT 'widget'

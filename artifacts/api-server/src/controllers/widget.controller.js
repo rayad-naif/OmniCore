@@ -109,10 +109,26 @@ router.post('/session', async (req, res, next) => {
         // Find the most recent NON-TICKET conversation so we can detect closures.
         // Tickets are email conversations and must never be reloaded into the widget.
         let { rows: cRows } = await pool.query(
-          `SELECT id, status FROM conversations WHERE visitor_id = $1 AND is_ticket = false ORDER BY created_at DESC LIMIT 1`,
+          `SELECT id, status, csat_requested, csat_score FROM conversations WHERE visitor_id = $1 AND is_ticket = false ORDER BY created_at DESC LIMIT 1`,
           [visitorId]
         );
         let convId = cRows[0]?.id;
+        // If the most recent conversation was closed with a CSAT survey that the
+        // visitor hasn't answered/dismissed yet, surface THAT closed conversation
+        // (so the widget can re-show the survey) instead of burying it under a new
+        // open conversation. Recovers the survey when the live event was missed.
+        const csatPending = Boolean(cRows[0]) && cRows[0].status === 'closed'
+          && cRows[0].csat_requested === true && cRows[0].csat_score === null;
+        if (csatPending) {
+          return res.json({
+            sessionToken,
+            conversationId: convId,
+            messages: [],
+            brandName,
+            visitorName: visData[0]?.display_name || visitorName || null,
+            csatPending: true,
+          });
+        }
         if (!convId || cRows[0]?.status === 'closed') {
           const { rows: nc } = await pool.query(
             `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
@@ -351,13 +367,37 @@ router.post('/csat', async (req, res, next) => {
     );
     if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
     const { rows } = await pool.query(
-      `UPDATE conversations SET csat_score = $1, updated_at = NOW()
+      `UPDATE conversations SET csat_score = $1, csat_requested = false, updated_at = NOW()
        WHERE id = $2 AND visitor_id = $3
        RETURNING id`,
       [s, conversationId, vRows[0].id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
     logger.info({ conversationId, score: s }, 'widget_csat_submitted');
+    return res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ── POST /api/widget/csat/dismiss ─────────────────────────────────────────────
+// Visitor chose "Just Close" instead of rating. Clear the pending-survey flag
+// so the server does not re-surface the survey on the next session/reload.
+router.post('/csat/dismiss', async (req, res, next) => {
+  try {
+    const { conversationId, sessionToken } = req.body || {};
+    if (!conversationId || !sessionToken) {
+      return res.status(400).json({ error: 'conversationId and sessionToken are required' });
+    }
+    const { rows: vRows } = await pool.query(
+      'SELECT id FROM visitors WHERE session_token = $1',
+      [sessionToken]
+    );
+    if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
+    await pool.query(
+      `UPDATE conversations SET csat_requested = false, updated_at = NOW()
+       WHERE id = $1 AND visitor_id = $2`,
+      [conversationId, vRows[0].id]
+    );
+    logger.info({ conversationId }, 'widget_csat_dismissed');
     return res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -726,6 +766,13 @@ function showCsatSurvey(convId){
     if(skipBtn.disabled)return;
     lockCsatActions();
     try{localStorage.removeItem(CSAT_KEY);}catch(e){}
+    // Tell the server the survey was dismissed so it won't be re-surfaced on reload.
+    try{
+      fetch(API_BASE+'/widget/csat/dismiss',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({conversationId:targetConvId||state.conversationId,sessionToken:state.sessionToken})
+      }).catch(function(){});
+    }catch(e){}
     if(fbk)fbk.textContent='';
     var box2=qs('#omni-msgs');
     if(box2){
@@ -1031,6 +1078,10 @@ function startSession(forceNew){
     _lastMsgTime=state.messages.length?state.messages[state.messages.length-1].created_at:null;
     startPolling();
     initSio();
+    // The server reported this conversation was closed with a pending CSAT
+    // survey (e.g. the live socket event was missed before this reload).
+    // Re-show the survey so it is never silently skipped.
+    if(data.csatPending){showCsatSurvey(data.conversationId);}
   })
   .catch(function(){
     state.loading=false;

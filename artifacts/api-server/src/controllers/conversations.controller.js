@@ -57,6 +57,12 @@ pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
 pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS referrer_url TEXT`)
   .catch(() => {});
 
+// Tracks whether a CSAT survey was requested at close time and not yet answered/
+// dismissed, so the widget can recover the survey on reload (the live socket
+// event may be missed). Cleared when the visitor rates or chooses "Just Close".
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS csat_requested BOOLEAN NOT NULL DEFAULT false`)
+  .catch(() => {});
+
 // Extend the status check constraint to include ticket statuses
 pool.query(`
   ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_status_check;
@@ -262,6 +268,18 @@ router.patch('/:id', async (req, res, next) => {
       setClauses += `, ticket_number = nextval('conversations_ticket_number_seq'), channel = 'email'`;
       if (!fields.includes('status')) {
         setClauses += `, status = 'submitted'`;
+      }
+    }
+
+    // Persist whether a CSAT survey was requested at close time so the widget
+    // can recover the survey on reload (the live socket event may be missed).
+    // Set the flag only when closing with trigger_csat; clear it on any other
+    // status change so a re-opened/closed-again conversation doesn't re-pop it.
+    if (fields.includes('status') && !convertingToTicket) {
+      if (req.body.status === 'closed' && Boolean(trigger_csat)) {
+        setClauses += `, csat_requested = true`;
+      } else {
+        setClauses += `, csat_requested = false`;
       }
     }
     values.push(req.params.id, tenantId(req));
