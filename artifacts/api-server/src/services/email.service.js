@@ -32,7 +32,8 @@ async function getTenantSmtpConfig(tenantId) {
   );
   if (!rows.length) return null;
   const cfg = rows[0].smtp_config_json;
-  if (!cfg || !cfg.enabled || !cfg.host || !cfg.user || !cfg.pass) return null;
+  // user may be empty if from_email is used as the SMTP username (e.g. Mailgun)
+  if (!cfg || !cfg.enabled || !cfg.host || !cfg.pass || (!cfg.user && !cfg.from_email)) return null;
   return cfg;
 }
 
@@ -41,12 +42,29 @@ function buildTransporter(cfg) {
     host:   cfg.host,
     port:   cfg.port || 587,
     secure: Boolean(cfg.secure),
-    auth:   { user: cfg.user, pass: cfg.pass },
+    // Many providers (Mailgun, SendGrid) use the from_email as the SMTP username
+    auth:   { user: cfg.user || cfg.from_email, pass: cfg.pass },
   });
 }
 
 function fromAddress(cfg) {
   return cfg.from_email || cfg.user;
+}
+
+/**
+ * Build the Reply-To address for conversation threading.
+ * When a visitor hits Reply in their email client, their MUA sends to this
+ * address, which the inbound webhook parses to route directly into the right
+ * conversation without relying on In-Reply-To headers.
+ *
+ * Format: reply+conv_<uuid>@<INBOUND_EMAIL_DOMAIN>
+ * Set INBOUND_EMAIL_DOMAIN in your environment (e.g. inbound.omni.irofficial.com).
+ * If unset the Reply-To header is omitted (header-based threading still works).
+ */
+function replyToAddress(conversationId) {
+  const domain = process.env.INBOUND_EMAIL_DOMAIN;
+  if (!domain || !conversationId) return null;
+  return `reply+conv_${conversationId}@${domain}`;
 }
 
 /** Strip HTML tags to get a plain-text excerpt */
@@ -123,6 +141,11 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
   }
   if (!cfg) return;
 
+  const replyTo = replyToAddress(conversationId);
+  const footer  = replyTo
+    ? 'Simply reply to this email — your reply will be routed directly back to your support thread.'
+    : 'You received this because you have an open support ticket. Do not reply directly to this email.';
+
   const preview = stripHtml(messageBody).slice(0, 200);
   const html = brandedEmail({
     title:    `${agentName} replied to your ticket`,
@@ -130,14 +153,17 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
     bodyHtml: `<p style="font-size:13px;color:#64748b;">
       To continue the conversation, simply reply to this email or visit our support portal.
     </p>`,
-    footer:   'You received this because you have an open support ticket. Do not reply directly to this email.',
+    footer,
   });
 
+  const mailOpts = {
+    from: fromAddress(cfg), to: visitorEmail,
+    subject: `Re: Your support ticket — ${agentName} replied`, html,
+  };
+  if (replyTo) mailOpts.replyTo = replyTo;
+
   try {
-    await buildTransporter(cfg).sendMail({
-      from: fromAddress(cfg), to: visitorEmail,
-      subject: `Re: Your support ticket — ${agentName} replied`, html,
-    });
+    await buildTransporter(cfg).sendMail(mailOpts);
     logger.info({ tenantId, conversationId, agentName, visitorEmail }, 'agent_reply_email_sent');
   } catch (err) {
     logger.warn({ err, tenantId, conversationId }, 'agent_reply_email_failed');

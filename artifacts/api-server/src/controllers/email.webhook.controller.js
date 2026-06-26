@@ -82,6 +82,21 @@ function verifySignature(req) {
 }
 
 // ---------------------------------------------------------------------------
+// Reply+conv_ address parser
+// Detects addresses like:
+//   reply+conv_3fa85f64-...@inbound.yourdomain.com
+// Returns the UUID if found, otherwise null.
+// ---------------------------------------------------------------------------
+const REPLY_CONV_RE = /^reply\+conv[_-]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
+
+function parseConvIdFromReplyTo(toAddress) {
+  const clean = (toAddress || '').replace(/^.*</, '').replace(/>.*$/, '').trim();
+  const local = clean.split('@')[0] || '';
+  const m = REPLY_CONV_RE.exec(local);
+  return m ? m[1] : null;
+}
+
+// ---------------------------------------------------------------------------
 // Routing address parser
 // Extracts the inbound_email_prefix from addresses like:
 //   support@acme.iratelier.com  →  "acme"
@@ -183,9 +198,55 @@ async function handleInboundEmail(req, res) {
       return;
     }
 
-    const prefix = parseRoutingPrefix(Array.isArray(to) ? to[0] : to);
+    const toAddr = Array.isArray(to) ? to[0] : to;
+
+    // ── FAST PATH: reply+conv_<uuid>@ addressing ─────────────────────────────
+    // When the system sets Reply-To: reply+conv_<uuid>@inbound.domain, the visitor's
+    // email client will address their reply directly to this address, letting us
+    // thread it into the correct conversation without needing email headers.
+    const directConvId = parseConvIdFromReplyTo(toAddr);
+    if (directConvId) {
+      // Verify the conversation exists and get its tenant
+      const { rows: convCheck } = await pool.query(
+        `SELECT id, tenant_id, brand_id FROM conversations WHERE id = $1 LIMIT 1`,
+        [directConvId]
+      );
+      if (!convCheck.length) {
+        logger.warn({ convId: directConvId }, 'email_webhook_conv_not_found');
+        return;
+      }
+      const { id: conversationId, tenant_id, brand_id } = convCheck[0];
+
+      // Strip quotes and persist
+      const rawText   = text || (html || '').replace(/<[^>]+>/g, ' ');
+      const cleanBody = stripQuotes(rawText);
+      if (!cleanBody) {
+        logger.warn({ conversationId }, 'email_webhook_empty_body_after_strip');
+        return;
+      }
+
+      const attachmentsJson = JSON.stringify([{ email_message_id: parseMessageId(messageId) }]);
+      const { rows: newMsg } = await pool.query(
+        `INSERT INTO messages (conversation_id, sender_type, message_body, attachments_json)
+         VALUES ($1, 'visitor', $2, $3::jsonb)
+         RETURNING id, conversation_id, sender_type, message_body, created_at`,
+        [conversationId, cleanBody, attachmentsJson]
+      );
+      await pool.query(
+        `UPDATE conversations SET updated_at = NOW(),
+           status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
+         WHERE id = $1`,
+        [conversationId]
+      );
+      if (_io) _io.to(`conv:${conversationId}`).emit('server:new_message', newMsg[0]);
+      logger.info({ conversationId, from }, 'email_webhook_reply_conv_appended');
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const prefix = parseRoutingPrefix(toAddr);
     if (!prefix) {
-      console.warn('[email:webhook] could not determine routing prefix from', to);
+      console.warn('[email:webhook] could not determine routing prefix from', toAddr);
       return;
     }
 
