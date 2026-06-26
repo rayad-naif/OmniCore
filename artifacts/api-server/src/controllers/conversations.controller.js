@@ -29,6 +29,7 @@ const path                      = require('path');
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch(e) {}
+const { R2_ENABLED, uploadToR2 } = require('../lib/r2');
 
 const router = Router();
 router.use(requireAuth);
@@ -59,9 +60,13 @@ router.post('/upload', async (req, res, next) => {
     const buffer   = Buffer.from(data, 'base64');
     const ext      = path.extname(filename) || '';
     const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, safeName);
-    fs.writeFileSync(filePath, buffer);
-    logger.info({ filename, size: buffer.length, agentId: req.agent?.id }, 'agent_file_uploaded');
+    if (R2_ENABLED) {
+      await uploadToR2(buffer, safeName, mimeType || 'application/octet-stream');
+      logger.info({ filename, size: buffer.length, agentId: req.agent?.id, storage: 'r2' }, 'agent_file_uploaded');
+    } else {
+      fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
+      logger.info({ filename, size: buffer.length, agentId: req.agent?.id, storage: 'disk' }, 'agent_file_uploaded');
+    }
     return res.json({ url: `/api/widget/files/${safeName}`, name: filename, type: mimeType });
   } catch (err) { next(err); }
 });

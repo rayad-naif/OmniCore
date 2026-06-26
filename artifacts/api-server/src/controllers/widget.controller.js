@@ -21,6 +21,7 @@ const path                  = require('path');
 const { pool }              = require('../lib/db');
 const logger                = require('../utils/logger');
 const { broadcastToTenant, broadcastToConversation } = require('../services/socket.service');
+const { R2_ENABLED, uploadToR2, streamFromR2 } = require('../lib/r2');
 
 const router = Router();
 
@@ -197,27 +198,38 @@ router.post('/session', async (req, res, next) => {
 });
 
 // ── POST /api/widget/upload ───────────────────────────────────────────────────
-// Accepts base64-encoded file data; saves to disk; returns a URL.
+// Accepts base64-encoded file data; stores in R2 (or disk fallback); returns URL.
 router.post('/upload', express.json({ limit: '20mb' }), async (req, res, next) => {
   try {
     const { filename, mimeType, data } = req.body || {};
     if (!filename || !data) return res.status(400).json({ error: 'filename and data are required' });
-    const buffer  = Buffer.from(data, 'base64');
-    const ext     = path.extname(filename) || '';
+    const buffer   = Buffer.from(data, 'base64');
+    const ext      = path.extname(filename) || '';
     const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, safeName);
-    fs.writeFileSync(filePath, buffer);
-    logger.info({ filename, size: buffer.length }, 'widget_file_uploaded');
+    if (R2_ENABLED) {
+      await uploadToR2(buffer, safeName, mimeType || 'application/octet-stream');
+      logger.info({ filename, size: buffer.length, storage: 'r2' }, 'widget_file_uploaded');
+    } else {
+      fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
+      logger.info({ filename, size: buffer.length, storage: 'disk' }, 'widget_file_uploaded');
+    }
     return res.json({ url: `/api/widget/files/${safeName}`, name: filename, type: mimeType });
   } catch (err) { next(err); }
 });
 
 // ── GET /api/widget/files/:name ───────────────────────────────────────────────
-router.get('/files/:name', (req, res) => {
-  const name     = path.basename(req.params.name); // prevent traversal
-  const filePath = path.join(UPLOADS_DIR, name);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-  res.sendFile(filePath);
+// Serves files from R2 (if configured) or local disk fallback.
+router.get('/files/:name', async (req, res, next) => {
+  try {
+    const name     = path.basename(req.params.name);
+    const filePath = path.join(UPLOADS_DIR, name);
+    if (fs.existsSync(filePath)) return res.sendFile(filePath);
+    if (R2_ENABLED) {
+      const served = await streamFromR2(name, res);
+      if (served) return;
+    }
+    return res.status(404).json({ error: 'File not found' });
+  } catch (err) { next(err); }
 });
 
 // ── POST /api/widget/message ──────────────────────────────────────────────────
@@ -488,6 +500,29 @@ function stripHtml(html){
   return html.replace(/<br\\s*\\/?>/gi,'\\n').replace(/<\\/p>/gi,'\\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\\n{3,}/g,'\\n\\n').trim();
 }
 
+function resolveUrl(url){
+  if(!url)return '';
+  if(/^https?:\/\//.test(url))return url;
+  return API_ORIGIN+url;
+}
+
+function openLightbox(src){
+  var ov=ce('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:2147483647;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+  var img=ce('img');
+  img.src=src;
+  img.style.cssText='max-width:92vw;max-height:88vh;object-fit:contain;border-radius:10px;box-shadow:0 12px 60px rgba(0,0,0,.6);';
+  var closeBtn=ce('button');
+  closeBtn.textContent='\u00d7';
+  closeBtn.style.cssText='position:absolute;top:16px;right:20px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:28px;line-height:1;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+  closeBtn.addEventListener('click',function(e){e.stopPropagation();d.body.removeChild(ov);});
+  ov.addEventListener('click',function(){d.body.removeChild(ov);});
+  img.addEventListener('click',function(e){e.stopPropagation();});
+  ov.appendChild(img);
+  ov.appendChild(closeBtn);
+  d.body.appendChild(ov);
+}
+
 function appendMsg(msg,scroll){
   if(msg.is_internal_note)return;
   var box=qs('#omni-msgs');
@@ -517,16 +552,23 @@ function appendMsg(msg,scroll){
   var atts=[];
   try{if(msg.attachments_json){var p=typeof msg.attachments_json==='string'?JSON.parse(msg.attachments_json):msg.attachments_json;if(Array.isArray(p))atts=p;}}catch(e){}
   atts.forEach(function(att){
-    var aw=ce('div');aw.style.cssText='max-width:78%;margin-top:4px;';
-    if(att.type&&att.type.startsWith('image/')){
-      var img=ce('img');img.src=API_ORIGIN+att.url;
-      img.style.cssText='max-width:200px;max-height:160px;border-radius:10px;display:block;cursor:pointer;';
-      img.onclick=function(){w.open(API_ORIGIN+att.url,'_blank');};
-      aw.appendChild(img);
+    var fullUrl=resolveUrl(att.url||att.attachment_url||'');
+    if(!fullUrl)return;
+    var isImg=(att.type&&att.type.startsWith('image/'))||/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(fullUrl);
+    var aw=ce('div');aw.style.cssText='max-width:78%;margin-top:6px;';
+    if(isImg){
+      var thumb=ce('img');
+      thumb.src=fullUrl;
+      thumb.alt=att.name||'image';
+      thumb.style.cssText='max-width:200px;max-height:160px;border-radius:10px;display:block;cursor:zoom-in;object-fit:cover;border:1px solid rgba(0,0,0,.08);';
+      thumb.addEventListener('click',function(){openLightbox(fullUrl);});
+      aw.appendChild(thumb);
     }else{
-      var lnk=ce('a');lnk.href=API_ORIGIN+att.url;lnk.target='_blank';
-      lnk.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:500;'+(isAgent?'background:#e2e8f0;color:#334155;':'background:rgba(255,255,255,.2);color:#fff;');
-      lnk.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'+escHtml(att.name||'File');
+      var lnk=ce('a');
+      lnk.href=fullUrl;
+      lnk.setAttribute('download',att.name||'download');
+      lnk.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;text-decoration:none;font-size:12px;font-weight:500;'+(isAgent?'background:#e2e8f0;color:#334155;':'background:rgba(255,255,255,.22);color:#fff;');
+      lnk.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'+escHtml(att.name||'Download File');
       aw.appendChild(lnk);
     }
     wrap.appendChild(aw);
