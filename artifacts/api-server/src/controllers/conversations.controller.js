@@ -310,8 +310,11 @@ router.get('/:id/messages', async (req, res, next) => {
 // ─── POST /api/conversations/:id/messages ────────────────────────────────────
 router.post('/:id/messages', async (req, res, next) => {
   try {
-    const { body: messageBody, isInternalNote = false } = req.body || {};
-    if (!messageBody?.trim()) return res.status(400).json({ error: 'message body is required' });
+    const { body: messageBody, isInternalNote = false, attachments = [] } = req.body || {};
+    // Allow body-only, attachment-only, or both
+    const hasBody = messageBody?.trim?.();
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    if (!hasBody && !hasAttachments) return res.status(400).json({ error: 'message body or attachment is required' });
 
     const { rows: convRows } = await pool.query(
       `SELECT id, status, tenant_id, visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
@@ -320,11 +323,12 @@ router.post('/:id/messages', async (req, res, next) => {
     if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
     if (convRows[0].status === 'closed') return res.status(409).json({ error: 'Conversation is closed' });
 
+    const attachmentsJson = hasAttachments ? JSON.stringify(attachments) : '[]';
     const { rows: newMsg } = await pool.query(
-      `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body, is_internal_note)
-       VALUES ($1, 'agent', $2, $3, $4)
+      `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body, is_internal_note, attachments_json)
+       VALUES ($1, 'agent', $2, $3, $4, $5)
        RETURNING id, conversation_id, sender_type, message_body, is_internal_note, attachments_json, created_at`,
-      [req.params.id, req.agent.id, messageBody.trim(), Boolean(isInternalNote)]
+      [req.params.id, req.agent.id, hasBody || '', Boolean(isInternalNote), attachmentsJson]
     );
 
     const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [req.agent.id]);

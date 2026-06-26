@@ -40,10 +40,12 @@ interface Conversation {
   csat_score?: number | null; brand_id?: string
 }
 
+interface Attachment { url: string; name: string; type?: string }
+
 interface Message {
   id: string; conversation_id: string; sender_type: Sender
   sender_name: string; message_body: string; is_internal_note: boolean
-  created_at: string; attachments_json?: string | null
+  created_at: string; attachments_json?: string | Attachment[] | null
 }
 
 interface Brand {
@@ -113,12 +115,19 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message[]>
     },
-    sendMessage: async (id: string, body: string, isInternalNote = false): Promise<Message> => {
+    sendMessage: async (id: string, body: string, isInternalNote = false, attachments: Attachment[] = []): Promise<Message> => {
       const r = await authFetch(`${API}/conversations/${id}/messages`, {
-        method: 'POST', body: JSON.stringify({ body, isInternalNote }),
+        method: 'POST', body: JSON.stringify({ body, isInternalNote, attachments }),
       })
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message>
+    },
+    uploadFile: async (filename: string, mimeType: string, data: string): Promise<Attachment> => {
+      const r = await authFetch(`${API}/conversations/upload`, {
+        method: 'POST', body: JSON.stringify({ filename, mimeType, data }),
+      })
+      if (!r.ok) throw new Error('Upload failed')
+      return r.json() as Promise<Attachment>
     },
     patchConversation: async (id: string, patch: Record<string, unknown>): Promise<Conversation> => {
       const r = await authFetch(`${API}/conversations/${id}`, {
@@ -703,9 +712,14 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
     finally { setSaving(false) }
   }
 
-  // Parse attachments
-  let attachments: Array<{ url: string; name: string; type?: string }> = []
-  try { if (msg.attachments_json) attachments = JSON.parse(msg.attachments_json) } catch {}
+  // Parse attachments — handle both JSON string (REST) and already-parsed array (socket)
+  let attachments: Attachment[] = []
+  try {
+    if (msg.attachments_json) {
+      const raw = typeof msg.attachments_json === 'string' ? JSON.parse(msg.attachments_json) : msg.attachments_json
+      if (Array.isArray(raw)) attachments = raw
+    }
+  } catch { /* ignore malformed */ }
 
   const seenAt = isLastAgentMsg && readAt && new Date(readAt) > new Date(msg.created_at) ? readAt : null
 
@@ -825,12 +839,14 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
 // ─── Email-style Compose Box (rich-text via TipTap) ───────────────────────────
 function EmailComposeBox({ conv, onSend, disabled }: {
   conv: Conversation
-  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   disabled?: boolean
 }) {
-  const [sending, setSending]     = useState(false)
-  const [isNote, setIsNote]       = useState(false)
-  const [rephrasing, setRephrase] = useState(false)
+  const [sending, setSending]       = useState(false)
+  const [isNote, setIsNote]         = useState(false)
+  const [rephrasing, setRephrase]   = useState(false)
+  const [pendingFile, setPending]   = useState<{ name: string; type: string; dataUrl: string } | null>(null)
+  const fileInputRef                = useRef<HTMLInputElement>(null)
   const api = useApi()
 
   const isClosed = conv.status === 'closed' || disabled
@@ -849,13 +865,26 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     editable: !isClosed,
   })
 
+  const canSend = !isClosed && !sending && (pendingFile !== null || (editor !== null && !(editor?.isEmpty ?? true)))
+
   const handleSend = async () => {
-    if (!editor || editor.isEmpty || sending) return
-    const body = editor.getHTML()
-    editor.commands.clearContent(true)
+    if (isClosed || sending || (!pendingFile && (!editor || editor.isEmpty))) return
+    const body = editor ? editor.getHTML() : ''
+    const captured = pendingFile
+    editor?.commands.clearContent(true)
+    setPending(null)
     setSending(true)
-    try { await onSend(body, isNote) } catch { /* ignore */ } finally { setSending(false) }
-    editor.commands.focus()
+    try {
+      let attachments: Attachment[] = []
+      if (captured) {
+        const comma  = captured.dataUrl.indexOf(',')
+        const b64    = comma >= 0 ? captured.dataUrl.slice(comma + 1) : captured.dataUrl
+        const att    = await api.uploadFile(captured.name, captured.type, b64)
+        attachments  = [att]
+      }
+      await onSend(body, isNote, attachments)
+    } catch { /* ignore */ } finally { setSending(false) }
+    editor?.commands.focus()
   }
 
   const handleRephrase = async () => {
@@ -867,6 +896,32 @@ function EmailComposeBox({ conv, onSend, disabled }: {
       editor.commands.setContent(improved)
     } catch { /* ignore */ }
     finally { setRephrase(false); editor.commands.focus() }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 10 * 1024 * 1024) { alert('File too large — max 10 MB'); return }
+    const reader = new FileReader()
+    reader.onload = ev => setPending({ name: file.name, type: file.type, dataUrl: ev.target!.result as string })
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile()
+        if (!file) continue
+        e.preventDefault()
+        const reader = new FileReader()
+        reader.onload = ev => setPending({ name: `paste-${Date.now()}.png`, type: file.type, dataUrl: ev.target!.result as string })
+        reader.readAsDataURL(file)
+        break
+      }
+    }
   }
 
   const isActive = (fmt: string) => editor?.isActive(fmt) ?? false
@@ -894,9 +949,26 @@ function EmailComposeBox({ conv, onSend, disabled }: {
         className={`tiptap-compose ${isNote ? 'bg-amber-50/20' : ''}`}
         onClick={() => editor?.commands.focus()}
         onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSend() } }}
+        onPaste={handlePaste}
       >
         <EditorContent editor={editor} />
       </div>
+      {/* Pending file preview */}
+      {pendingFile && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-sky-50 border-t border-sky-100">
+          {pendingFile.type.startsWith('image/') ? (
+            <img src={pendingFile.dataUrl} alt="preview" className="w-8 h-8 rounded object-cover shrink-0 border border-sky-200" />
+          ) : (
+            <Paperclip size={14} className="text-sky-500 shrink-0" />
+          )}
+          <span className="text-xs text-sky-700 flex-1 truncate font-medium">{pendingFile.name}</span>
+          <button onClick={() => setPending(null)} className="text-sky-400 hover:text-sky-600 font-bold text-base leading-none">×</button>
+        </div>
+      )}
+      {/* Hidden file input */}
+      <input ref={fileInputRef} type="file" className="hidden"
+        accept="image/*,.pdf,.csv,.doc,.docx,.xls,.xlsx,.txt"
+        onChange={handleFileChange} />
       {/* Formatting toolbar */}
       <div className="flex items-center justify-between px-3 py-2 border-t border-slate-100 bg-slate-50/50">
         <div className="flex items-center gap-0.5">
@@ -913,16 +985,22 @@ function EmailComposeBox({ conv, onSend, disabled }: {
             <List size={13} />
           </button>
           <div className="w-px h-4 bg-slate-200 mx-1" />
+          <button onClick={() => fileInputRef.current?.click()} disabled={isClosed}
+            title="Attach file (or paste image)"
+            className={`p-1.5 rounded-lg transition-colors ${pendingFile ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+            <Paperclip size={13} />
+          </button>
+          <div className="w-px h-4 bg-slate-200 mx-1" />
           <button onClick={handleRephrase} disabled={!editor || editor.isEmpty || rephrasing || isClosed}
             title="AI rephrase" className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
             {rephrasing ? <RefreshCw size={14} className="animate-spin text-violet-500" /> : <Sparkles size={14} />}
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-slate-300 hidden sm:block">Ctrl+Enter to send</span>
+          <span className="text-[10px] text-slate-300 hidden sm:block">Ctrl+Enter · Paste image</span>
           <button
             onClick={handleSend}
-            disabled={!editor || editor.isEmpty || sending || isClosed}
+            disabled={!canSend}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isNote ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-sky-600 hover:bg-sky-700 text-white'}`}
           >
             {sending ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
@@ -937,7 +1015,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
 function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt }: {
   conv: Conversation; messages: Message[]
-  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
@@ -2243,7 +2321,7 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
   messages: Record<string, Message[]>; visitorPages: Record<string, string>
   typingInfo: Record<string, string>
   onSelect: (id: string) => void
-  onSend: (body: string, isInternalNote?: boolean) => Promise<void>
+  onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status) => void
   onConvertToTicket: () => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
@@ -2635,9 +2713,9 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
   }, [])
 
-  const handleSend = useCallback(async (body: string, isInternalNote = false) => {
+  const handleSend = useCallback(async (body: string, isInternalNote = false, attachments: Attachment[] = []) => {
     if (!activeId) return
-    const msg = await api.sendMessage(activeId, body, isInternalNote)
+    const msg = await api.sendMessage(activeId, body, isInternalNote, attachments)
     setMessages(prev => {
       const existing = prev[activeId] ?? []
       if (existing.some(m => m.id === msg.id)) return prev
