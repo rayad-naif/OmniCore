@@ -875,6 +875,85 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
   )
 }
 
+// ─── Page Journey Group ────────────────────────────────────────────────────────
+function PageJourneyGroup({ msgs }: { msgs: Message[] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const entries = msgs.map(m => ({
+    url: m.message_body.replace(/^Visited:\s*/, '').trim(),
+    ts: m.created_at,
+  }))
+
+  const first = entries[0].url
+  const last  = entries[entries.length - 1].url
+  const summary = `${entries.length} pages: ${first}${entries.length > 2 ? ' → … → ' : ' → '}${last}`
+
+  return (
+    <div className="flex justify-center my-1">
+      <div className="max-w-[85%] w-full">
+        <button
+          onClick={() => setExpanded(x => !x)}
+          className="w-full inline-flex items-center justify-between gap-2 text-[10px] text-slate-500 bg-slate-100 hover:bg-slate-150 px-3 py-1.5 rounded-full italic transition-colors group"
+        >
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <Link2 size={9} className="shrink-0 text-slate-400" />
+            <span className="truncate">Visited {summary}</span>
+          </span>
+          <ChevronDown size={10} className={`shrink-0 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+        {expanded && (
+          <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 space-y-1">
+            {entries.map((e, i) => (
+              <div key={i} className="flex items-start gap-2 text-[10px]">
+                <span className="text-slate-400 shrink-0 tabular-nums">{i + 1}.</span>
+                <span className="text-slate-700 break-all flex-1 font-mono">{e.url}</span>
+                <span className="text-slate-400 shrink-0 whitespace-nowrap">
+                  {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── buildMessageGroups ────────────────────────────────────────────────────────
+type MsgGroup =
+  | { type: 'single'; msg: Message; idx: number }
+  | { type: 'journey'; msgs: Message[] }
+
+function buildMessageGroups(messages: Message[]): MsgGroup[] {
+  const groups: MsgGroup[] = []
+  let i = 0
+  while (i < messages.length) {
+    const m = messages[i]
+    if (m.sender_type === 'system' && m.message_body.startsWith('Visited:')) {
+      const group: Message[] = [m]
+      let j = i + 1
+      while (
+        j < messages.length &&
+        messages[j].sender_type === 'system' &&
+        messages[j].message_body.startsWith('Visited:')
+      ) {
+        group.push(messages[j])
+        j++
+      }
+      if (group.length >= 2) {
+        groups.push({ type: 'journey', msgs: group })
+      } else {
+        groups.push({ type: 'single', msg: m, idx: i })
+      }
+      i = j
+    } else {
+      groups.push({ type: 'single', msg: m, idx: i })
+      i++
+    }
+  }
+  return groups
+}
+
 // ─── Visitor Info Panel ────────────────────────────────────────────────────────
 function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPage: string | null }) {
   const api = useApi()
@@ -1272,7 +1351,11 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center"><MessageSquare size={32} className="text-slate-200 mb-2" /><p className="text-sm text-slate-400">No messages yet</p></div>
-          ) : messages.map((m, i) => {
+          ) : buildMessageGroups(messages).map((group) => {
+            if (group.type === 'journey') {
+              return <PageJourneyGroup key={group.msgs[0].id} msgs={group.msgs} />
+            }
+            const { msg: m, idx: i } = group
             const isLastAgent = (m.sender_type === 'agent' || m.sender_type === 'bot') && !m.is_internal_note &&
               messages.slice(i + 1).every(x => (x.sender_type !== 'agent' && x.sender_type !== 'bot') || x.is_internal_note)
             return <MessageBubble key={m.id} msg={m} visitorName={conv.visitor_name} onEdit={onEditMessage} onDelete={onDeleteMessage} isLastAgentMsg={isLastAgent} readAt={isLastAgent ? visitorReadAt : null} />
