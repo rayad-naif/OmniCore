@@ -1043,14 +1043,15 @@ function send(){
 
   if(hasFile){
     var pf=pendingFile;clearAttach();
-    if(sentBody){
-      appendMsg({id:'opt_'+Date.now(),sender_type:'visitor',message_body:sentBody,is_internal_note:false,created_at:new Date().toISOString()},true);
-    }
     uploadFile(pf,function(err,fileData){
       isSending=false;els.snd.disabled=false;
       if(err){appendMsg({id:'err_'+Date.now(),sender_type:'system',message_body:'\u26A0\uFE0F File upload failed.',is_internal_note:false,created_at:new Date().toISOString()},true);return;}
       sendRest(sentBody||'',[{url:fileData.url,name:pf.name,type:pf.type}],function(msg){
-        if(msg){state.messages.push(msg);}
+        if(msg){
+          // Dedup: socket echo may have arrived first and already rendered it
+          var already=state.messages.some(function(m){return m.id===msg.id;});
+          if(!already){state.messages.push(msg);appendMsg(msg,true);}
+        }
       });
     });
     return;
