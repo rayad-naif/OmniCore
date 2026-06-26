@@ -408,18 +408,28 @@ function attachSocketServer(httpServer) {
       socket.to(`conv:${conversationId}`).emit('visitor:page_change', {
         conversationId, url,
       });
+      // Persist so the dashboard shows the current page even if no agent was
+      // in the room when this event fired.
+      pool.query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [url, conversationId])
+        .catch(() => {});
     });
 
     // ── client:page_view ────────────────────────────────────────────────────
     // Emitted by the widget on each URL change (debounced 300 ms) and on init.
     // Inserts a system message into the conversation timeline so agents see a
     // timestamped trail of pages the visitor visited.
-    socket.on('client:page_view', async ({ conversationId, path }) => {
+    socket.on('client:page_view', async ({ conversationId, path, url }) => {
       if (actorType !== 'visitor') return;
       if (!conversationId || !path) return;
       try {
         const conv = await resolveConversation(conversationId, tenantId);
         if (!conv) return;
+
+        // Persist the latest full URL for the dashboard "Current Page" field.
+        if (url) {
+          pool.query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [url, conversationId])
+            .catch(() => {});
+        }
 
         const content = `Visited: ${path}`;
         const { rows } = await pool.query(

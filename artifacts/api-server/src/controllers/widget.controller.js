@@ -106,9 +106,10 @@ router.post('/session', async (req, res, next) => {
           });
         }
 
-        // Find the most recent conversation (any status) so we can detect closures
+        // Find the most recent NON-TICKET conversation so we can detect closures.
+        // Tickets are email conversations and must never be reloaded into the widget.
         let { rows: cRows } = await pool.query(
-          `SELECT id, status FROM conversations WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          `SELECT id, status FROM conversations WHERE visitor_id = $1 AND is_ticket = false ORDER BY created_at DESC LIMIT 1`,
           [visitorId]
         );
         let convId = cRows[0]?.id;
@@ -301,10 +302,11 @@ router.post('/message', async (req, res, next) => {
     const visitor = vRows[0];
 
     const { rows: cRows } = await pool.query(
-      `SELECT id, status, tenant_id FROM conversations WHERE id = $1 AND visitor_id = $2`,
+      `SELECT id, status, tenant_id, is_ticket FROM conversations WHERE id = $1 AND visitor_id = $2`,
       [conversationId, visitor.id]
     );
     if (!cRows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    if (cRows[0].is_ticket) return res.status(409).json({ error: 'Conversation has been moved to an email ticket' });
     if (cRows[0].status === 'closed') return res.status(409).json({ error: 'Conversation is closed' });
 
     const attachmentsJson = (attachments && attachments.length > 0) ? JSON.stringify(attachments) : '[]';
@@ -376,7 +378,7 @@ router.get('/messages', async (req, res, next) => {
     if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
 
     const { rows: cRows } = await pool.query(
-      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2',
+      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2 AND is_ticket = false',
       [cid, vRows[0].id]
     );
     if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
@@ -412,7 +414,7 @@ router.patch('/conversations/:id/read', async (req, res, next) => {
     );
     if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
     const { rows: cRows } = await pool.query(
-      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2', [convId, vRows[0].id]
+      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2 AND is_ticket = false', [convId, vRows[0].id]
     );
     if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
     const readAt = new Date().toISOString();

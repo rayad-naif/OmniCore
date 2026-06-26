@@ -46,6 +46,11 @@ pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ticket_number INT
 pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS conversations_ticket_number_uidx ON conversations (ticket_number) WHERE ticket_number IS NOT NULL`)
   .catch(() => {});
 
+// Latest page the visitor is viewing — persisted so the dashboard can show it
+// immediately when an agent opens a conversation (independent of socket timing).
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS current_url TEXT`)
+  .catch(() => {});
+
 pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
   .catch(() => {});
 
@@ -182,7 +187,7 @@ router.get('/', async (req, res, next) => {
            c.created_at, c.updated_at, c.sla_breach_at,
            c.assigned_agent_id, c.is_ticket, c.visitor_id,
            c.csat_score, c.brand_id, c.visitor_last_read_at,
-           c.referrer_url,
+           c.referrer_url, c.current_url, c.ticket_number,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
            a.name                                           AS agent_name,
@@ -251,7 +256,13 @@ router.patch('/:id', async (req, res, next) => {
     const values   = fields.map(f => { const v = req.body[f]; return (v === '' || v === undefined) ? null : v; });
 
     if (convertingToTicket) {
-      setClauses += `, ticket_number = nextval('conversations_ticket_number_seq')`;
+      // Tickets are email conversations — close the live widget channel and
+      // move the conversation to the 'email' channel. The widget can no longer
+      // access it (see widget session lookup which excludes is_ticket rows).
+      setClauses += `, ticket_number = nextval('conversations_ticket_number_seq'), channel = 'email'`;
+      if (!fields.includes('status')) {
+        setClauses += `, status = 'submitted'`;
+      }
     }
     values.push(req.params.id, tenantId(req));
 
@@ -275,6 +286,18 @@ router.patch('/:id', async (req, res, next) => {
           sendTicketCreatedEmail(tenantId(req), req.params.id, ticketNum, vr[0].email, convSubject).catch(() => {});
         }
       }).catch(() => {});
+
+      // Close the live widget conversation so the visitor cannot keep chatting
+      // in the bubble — it has been moved to an email ticket.
+      if (oldVisitorId) {
+        const ticketClosePayload = {
+          conversationId: req.params.id,
+          trigger_csat: false,
+          converted_to_ticket: true,
+        };
+        broadcastToVisitor(oldVisitorId, 'conversation:closed', ticketClosePayload);
+        broadcastToConversation(req.params.id, 'conversation:closed', ticketClosePayload);
+      }
     }
 
     const newStatus = rows[0].status;
@@ -349,7 +372,7 @@ router.post('/:id/messages', async (req, res, next) => {
     if (!hasBody && !hasAttachments) return res.status(400).json({ error: 'message body or attachment is required' });
 
     const { rows: convRows } = await pool.query(
-      `SELECT id, status, tenant_id, visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      `SELECT id, status, tenant_id, visitor_id, is_ticket FROM conversations WHERE id = $1 AND tenant_id = $2`,
       [req.params.id, tenantId(req)]
     );
     if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
@@ -370,7 +393,8 @@ router.post('/:id/messages', async (req, res, next) => {
     broadcastToConversation(req.params.id, 'server:new_message', result);
     // Also deliver directly to the visitor's personal room — guarantees the widget
     // receives the agent reply even if it hasn't yet joined the conversation room.
-    if (convRows[0].visitor_id) {
+    // Tickets are email-only conversations and must never surface in the live widget.
+    if (convRows[0].visitor_id && !convRows[0].is_ticket) {
       broadcastToVisitor(convRows[0].visitor_id, 'server:new_message', result);
     }
     logger.info({ conversationId: req.params.id, agentId: req.agent.id }, 'agent_message_sent');

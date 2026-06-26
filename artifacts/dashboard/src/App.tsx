@@ -40,6 +40,7 @@ interface Conversation {
   visitor_id?: string; visitor_timezone?: string | null
   csat_score?: number | null; brand_id?: string
   referrer_url?: string | null
+  current_url?: string | null
 }
 
 interface Attachment { url: string; name: string; type?: string }
@@ -133,6 +134,11 @@ function useApi() {
       const r = await authFetch(`${API}/conversations/${id}/messages`)
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<Message[]>
+    },
+    getConversation: async (id: string): Promise<Conversation> => {
+      const r = await authFetch(`${API}/conversations/${id}`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<Conversation>
     },
     sendMessage: async (id: string, body: string, isInternalNote = false, attachments: Attachment[] = []): Promise<Message> => {
       const r = await authFetch(`${API}/conversations/${id}/messages`, {
@@ -1140,6 +1146,26 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 
   const isClosed = conv.status === 'closed' || disabled
 
+  // ── Canned responses ("/" slash command) ──────────────────────────────────
+  const [canned, setCanned]         = useState<CannedResponse[]>([])
+  const [slash, setSlash]           = useState<{ open: boolean; query: string; start: number; index: number }>({ open: false, query: '', start: 0, index: 0 })
+  const slashRef                    = useRef(slash)
+  slashRef.current = slash
+  const editorRef                   = useRef<ReturnType<typeof useEditor>>(null)
+  const slashKeyRef                 = useRef<(e: KeyboardEvent) => boolean>(() => false)
+
+  useEffect(() => {
+    api.listCannedResponses().then(r => setCanned(r)).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const filterCanned = (q: string) => {
+    const query = q.toLowerCase()
+    return canned.filter(c =>
+      !query || (c.shortcut || '').toLowerCase().includes(query) || c.name.toLowerCase().includes(query)
+    )
+  }
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -1147,12 +1173,56 @@ function EmailComposeBox({ conv, onSend, disabled }: {
         placeholder: isClosed
           ? 'Conversation closed — reopen to reply'
           : isNote
-          ? 'Write an internal note (not visible to visitor)…'
-          : 'Write your reply… (Ctrl+Enter to send)',
+          ? 'Write an internal note (not visible to visitor)… (type / for canned responses)'
+          : 'Write your reply… (Ctrl+Enter to send · type / for canned responses)',
       }),
     ],
     editable: !isClosed,
+    editorProps: {
+      handleKeyDown: (_view, event) => slashKeyRef.current(event),
+    },
+    onUpdate: ({ editor }) => {
+      const { from } = editor.state.selection
+      const textBefore = editor.state.doc.textBetween(Math.max(0, from - 40), from, '\n', '\n')
+      const m = /(?:^|\s)\/([a-zA-Z0-9_-]*)$/.exec(textBefore)
+      if (m) {
+        const start = from - m[1].length - 1
+        setSlash({ open: true, query: m[1], start, index: 0 })
+      } else {
+        setSlash(s => (s.open ? { ...s, open: false } : s))
+      }
+    },
   })
+  editorRef.current = editor
+
+  const applyCanned = (resp: CannedResponse) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const from = ed.state.selection.from
+    const start = slashRef.current.start
+    const html = resp.body
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    ed.chain().focus().deleteRange({ from: start, to: from }).insertContent(html).run()
+    setSlash({ open: false, query: '', start: 0, index: 0 })
+  }
+
+  const slashItems = slash.open ? filterCanned(slash.query) : []
+
+  // Keyboard navigation inside the slash menu (intercepted before ProseMirror).
+  slashKeyRef.current = (event: KeyboardEvent) => {
+    const st = slashRef.current
+    if (!st.open) return false
+    const items = filterCanned(st.query)
+    if (!items.length) return false
+    if (event.key === 'ArrowDown') { setSlash(s => ({ ...s, index: (s.index + 1) % items.length })); return true }
+    if (event.key === 'ArrowUp')   { setSlash(s => ({ ...s, index: (s.index - 1 + items.length) % items.length })); return true }
+    if ((event.key === 'Enter' && !event.ctrlKey && !event.metaKey) || event.key === 'Tab') {
+      applyCanned(items[Math.min(st.index, items.length - 1)]); return true
+    }
+    if (event.key === 'Escape') { setSlash(s => ({ ...s, open: false })); return true }
+    return false
+  }
 
   const canSend = !isClosed && !sending && (pendingFile !== null || (editor !== null && !(editor?.isEmpty ?? true)))
 
@@ -1234,13 +1304,36 @@ function EmailComposeBox({ conv, onSend, disabled }: {
         </div>
       </div>
       {/* Rich-text body */}
-      <div
-        className={`tiptap-compose ${isNote ? 'bg-amber-50/20' : ''}`}
-        onClick={() => editor?.commands.focus()}
-        onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSend() } }}
-        onPaste={handlePaste}
-      >
-        <EditorContent editor={editor} />
+      <div className="relative">
+        {slash.open && slashItems.length > 0 && (
+          <div className="absolute bottom-full left-3 mb-2 w-80 max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1">
+            <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1 border-b border-slate-100">
+              <Zap size={10} className="text-amber-500" />Canned Responses
+            </div>
+            {slashItems.map((c, i) => (
+              <button
+                key={c.id}
+                onMouseDown={e => { e.preventDefault(); applyCanned(c) }}
+                onMouseEnter={() => setSlash(s => ({ ...s, index: i }))}
+                className={`w-full text-left px-3 py-2 transition-colors ${i === Math.min(slash.index, slashItems.length - 1) ? 'bg-sky-50' : 'hover:bg-slate-50'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-700">{c.name}</span>
+                  {c.shortcut && <span className="text-[10px] font-mono text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">{c.shortcut}</span>}
+                </div>
+                <p className="text-[11px] text-slate-500 truncate mt-0.5">{c.body}</p>
+              </button>
+            ))}
+          </div>
+        )}
+        <div
+          className={`tiptap-compose ${isNote ? 'bg-amber-50/20' : ''}`}
+          onClick={() => editor?.commands.focus()}
+          onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSend() } }}
+          onPaste={handlePaste}
+        >
+          <EditorContent editor={editor} />
+        </div>
       </div>
       {/* Pending file preview */}
       {pendingFile && (
@@ -3842,6 +3935,18 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, unread: 0 } : c))
   }, [activeId]) // eslint-disable-line
 
+  // On open, fetch the freshest current_url so "Current Page" is accurate even if
+  // the visitor navigated while no agent was in the conversation room.
+  useEffect(() => {
+    if (!activeId) return
+    api.getConversation(activeId)
+      .then(c => {
+        if (c.current_url) setVisitorPages(prev => (prev[activeId] ? prev : { ...prev, [activeId]: c.current_url! }))
+        setConvs(prev => prev.map(x => x.id === activeId ? { ...x, current_url: c.current_url ?? x.current_url } : x))
+      })
+      .catch(() => { /* non-fatal */ })
+  }, [activeId]) // eslint-disable-line
+
   // Polling safety net: every 8 s re-fetch messages for the open conversation.
   // Catches any message that slipped through during a socket room race or blip.
   useEffect(() => {
@@ -3957,7 +4062,7 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} onSelectConversation={handleSelectConversation} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? activeConv.current_url ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} onSelectConversation={handleSelectConversation} /> : <EmptyChat />}
               </>
             )
           )}

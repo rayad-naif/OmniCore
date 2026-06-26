@@ -70,3 +70,17 @@ Socket events: `visitor:is_typing` → payload `{conversationId, displayName}`, 
 
 # JWT_SECRET
 Set as a shared env var (not secret) for dev convenience. Value is the 96-char hex string beginning `66a10cf1...`. Ensure it is set before starting api-server or login will throw `JWT_SECRET is not configured`.
+
+# Active dashboard is App.tsx — Inbox.jsx is DEAD CODE
+`main.tsx` renders `App.tsx`. `pages/Inbox.jsx` is NOT imported anywhere and is dead code. Any agent-facing dashboard feature (composer, canned responses, page tracking, telemetry) must be implemented in `App.tsx`. The composer is `EmailComposeBox` (TipTap/ProseMirror, not a plain textarea) — slash-command UX must hook `editorProps.handleKeyDown` + `onUpdate`, using refs to avoid stale closures since `useEditor` config is captured once.
+**Why:** Time was lost building canned responses in Inbox.jsx before realizing it's unused.
+
+# Two widget implementations — demo uses the embedded one
+The customer/demo widget served at `GET /api/widget/widget.js` is the embedded IIFE bundle inside `widget.controller.js` (the big template literal). `artifacts/api-server/public/omnicore-widget.js` is a SEPARATE, unused-by-demo file. Widget behavior changes (SPA URL tracking, conversation:closed handling) must go in the embedded bundle in `widget.controller.js`, not the public file.
+**Why:** SPA tracking was first added to the wrong (public) file, so it appeared "not working" on the demo.
+
+# Page-URL tracking is socket-only + persisted fallback
+Widget emits `visitor:page_change` (full url) and `client:page_view` (url+path, debounced) only when a conversationId exists and socket connected. Real-time forwarding only reaches agents already in the `conv:<id>` room. For reliability, `conversations.current_url` (self-healing column) is persisted in both socket handlers; the dashboard falls back to `conv.current_url` so "Current Page" shows on open regardless of room timing. `client:page_view` also inserts `Visited: <path>` system messages → page history.
+
+# Convert-to-ticket closes the widget conversation
+PATCH /conversations/:id with `is_ticket:true` (when not already a ticket) also sets `channel='email'` and `status='submitted'` (unless status explicitly provided), assigns ticket_number, and emits `conversation:closed` (converted_to_ticket:true) to the visitor + conv room so the widget bubble closes. Widget session lookup excludes `is_ticket=true` rows (tickets never reload into the widget) and the widget message endpoint rejects is_ticket conversations (409). Tickets are email conversations, not widget-accessible.
