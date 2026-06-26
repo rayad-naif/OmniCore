@@ -49,6 +49,9 @@ pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS conversations_ticket_number_uidx O
 pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
   .catch(() => {});
 
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS referrer_url TEXT`)
+  .catch(() => {});
+
 // Extend the status check constraint to include ticket statuses
 pool.query(`
   ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_status_check;
@@ -179,6 +182,7 @@ router.get('/', async (req, res, next) => {
            c.created_at, c.updated_at, c.sla_breach_at,
            c.assigned_agent_id, c.is_ticket, c.visitor_id,
            c.csat_score, c.brand_id, c.visitor_last_read_at,
+           c.referrer_url,
            v.email                                          AS visitor_email,
            COALESCE(v.display_name, v.email, 'Visitor')    AS visitor_name,
            a.name                                           AS agent_name,

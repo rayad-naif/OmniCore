@@ -46,7 +46,7 @@ router.get('/health', (_req, res) => res.json({ ok: true }));
 // ── POST /api/widget/session ──────────────────────────────────────────────────
 router.post('/session', async (req, res, next) => {
   try {
-    const { brandId, sessionToken, visitorName, visitorEmail, timezone, forceNew } = req.body || {};
+    const { brandId, sessionToken, visitorName, visitorEmail, timezone, forceNew, referrerUrl } = req.body || {};
     if (!brandId) return res.status(400).json({ error: 'brandId is required' });
 
     // ── Returning visitor ──────────────────────────────────────────────────────
@@ -79,9 +79,9 @@ router.post('/session', async (req, res, next) => {
         // ── force_new: always create a fresh conversation, preserve visitor identity ──
         if (forceNew) {
           const { rows: nc } = await pool.query(
-            `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
-             VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
-            [tenantId, brandId, visitorId]
+            `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
+             VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
+            [tenantId, brandId, visitorId, referrerUrl || null]
           );
           const newConvId = nc[0].id;
           try {
@@ -114,9 +114,9 @@ router.post('/session', async (req, res, next) => {
         let convId = cRows[0]?.id;
         if (!convId || cRows[0]?.status === 'closed') {
           const { rows: nc } = await pool.query(
-            `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
-             VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
-            [tenantId, brandId, visitorId]
+            `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
+             VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
+            [tenantId, brandId, visitorId, referrerUrl || null]
           );
           convId = nc[0].id;
           try {
@@ -172,9 +172,9 @@ router.post('/session', async (req, res, next) => {
     );
 
     const { rows: cNew } = await pool.query(
-      `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
-       VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
-      [tenant_id, brandId, vNew[0].id]
+      `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
+       VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
+      [tenant_id, brandId, vNew[0].id, referrerUrl || null]
     );
 
     try {
@@ -962,7 +962,8 @@ function startSession(forceNew){
       visitorName:state.visitorName||null,
       visitorEmail:state.visitorEmail||null,
       timezone:tz||null,
-      forceNew:forceNew||false
+      forceNew:forceNew||false,
+      referrerUrl:w.location.href||null
     })
   })
   .then(function(r){return r.json();})

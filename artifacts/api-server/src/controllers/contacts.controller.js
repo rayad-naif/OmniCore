@@ -184,7 +184,7 @@ router.get('/:visitorId/conversations', async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT
          c.id, c.status, c.channel, c.subject, c.priority,
-         c.created_at, c.updated_at, c.csat_score,
+         c.created_at, c.updated_at, c.csat_score, c.referrer_url,
          b.brand_name,
          a.name AS agent_name
        FROM conversations c

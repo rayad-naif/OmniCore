@@ -39,6 +39,7 @@ interface Conversation {
   ticket_number?: number | null
   visitor_id?: string; visitor_timezone?: string | null
   csat_score?: number | null; brand_id?: string
+  referrer_url?: string | null
 }
 
 interface Attachment { url: string; name: string; type?: string }
@@ -105,6 +106,7 @@ interface ContactConversation {
   id: string; status: string; channel: string; subject: string | null
   priority: string; created_at: string; updated_at: string
   csat_score: number | null; brand_name: string; agent_name: string | null
+  referrer_url?: string | null
 }
 
 // ─── API Layer ────────────────────────────────────────────────────────────────
@@ -1283,6 +1285,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
             </span>
             {conv.visitor_email && <><span>·</span><span>{conv.visitor_email}</span></>}
             <span>·</span><span className="capitalize">{conv.channel}</span>
+            {conv.referrer_url && (<><span>·</span><a href={conv.referrer_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-sky-600 hover:underline max-w-[220px] truncate" title={conv.referrer_url}><Link2 size={9} className="shrink-0" />{conv.referrer_url}</a></>)}
             {conv.sla_breach_at && <span className={`flex items-center gap-0.5 ${slaColor(conv.sla_breach_at)}`}><Clock size={10} /> SLA {new Date(conv.sla_breach_at).getTime() < Date.now() ? 'breached' : timeAgo(conv.sla_breach_at)}</span>}
           </div>
         </div>
@@ -3311,6 +3314,11 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
                       {conv.agent_name && <span className="text-[10px] text-slate-400 truncate">{conv.agent_name}</span>}
                       {conv.csat_score && <StarRating score={conv.csat_score} />}
                     </div>
+                    {conv.referrer_url && (
+                      <a href={conv.referrer_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-[10px] text-sky-500 hover:underline truncate mt-0.5" title={conv.referrer_url}>
+                        <Link2 size={8} className="shrink-0" />{conv.referrer_url}
+                      </a>
+                    )}
                   </div>
                 ))}
               </div>

@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     subject             TEXT,
     channel             TEXT        NOT NULL DEFAULT 'widget'
                                     CHECK (channel IN ('widget', 'email', 'api')),
+    referrer_url        TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
