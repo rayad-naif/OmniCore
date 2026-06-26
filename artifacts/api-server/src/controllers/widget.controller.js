@@ -69,13 +69,19 @@ router.post('/session', async (req, res, next) => {
           );
         }
 
-        // Find or create an open conversation
+        // Find the most recent conversation (any status) so we can detect closures
         let { rows: cRows } = await pool.query(
-          `SELECT id FROM conversations WHERE visitor_id = $1 AND status != 'closed' ORDER BY created_at DESC LIMIT 1`,
+          `SELECT id, status FROM conversations WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [visitorId]
         );
         let convId = cRows[0]?.id;
-        if (!convId) {
+        let previousConversationClosed = false;
+        let closedConversationId = null;
+        if (!convId || cRows[0]?.status === 'closed') {
+          if (convId) { // previous conversation existed but was closed
+            previousConversationClosed = true;
+            closedConversationId = convId;
+          }
           const { rows: nc } = await pool.query(
             `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel)
              VALUES ($1, $2, $3, 'open', 'widget') RETURNING id`,
@@ -106,6 +112,8 @@ router.post('/session', async (req, res, next) => {
           messages,
           brandName:   bRows[0]?.brand_name || 'Support',
           visitorName: visData[0]?.display_name || visitorName || null,
+          previousConversationClosed,
+          closedConversationId,
         });
       }
     }
@@ -253,6 +261,44 @@ router.post('/csat', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /api/widget/messages ──────────────────────────────────────────────────
+// Polling fallback — returns messages for a visitor's conversation.
+// Used by the widget every 5 s when the socket may have dropped.
+// Query params: tok (sessionToken), cid (conversationId), after (ISO timestamp, optional)
+router.get('/messages', async (req, res, next) => {
+  try {
+    const { tok, cid, after } = req.query;
+    if (!tok || !cid) return res.status(400).json({ error: 'tok and cid are required' });
+
+    const { rows: vRows } = await pool.query(
+      'SELECT id FROM visitors WHERE session_token = $1',
+      [tok]
+    );
+    if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
+
+    const { rows: cRows } = await pool.query(
+      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2',
+      [cid, vRows[0].id]
+    );
+    if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
+
+    const params = after ? [cid, after] : [cid];
+    const { rows: messages } = await pool.query(
+      `SELECT m.id, m.conversation_id, m.sender_type, m.message_body, m.attachments_json,
+              m.is_internal_note, m.created_at,
+              COALESCE(a.name, vis.display_name, vis.email, m.sender_type) AS sender_name
+       FROM messages m
+       LEFT JOIN agents   a   ON (m.sender_type IN ('agent','bot') AND a.id   = m.sender_id)
+       LEFT JOIN visitors vis ON (m.sender_type = 'visitor'        AND vis.id = m.sender_id)
+       WHERE m.conversation_id = $1 AND m.is_internal_note = FALSE
+         ${after ? 'AND m.created_at > $2' : ''}
+       ORDER BY m.created_at ASC LIMIT 40`,
+      params
+    );
+    return res.json(messages);
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/widget/widget.js ─────────────────────────────────────────────────
 const WIDGET_JS = `
 /* OmniCore Chat Widget — https://omnicore.chat */
@@ -278,7 +324,7 @@ var state={
   messages:[],socket:null,connected:false,
   brandName:LABEL,unread:0,
   visitorName:null,visitorEmail:null,
-  csatShown:false
+  csatShown:false,csatPending:false,csatConvId:null
 };
 try{
   state.sessionToken=localStorage.getItem(SK);
@@ -292,6 +338,28 @@ var msgQueue=[];
 var isSending=false;
 var pendingFile=null;
 var els={};
+var _pollTimer=null;
+var _lastMsgTime=null;
+function startPolling(){
+  if(_pollTimer)return;
+  _pollTimer=setInterval(function(){
+    if(!state.sessionToken||!state.conversationId||!state.open)return;
+    var url=API_BASE+'/widget/messages?tok='+encodeURIComponent(state.sessionToken)+'&cid='+encodeURIComponent(state.conversationId)+(_lastMsgTime?'&after='+encodeURIComponent(_lastMsgTime):'');
+    fetch(url).then(function(r){return r.ok?r.json():[];}).then(function(msgs){
+      if(!Array.isArray(msgs)||!msgs.length)return;
+      msgs.forEach(function(msg){
+        if(msg.is_internal_note)return;
+        if(state.messages.some(function(m){return m.id===msg.id;}))return;
+        state.messages.push(msg);
+        appendMsg(msg,true);
+        if(!state.open){setUnread(state.unread+1);}else{markRead();}
+      });
+      var last=msgs[msgs.length-1];
+      if(last&&last.created_at)_lastMsgTime=last.created_at;
+    }).catch(function(){});
+  },5000);
+}
+function stopPolling(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}}
 
 function ce(tag){return d.createElement(tag);}
 function qs(sel,el){return(el||d).querySelector(sel);}
@@ -368,9 +436,13 @@ function appendMsg(msg,scroll){
   if(scroll!==false)box.scrollTop=box.scrollHeight;
 }
 
-function showCsatSurvey(){
+function showCsatSurvey(convId){
+  var targetConvId=convId||state.conversationId;
+  if(!qs('#omni-msgs')){
+    state.csatPending=true;state.csatConvId=targetConvId;return;
+  }
   if(state.csatShown)return;
-  state.csatShown=true;
+  state.csatShown=true;state.csatPending=false;
   if(els.inp){els.inp.disabled=true;els.inp.placeholder='Conversation closed';}
   if(els.snd)els.snd.disabled=true;
   var box=qs('#omni-msgs');
@@ -424,20 +496,20 @@ function showCsatSurvey(){
           bs[j].style.color=j<score?COLOR:'#e2e8f0';
           bs[j].disabled=true;bs[j].style.cursor='default';
         }
-        submitCsat(score);
+        submitCsat(score,targetConvId);
       });
       stars.appendChild(btn);
     })(i);
   }
 }
 
-function submitCsat(score){
+function submitCsat(score,convId){
   var fbk=qs('#omni-csat-fbk');
   if(fbk)fbk.textContent='Submitting\u2026';
   fetch(API_BASE+'/widget/csat',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({conversationId:state.conversationId,sessionToken:state.sessionToken,score:score})
+    body:JSON.stringify({conversationId:convId||state.conversationId,sessionToken:state.sessionToken,score:score})
   }).then(function(r){return r.json();}).then(function(){
     if(fbk)fbk.textContent='Thank you for your feedback! \u2764\ufe0f';
   }).catch(function(){
@@ -631,6 +703,7 @@ function open(){
       startSession();
     }
   }else if(state.loaded){
+    if(state.csatPending&&!state.csatShown)showCsatSurvey(state.csatConvId);
     setTimeout(function(){if(els.msgs)els.msgs.scrollTop=els.msgs.scrollHeight;},50);
   }
 }
@@ -683,7 +756,12 @@ function startSession(){
     showChat();
     state.messages.forEach(function(m){appendMsg(m,false);});
     if(els.msgs)els.msgs.scrollTop=els.msgs.scrollHeight;
+    _lastMsgTime=state.messages.length?state.messages[state.messages.length-1].created_at:null;
+    startPolling();
     initSio();
+    if(data.previousConversationClosed&&data.closedConversationId){
+      showCsatSurvey(data.closedConversationId);
+    }
   })
   .catch(function(){
     state.loading=false;
@@ -720,7 +798,7 @@ function initSio(){
       appendMsg(msg,true);
       if(state.open){markRead();}else{setUnread(state.unread+1);}
     });
-    sk.on('conversation:closed',function(){showCsatSurvey();});
+    sk.on('conversation:closed',function(data){showCsatSurvey(data&&data.conversationId||state.conversationId);});
   };
   d.head.appendChild(s);
 }
@@ -756,14 +834,27 @@ function sendRest(msgBody,attachments,onDone){
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({conversationId:state.conversationId,sessionToken:state.sessionToken,body:msgBody||'',attachments:attachments||[]})
   }).then(function(r){
+    if(r.status===409){
+      isSending=false;if(els.snd)els.snd.disabled=false;
+      if(onDone)onDone(null);
+      resetAndRestart();
+      return null;
+    }
     if(!r.ok)throw new Error('HTTP '+r.status);
     return r.json();
   }).then(function(msg){
-    // Replace the optimistic bubble with the real server message (has real ID)
-    if(onDone)onDone(msg);
+    if(msg&&onDone)onDone(msg);
   }).catch(function(){
     if(onDone)onDone(null);
   });
+}
+function resetAndRestart(){
+  state.loaded=false;state.messages=[];state.csatShown=false;state.csatPending=false;state.csatConvId=null;
+  if(els.msgs){while(els.msgs.firstChild)els.msgs.removeChild(els.msgs.firstChild);}
+  if(els.inp){els.inp.disabled=false;els.inp.placeholder='Type a message\u2026';}
+  if(els.snd)els.snd.disabled=false;
+  stopPolling();_lastMsgTime=null;
+  startSession();
 }
 
 function send(){

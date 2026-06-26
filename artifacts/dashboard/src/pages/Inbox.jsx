@@ -317,7 +317,7 @@ function MessageBubble({ msg, visitorReadAt }) {
 // ── Column 2: Chat panel ──────────────────────────────────────────────────────
 function ChatPanel({
   conversation, messages, msgLoading,
-  visitorTyping, visitorReadAt, socket, onMessageSent,
+  visitorTyping, visitorReadAt, visitorOnline, socket, onMessageSent,
   onAiRephrase, aiRephrasing,
   onExport, exporting,
   authFetch,
@@ -462,9 +462,17 @@ function ChatPanel({
         <div className="flex items-center gap-3">
           <Avatar name={conversation.visitor_email || 'V'} />
           <div>
-            <p className="text-sm font-semibold text-slate-900">
-              {conversation.visitor_email || conversation.visitor_name || 'Anonymous Visitor'}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-slate-900">
+                {conversation.visitor_email || conversation.visitor_name || 'Anonymous Visitor'}
+              </p>
+              {visitorOnline && (
+                <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-600">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                  online
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className={statusBadge(conversation.status)}>
                 {conversation.status?.replace('_', ' ')}
@@ -778,6 +786,7 @@ export default function Inbox() {
   const [aiRephrasing,  setAIR]      = useState(false);
   const [telemetryEvents, setTelEv]  = useState([]);
   const [visitorReadAt,   setVRA]    = useState(null);  // ISO string from visitor:read_receipt
+  const [visitorOnline,   setVO]     = useState(false); // true when visitor socket is in conv room
 
   const socketRef       = useRef(null);
   const activeConvIdRef = useRef(null);   // stable ref for socket callbacks
@@ -868,6 +877,13 @@ export default function Inbox() {
       }
     });
 
+    socket.on('visitor:online',  ({ conversationId }) => {
+      if (conversationId === activeConvIdRef.current) setVO(true);
+    });
+    socket.on('visitor:offline', ({ conversationId }) => {
+      if (conversationId === activeConvIdRef.current) setVO(false);
+    });
+
     // Handover: mark ticket open
     socket.on('server:handover_required', ({ conversationId }) => {
       dispatchTickets({ type: 'PATCH', id: conversationId, patch: { status: 'open' } });
@@ -922,6 +938,7 @@ export default function Inbox() {
     setTelEv([]);
     setVT(false);
     setVRA(ticket.visitor_last_read_at || null);
+    setVO(false);
     dispatchMessages({ type: 'CLEAR' });
 
     // Join socket room
@@ -1032,6 +1049,7 @@ export default function Inbox() {
           msgLoading={msgLoading}
           visitorTyping={visitorTyping}
           visitorReadAt={visitorReadAt}
+          visitorOnline={visitorOnline}
           socket={socketRef.current}
           onMessageSent={handleMessageSent}
           onAiRephrase={handleAiRephrase}
