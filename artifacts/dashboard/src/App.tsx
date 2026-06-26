@@ -816,24 +816,36 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
     const isPageView = msg.message_body.startsWith('Visited:')
     const rawUrl = isPageView ? msg.message_body.replace(/^Visited:\s*/, '').trim() : null
     const pageUrl = rawUrl ? safeHref(rawUrl) : null
+    if (isPageView) {
+      let displayPath = rawUrl ?? ''
+      try { displayPath = new URL(rawUrl!).pathname || '/' } catch { /* keep raw */ }
+      const timeStr = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      return (
+        <div className="flex justify-center my-2 px-4">
+          <div className="flex items-center gap-0 w-full max-w-[88%] rounded-lg overflow-hidden border border-sky-100 bg-sky-50 shadow-sm">
+            <div className="flex items-center justify-center w-7 h-7 bg-sky-100 shrink-0">
+              <Globe size={11} className="text-sky-500" />
+            </div>
+            <div className="flex items-center justify-between flex-1 px-2.5 py-1.5 min-w-0">
+              {pageUrl ? (
+                <a href={pageUrl} target="_blank" rel="noopener noreferrer"
+                  title={rawUrl!}
+                  className="text-[10px] font-mono text-sky-700 hover:text-sky-900 hover:underline truncate leading-snug"
+                >{displayPath}</a>
+              ) : (
+                <span className="text-[10px] font-mono text-slate-500 truncate leading-snug" title={rawUrl ?? undefined}>{displayPath}</span>
+              )}
+              <span className="text-[9px] text-slate-400 shrink-0 ml-2 tabular-nums">{timeStr}</span>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="flex justify-center my-1">
-        {pageUrl ? (
-          <a
-            href={pageUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 hover:bg-slate-200 hover:text-sky-600 px-3 py-1 rounded-full italic transition-colors"
-          >
-            <Link2 size={9} className="shrink-0" />
-            {msg.message_body}
-          </a>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full italic">
-            {isPageView && <Link2 size={9} className="shrink-0 text-slate-400" />}
-            {msg.message_body}
-          </span>
-        )}
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full italic">
+          {msg.message_body}
+        </span>
       </div>
     )
   }
@@ -923,48 +935,54 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
 function PageJourneyGroup({ msgs }: { msgs: Message[] }) {
   const [expanded, setExpanded] = useState(false)
 
-  const entries = msgs.map(m => ({
-    url: m.message_body.replace(/^Visited:\s*/, '').trim(),
-    ts: m.created_at,
-  }))
-
-  const first = entries[0].url
-  const last  = entries[entries.length - 1].url
-  const summary = `${entries.length} pages: ${first}${entries.length > 2 ? ' → … → ' : ' → '}${last}`
+  const entries = msgs.map(m => {
+    const raw = m.message_body.replace(/^Visited:\s*/, '').trim()
+    let path = raw
+    try { path = new URL(raw).pathname || '/' } catch { /* keep raw */ }
+    return { url: raw, path, ts: m.created_at }
+  })
 
   return (
-    <div className="flex justify-center my-1">
-      <div className="max-w-[85%] w-full">
+    <div className="flex justify-center my-2 px-4">
+      <div className="w-full max-w-[88%] rounded-lg overflow-hidden border border-sky-100 shadow-sm">
         <button
           onClick={() => setExpanded(x => !x)}
-          className="w-full inline-flex items-center justify-between gap-2 text-[10px] text-slate-500 bg-slate-100 hover:bg-slate-150 px-3 py-1.5 rounded-full italic transition-colors group"
+          className="w-full flex items-center justify-between bg-sky-50 hover:bg-sky-100 transition-colors px-2.5 py-1.5"
         >
-          <span className="inline-flex items-center gap-1.5 min-w-0">
-            <Link2 size={9} className="shrink-0 text-slate-400" />
-            <span className="truncate">Visited {summary}</span>
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-center w-5 h-5 bg-sky-100 rounded shrink-0">
+              <Globe size={10} className="text-sky-500" />
+            </div>
+            <span className="text-[10px] font-medium text-sky-700 truncate">
+              Browsed {entries.length} pages
+            </span>
+            <span className="text-[9px] text-sky-400 font-mono truncate hidden sm:inline">
+              {entries[0].path} → {entries[entries.length - 1].path}
+            </span>
           </span>
-          <ChevronDown size={10} className={`shrink-0 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          <ChevronDown size={10} className={`shrink-0 text-sky-400 transition-transform ml-2 ${expanded ? 'rotate-180' : ''}`} />
         </button>
         {expanded && (
-          <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 space-y-1">
-            {entries.map((e, i) => (
-              <div key={i} className="flex items-start gap-2 text-[10px]">
-                <span className="text-slate-400 shrink-0 tabular-nums">{i + 1}.</span>
-                {safeHref(e.url) ? (
-                  <a
-                    href={safeHref(e.url)!}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sky-600 hover:text-sky-800 hover:underline break-all flex-1 font-mono"
-                  >{e.url}</a>
-                ) : (
-                  <span className="text-slate-700 break-all flex-1 font-mono">{e.url}</span>
-                )}
-                <span className="text-slate-400 shrink-0 whitespace-nowrap">
-                  {new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-            ))}
+          <div className="bg-white border-t border-sky-100 divide-y divide-slate-100">
+            {entries.map((e, i) => {
+              const href = safeHref(e.url)
+              const timeStr = new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              return (
+                <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
+                  <span className="w-4 text-[9px] text-slate-400 tabular-nums shrink-0 text-right">{i + 1}</span>
+                  <Globe size={9} className="text-sky-300 shrink-0" />
+                  {href ? (
+                    <a href={href} target="_blank" rel="noopener noreferrer"
+                      title={e.url}
+                      className="flex-1 text-[10px] font-mono text-sky-700 hover:text-sky-900 hover:underline truncate"
+                    >{e.path}</a>
+                  ) : (
+                    <span className="flex-1 text-[10px] font-mono text-slate-600 truncate" title={e.url}>{e.path}</span>
+                  )}
+                  <span className="text-[9px] text-slate-400 tabular-nums shrink-0">{timeStr}</span>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -1008,7 +1026,7 @@ function buildMessageGroups(messages: Message[]): MsgGroup[] {
 }
 
 // ─── Visitor Info Panel ────────────────────────────────────────────────────────
-function VisitorInfoPanel({ conv, currentPage, pageHistory }: { conv: Conversation; currentPage: string | null; pageHistory: Array<{ url: string; ts: string }> }) {
+function VisitorInfoPanel({ conv, currentPage, pageHistory, onSelectConversation }: { conv: Conversation; currentPage: string | null; pageHistory: Array<{ url: string; ts: string }>; onSelectConversation?: (id: string) => void }) {
   const api = useApi()
   const [ext, setExt] = useState<{ ip_address?: string }>({})
   const [history, setHistory] = useState<Array<{ id: string; status: string; subject: string | null; created_at: string }>>([])
@@ -1066,10 +1084,18 @@ function VisitorInfoPanel({ conv, currentPage, pageHistory }: { conv: Conversati
             <p className="text-[10px] text-slate-400 font-medium uppercase mb-1.5">Past Conversations ({history.length})</p>
             <div className="space-y-1.5">
               {history.slice(0, 5).map(h => (
-                <div key={h.id} className="text-[10px] p-1.5 bg-slate-50 rounded border border-slate-100">
+                <button
+                  key={h.id}
+                  onClick={() => onSelectConversation?.(h.id)}
+                  disabled={!onSelectConversation || h.id === conv.id}
+                  className={`w-full text-left text-[10px] p-1.5 rounded border transition-colors ${h.id === conv.id ? 'bg-sky-50 border-sky-200 cursor-default' : onSelectConversation ? 'bg-slate-50 border-slate-100 hover:bg-sky-50 hover:border-sky-200 cursor-pointer' : 'bg-slate-50 border-slate-100'}`}
+                >
                   <span className={`inline-block px-1 py-0.5 rounded text-[9px] font-semibold mr-1 ${h.status === 'open' ? 'bg-emerald-100 text-emerald-700' : h.status === 'closed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{h.status}</span>
-                  <span className="text-slate-500">{h.subject || '(No subject)'}</span>
-                </div>
+                  <span className="text-slate-600">{h.subject || '(No subject)'}</span>
+                  {h.id !== conv.id && onSelectConversation && (
+                    <span className="float-right text-sky-400 text-[9px] mt-0.5">Open →</span>
+                  )}
+                </button>
               ))}
             </div>
           </div>
@@ -1256,7 +1282,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt, onSelectConversation }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status, triggerCsat?: boolean) => void
@@ -1271,6 +1297,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   typingWho?: string | null
   visitorOnline?: boolean
   visitorReadAt?: string | null
+  onSelectConversation?: (id: string) => void
 }) {
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
@@ -1441,7 +1468,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
           })}
           <div ref={bottomRef} />
         </div>
-        <VisitorInfoPanel conv={conv} currentPage={currentPage} pageHistory={pageHistory} />
+        <VisitorInfoPanel conv={conv} currentPage={currentPage} pageHistory={pageHistory} onSelectConversation={onSelectConversation} />
       </div>
 
       {typingWho && (
@@ -3736,8 +3763,8 @@ function Dashboard() {
 
   const handleConvertToTicket = useCallback(async () => {
     if (!activeId) return
-    await api.patchConversation(activeId, { is_ticket: true })
-    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, is_ticket: true } : c))
+    const updated = await api.patchConversation(activeId, { is_ticket: true })
+    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, is_ticket: true, ticket_number: updated.ticket_number } : c))
   }, [activeId]) // eslint-disable-line
 
   const handleAssign = useCallback(async (agentId: string | null) => {
@@ -3802,7 +3829,7 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} onSelectConversation={handleSelectConversation} /> : <EmptyChat />}
               </>
             )
           )}

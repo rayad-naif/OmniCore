@@ -164,6 +164,53 @@ router.post('/session', async (req, res, next) => {
     if (!bRows[0]) return res.status(404).json({ error: 'Brand not found' });
     const { tenant_id, brand_name } = bRows[0];
 
+    // Deduplication: if an email is provided, reuse any existing visitor with
+    // the same email + brand so we never create duplicate contacts.
+    if (visitorEmail) {
+      const { rows: existingRows } = await pool.query(
+        `SELECT id FROM visitors WHERE brand_id = $1 AND email = $2 LIMIT 1`,
+        [brandId, visitorEmail]
+      );
+      if (existingRows[0]) {
+        const existingId = existingRows[0].id;
+        const newToken   = crypto.randomUUID();
+        // Update the session token so this browser session is now linked
+        const updates = [`session_token = $1`];
+        const vals    = [newToken];
+        if (visitorName) { updates.push(`display_name = $${vals.length+1}`); vals.push(visitorName); }
+        if (timezone)    { updates.push(`timezone = $${vals.length+1}`);     vals.push(timezone); }
+        await pool.query(
+          `UPDATE visitors SET ${updates.join(', ')} WHERE id = $${vals.length+1}`,
+          [...vals, existingId]
+        );
+        // Create a new open conversation for the returning visitor
+        const { rows: nc } = await pool.query(
+          `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
+           VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
+          [tenant_id, brandId, existingId, referrerUrl || null]
+        );
+        try {
+          broadcastToTenant(tenant_id, 'conversation:created', {
+            id: nc[0].id,
+            status: 'open', channel: 'widget', priority: 'normal', subject: null,
+            visitor_name: visitorName || visitorEmail, visitor_email: visitorEmail,
+            agent_name: null, brand_name,
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            sla_breach_at: null, assigned_agent_id: null, unread: 0,
+            visitor_id: existingId,
+          });
+        } catch { /* non-fatal */ }
+        logger.info({ brandId, visitorId: existingId, dedup: true }, 'widget_session_dedup_reused');
+        return res.json({
+          sessionToken: newToken,
+          conversationId: nc[0].id,
+          messages: [],
+          brandName: brand_name,
+          visitorName: visitorName || null,
+        });
+      }
+    }
+
     const newToken = crypto.randomUUID();
     const { rows: vNew } = await pool.query(
       `INSERT INTO visitors (tenant_id, brand_id, session_token, display_name, email, timezone)
