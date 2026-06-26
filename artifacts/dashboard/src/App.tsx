@@ -973,7 +973,7 @@ function buildMessageGroups(messages: Message[]): MsgGroup[] {
 }
 
 // ─── Visitor Info Panel ────────────────────────────────────────────────────────
-function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPage: string | null }) {
+function VisitorInfoPanel({ conv, currentPage, pageHistory }: { conv: Conversation; currentPage: string | null; pageHistory: Array<{ url: string; ts: string }> }) {
   const api = useApi()
   const [ext, setExt] = useState<{ ip_address?: string }>({})
   const [history, setHistory] = useState<Array<{ id: string; status: string; subject: string | null; created_at: string }>>([])
@@ -1001,6 +1001,27 @@ function VisitorInfoPanel({ conv, currentPage }: { conv: Conversation; currentPa
         {conv.visitor_email && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Email</p><p className="text-xs text-slate-700 break-all">{conv.visitor_email}</p></div>}
         {tz && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Clock size={9} />Timezone</p><p className="text-xs text-slate-700">{tz}</p>{localTime && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">🕐 {localTime} local</p>}</div>}
         {currentPage && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5 flex items-center gap-1"><Globe size={9} />Current Page</p><a href={currentPage} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-600 hover:underline break-all leading-relaxed">{currentPage}</a></div>}
+        {pageHistory.length > 0 && (
+          <div>
+            <p className="text-[10px] text-slate-400 font-medium uppercase mb-1.5 flex items-center gap-1"><Globe size={9} />Page Journey ({pageHistory.length})</p>
+            <div className="space-y-1">
+              {pageHistory.map((entry, i) => {
+                let label: string
+                try { label = new URL(entry.url).pathname || '/' } catch { label = entry.url }
+                const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: tz ?? undefined })
+                return (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-slate-700 break-all leading-snug truncate" title={entry.url}>{label}</p>
+                      <p className="text-[9px] text-slate-400">{time}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Channel</p><p className="text-xs text-slate-700 capitalize">{conv.channel}</p></div>
         <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">Brand</p><p className="text-xs text-slate-700">{conv.brand_name}</p></div>
         {conv.csat_score && <div><p className="text-[10px] text-slate-400 font-medium uppercase mb-0.5">CSAT</p><StarRating score={conv.csat_score} /></div>}
@@ -1225,6 +1246,10 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   const menuRef     = useRef<HTMLDivElement>(null)
   const api = useApi()
 
+  const pageHistory = messages
+    .filter(m => m.sender_type === 'system' && m.message_body.startsWith('Visited:'))
+    .map(m => ({ url: m.message_body.replace(/^Visited:\s*/, '').trim(), ts: m.created_at }))
+
   useEffect(() => {
     if (!menuOpen) return
     const handler = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false) }
@@ -1381,7 +1406,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
           })}
           <div ref={bottomRef} />
         </div>
-        <VisitorInfoPanel conv={conv} currentPage={currentPage} />
+        <VisitorInfoPanel conv={conv} currentPage={currentPage} pageHistory={pageHistory} />
       </div>
 
       {typingWho && (
