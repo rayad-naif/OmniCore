@@ -432,4 +432,48 @@ router.get('/:id/visitor-history', async (req, res, next) => {
 // ─── GET /api/conversations/:id/export ───────────────────────────────────────
 router.get('/:id/export', handleExportRequest);
 
+// ─── POST /api/conversations/bulk-export ─────────────────────────────────────
+router.post('/bulk-export', async (req, res, next) => {
+  try {
+    const tenantId = req.agent?.tenantId;
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array is required' });
+    if (ids.length > 50) return res.status(400).json({ error: 'Maximum 50 conversations per export' });
+
+    const { buildPdf } = require('../services/export.service');
+    const archiver = require('archiver');
+
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
+    const { rows: convRows } = await pool.query(
+      `SELECT c.*, b.brand_name FROM conversations c
+       LEFT JOIN brands b ON b.id = c.brand_id
+       WHERE c.id IN (${placeholders}) AND c.tenant_id = $1`,
+      [tenantId, ...ids]
+    );
+    if (!convRows.length) return res.status(404).json({ error: 'No conversations found' });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="omnicore-export-${Date.now()}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(res);
+    archive.on('error', err => { logger.error({ err }, 'bulk_export_archive_error'); });
+
+    for (const conv of convRows) {
+      const { rows: messages } = await pool.query(
+        `SELECT m.*, a.name AS sender_name FROM messages m
+         LEFT JOIN agents a ON a.id = m.sender_id
+         WHERE m.conversation_id = $1 ORDER BY m.created_at ASC`,
+        [conv.id]
+      );
+      const pdfBuffer = await buildPdf(conv, messages, { name: conv.brand_name || 'OmniCore' });
+      const safe = (conv.subject || conv.id).replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40);
+      archive.append(pdfBuffer, { name: `conversation-${safe}.pdf` });
+    }
+
+    await archive.finalize();
+    logger.info({ tenantId, count: convRows.length }, 'bulk_export_generated');
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

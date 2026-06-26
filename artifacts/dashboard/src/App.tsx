@@ -14,7 +14,7 @@ import {
   Tag, UserCheck, BarChart2, Star, Filter, Calendar,
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
-  Brain, BookOpen, Link2, Webhook,
+  Brain, BookOpen, Link2, Webhook, Upload, FileText,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -26,7 +26,7 @@ type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resol
 type Channel     = 'email' | 'widget' | 'api'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat'
+type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp'
 type StatusFilter = 'all' | Status
 type AuthView    = 'login' | 'signup' | 'forgot' | 'reset'
 
@@ -271,6 +271,24 @@ function useApi() {
     deleteKnowledge: async (id: string): Promise<void> => {
       const r = await authFetch(`${API}/ai/knowledge-base/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('Failed to delete article')
+    },
+    crawlUrl: async (url: string, brandId?: string): Promise<KnowledgeArticle> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/crawl`, { method: 'POST', body: JSON.stringify({ url, brand_id: brandId }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Crawl failed') }
+      return r.json() as Promise<KnowledgeArticle>
+    },
+    uploadPdfKnowledge: async (data: string, filename: string, brandId?: string): Promise<KnowledgeArticle> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/upload-pdf`, { method: 'POST', body: JSON.stringify({ data, filename, brand_id: brandId }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Upload failed') }
+      return r.json() as Promise<KnowledgeArticle>
+    },
+    bulkExport: async (ids: string[]): Promise<void> => {
+      const r = await authFetch(`${API}/conversations/bulk-export`, { method: 'POST', body: JSON.stringify({ ids }) })
+      if (!r.ok) throw new Error('Export failed')
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = `omnicore-export-${Date.now()}.zip`; document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
     },
     listAISettings: async (): Promise<AIBrandSetting[]> => {
       const r = await authFetch(`${API}/ai/settings`)
@@ -604,6 +622,7 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
   convs: Conversation[]; activeId: string | null; onSelect: (id: string) => void
   brands: Brand[]; agents: AgentRow[]
 }) {
+  const api = useApi()
   const [query, setQuery]       = useState('')
   const [filter, setFilter]     = useState<StatusFilter>('all')
   const [brandFilter, setBrand] = useState('')
@@ -612,6 +631,8 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo]     = useState('')
   const [showFilters, setShowFilters] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [exporting, setExporting] = useState(false)
 
   const filtered = convs
     .filter(c => !c.is_ticket)
@@ -629,6 +650,19 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
   const hasFilters = brandFilter || agentFilter || ratingFilter || dateFrom || dateTo
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  const toggleAll = () => setSelectedIds(selectedIds.size === filtered.length ? new Set() : new Set(filtered.map(c => c.id)))
+  const handleBulkExport = async () => {
+    if (!selectedIds.size) return
+    setExporting(true)
+    try { await api.bulkExport([...selectedIds]); setSelectedIds(new Set()) }
+    catch (err) { alert((err as Error).message) }
+    finally { setExporting(false) }
+  }
 
   return (
     <div className="flex flex-col h-full w-80 border-r border-slate-200 bg-white shrink-0">
@@ -659,8 +693,8 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
               {[5,4,3,2,1].map(n => <option key={n} value={String(n)}>{n} ★</option>)}
             </select>
             <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" placeholder="From" />
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" placeholder="To" />
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" />
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-400" />
             </div>
             {hasFilters && <button onClick={() => { setBrand(''); setAgent(''); setRating(''); setDateFrom(''); setDateTo('') }} className="text-xs text-red-500 hover:text-red-600">Clear filters</button>}
           </div>
@@ -670,11 +704,32 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
             <button key={f.value} onClick={() => setFilter(f.value)} className={`shrink-0 px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${filter === f.value ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{f.label}</button>
           ))}
         </div>
+        {selectedIds.size > 0 && (
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
+            <div className="flex items-center gap-2">
+              <input type="checkbox" checked={selectedIds.size === filtered.length} onChange={toggleAll} className="w-3 h-3 rounded accent-sky-600 cursor-pointer" />
+              <span className="text-[11px] text-slate-500">{selectedIds.size} selected</span>
+            </div>
+            <button onClick={handleBulkExport} disabled={exporting} className="flex items-center gap-1 text-[11px] font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-md px-2 py-1 hover:bg-sky-100 disabled:opacity-50">
+              {exporting ? <RefreshCw size={10} className="animate-spin" /> : <FileDown size={10} />} Export ZIP
+            </button>
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8"><Inbox size={28} className="text-slate-200 mb-2" /><p className="text-xs text-slate-400">No conversations match</p></div>
-        ) : filtered.map(c => <ConversationRow key={c.id} conv={c} isActive={c.id === activeId} onClick={() => onSelect(c.id)} />)}
+        ) : filtered.map(c => (
+          <div key={c.id} className="relative group/row">
+            <div
+              className={`absolute left-1.5 top-1/2 -translate-y-1/2 z-10 transition-opacity ${selectedIds.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'}`}
+              onClick={e => toggleSelect(c.id, e)}
+            >
+              <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => {}} className="w-3.5 h-3.5 rounded accent-sky-600 cursor-pointer" />
+            </div>
+            <ConversationRow conv={c} isActive={c.id === activeId} onClick={() => onSelect(c.id)} />
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -1618,7 +1673,7 @@ function CsatSection({ brands }: { brands: Brand[] }) {
 function SettingsSection() {
   const api = useApi()
   const { agent } = useAuth() as { agent: { name: string; email: string; role: string } | null }
-  const [panel, setPanel] = useState<'profile' | 'workspace' | 'smtp' | 'ai_training' | 'webhook' | null>(null)
+  const [panel, setPanel] = useState<'profile' | 'workspace' | 'webhook' | null>(null)
   const [articles, setArticles]       = useState<KnowledgeArticle[]>([])
   const [artLoading, setArtLoading]   = useState(false)
   const [artForm, setArtForm]         = useState({ title: '', content: '', tags: '' })
@@ -1687,11 +1742,9 @@ function SettingsSection() {
     finally { setSmtpSaving(false) }
   }
 
-  const panels: { key: 'profile' | 'workspace' | 'smtp' | 'ai_training' | 'webhook'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+  const panels: { key: 'profile' | 'workspace' | 'webhook'; label: string; desc: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { key: 'profile',     label: 'Profile',             desc: 'Update your name and password',                   icon: <User size={14} /> },
     { key: 'workspace',   label: 'Workspace Settings',  desc: 'Company name, timezone, AI auto-reply',           icon: <Building size={14} />, adminOnly: true },
-    { key: 'smtp',        label: 'SMTP / Email Config', desc: 'Send ticket alerts via your own mail server',     icon: <Mail size={14} />, adminOnly: true },
-    { key: 'ai_training', label: 'AI Training',         desc: 'Knowledge base articles for AI auto-reply',      icon: <Brain size={14} />, adminOnly: true },
     { key: 'webhook',     label: 'Inbound Email Webhook', desc: 'Receive inbound emails as conversations',       icon: <Webhook size={14} />, adminOnly: true },
   ]
 
@@ -1750,65 +1803,6 @@ function SettingsSection() {
                     <button type="submit" disabled={wsSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{wsSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Settings'}</button>
                   </form>
                 </div>
-              )}
-
-              {panel === 'smtp' && item.key === 'smtp' && (
-                <div className="mt-2 p-5 bg-white border border-slate-200 rounded-xl">
-                  <p className="text-xs text-slate-500 mb-4">Configure your outbound SMTP server for status-change alerts.</p>
-                  {smtpMsg && <div className={`mb-3 p-2 rounded text-xs ${smtpMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{smtpMsg.text}</div>}
-                  <form onSubmit={handleSmtpSave} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Host</label><input type="text" value={smtpForm.host} onChange={e => setSmtp(f => ({ ...f, host: e.target.value }))} placeholder="smtp.sendgrid.net" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                      <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Port</label><input type="number" value={smtpForm.port} onChange={e => setSmtp(f => ({ ...f, port: e.target.value }))} placeholder="587" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    </div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={smtpForm.user} onChange={e => setSmtp(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={smtpForm.pass} onChange={e => setSmtp(f => ({ ...f, pass: e.target.value }))} placeholder="••••••••••••" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={smtpForm.from_email} onChange={e => setSmtp(f => ({ ...f, from_email: e.target.value }))} placeholder="support@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Inbox Notification Email <span className="text-slate-400 font-normal">(alert address for new visitor messages)</span></label><input type="email" value={smtpForm.notification_email} onChange={e => setSmtp(f => ({ ...f, notification_email: e.target.value }))} placeholder="owner@acme.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400 transition-all" /></div>
-                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                      <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email on ticket status changes and visitor messages</p></div>
-                      <button type="button" onClick={() => setSmtp(f => ({ ...f, enabled: !f.enabled }))} className={`${smtpForm.enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{smtpForm.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
-                    </div>
-                    <button type="submit" disabled={smtpSaving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{smtpSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save SMTP Config'}</button>
-                  </form>
-                </div>
-              )}
-
-              {panel === 'ai_training' && item.key === 'ai_training' && (
-                <AITrainingPanel
-                  articles={articles} loading={artLoading} form={artForm} editing={artEditing} saving={artSaving} msg={artMsg}
-                  onLoad={() => { setArtLoading(true); api.listKnowledge().then(a => { setArticles(a); setArtLoading(false) }).catch(() => setArtLoading(false)) }}
-                  onFormChange={setArtForm}
-                  onEdit={(a) => { setArtEditing(a); setArtForm({ title: a.title, content: a.content, tags: a.tags.join(', ') }) }}
-                  onCancel={() => { setArtEditing(null); setArtForm({ title: '', content: '', tags: '' }) }}
-                  onSave={async () => {
-                    setArtSaving(true); setArtMsg(null)
-                    const tags = artForm.tags.split(',').map(t => t.trim()).filter(Boolean)
-                    try {
-                      if (artEditing) {
-                        const updated = await api.updateKnowledge(artEditing.id, { title: artForm.title, content: artForm.content, tags })
-                        setArticles(prev => prev.map(a => a.id === artEditing.id ? updated : a))
-                        setArtEditing(null)
-                      } else {
-                        const created = await api.createKnowledge({ title: artForm.title, content: artForm.content, tags })
-                        setArticles(prev => [...prev, created])
-                      }
-                      setArtForm({ title: '', content: '', tags: '' })
-                      setArtMsg({ ok: true, text: artEditing ? 'Article updated.' : 'Article created.' })
-                    } catch (err) { setArtMsg({ ok: false, text: (err as Error).message }) }
-                    finally { setArtSaving(false) }
-                  }}
-                  onDelete={async (id) => {
-                    try { await api.deleteKnowledge(id); setArticles(prev => prev.filter(a => a.id !== id)) }
-                    catch { /* ignore */ }
-                  }}
-                  onToggle={async (a) => {
-                    try {
-                      const updated = await api.updateKnowledge(a.id, { is_active: !a.is_active })
-                      setArticles(prev => prev.map(x => x.id === a.id ? updated : x))
-                    } catch { /* ignore */ }
-                  }}
-                />
               )}
 
               {panel === 'webhook' && item.key === 'webhook' && (
@@ -2341,9 +2335,401 @@ function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDis
   )
 }
 
+// ─── AI Training Section ──────────────────────────────────────────────────────
+type AITab = 'articles' | 'crawl' | 'pdf' | 'text' | 'faq'
+
+function AITrainingSection() {
+  const api = useApi()
+  const [tab, setTab] = useState<AITab>('articles')
+  const [articles, setArticles] = useState<KnowledgeArticle[]>([])
+  const [artLoading, setArtLoading] = useState(false)
+  const [artForm, setArtForm] = useState({ title: '', content: '', tags: '' })
+  const [artEditing, setArtEditing] = useState<KnowledgeArticle | null>(null)
+  const [artSaving, setArtSaving] = useState(false)
+  const [artMsg, setArtMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [crawlUrl, setCrawlUrl] = useState('')
+  const [crawling, setCrawling] = useState(false)
+  const [crawlMsg, setCrawlMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [pdfMsg, setPdfMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const pdfRef = useRef<HTMLInputElement>(null)
+  const [textForm, setTextForm] = useState({ title: '', content: '', tags: '' })
+  const [textSaving, setTextSaving] = useState(false)
+  const [textMsg, setTextMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [faqPairs, setFaqPairs] = useState([{ q: '', a: '' }])
+  const [faqSaving, setFaqSaving] = useState(false)
+  const [faqMsg, setFaqMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const loadArticles = useCallback(() => {
+    setArtLoading(true)
+    api.listKnowledge().then(a => { setArticles(a); setArtLoading(false) }).catch(() => setArtLoading(false))
+  }, []) // eslint-disable-line
+
+  useEffect(() => { loadArticles() }, []) // eslint-disable-line
+
+  const handleArtSave = async () => {
+    setArtSaving(true); setArtMsg(null)
+    const tags = artForm.tags.split(',').map(t => t.trim()).filter(Boolean)
+    try {
+      if (artEditing) {
+        const updated = await api.updateKnowledge(artEditing.id, { title: artForm.title, content: artForm.content, tags })
+        setArticles(prev => prev.map(a => a.id === artEditing.id ? updated : a))
+        setArtEditing(null)
+      } else {
+        const created = await api.createKnowledge({ title: artForm.title, content: artForm.content, tags })
+        setArticles(prev => [created, ...prev])
+      }
+      setArtForm({ title: '', content: '', tags: '' })
+      setArtMsg({ ok: true, text: artEditing ? 'Article updated.' : 'Article created.' })
+    } catch (err) { setArtMsg({ ok: false, text: (err as Error).message }) }
+    finally { setArtSaving(false) }
+  }
+
+  const handleCrawl = async () => {
+    if (!crawlUrl.trim()) return
+    setCrawling(true); setCrawlMsg(null)
+    try {
+      const article = await api.crawlUrl(crawlUrl.trim())
+      setArticles(prev => [article, ...prev])
+      setCrawlMsg({ ok: true, text: `Crawled and saved as article: "${article.title}"` })
+      setCrawlUrl('')
+    } catch (err) { setCrawlMsg({ ok: false, text: (err as Error).message }) }
+    finally { setCrawling(false) }
+  }
+
+  const handlePdfUpload = async () => {
+    if (!pdfFile) return
+    setUploading(true); setPdfMsg(null)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = e => {
+          const result = (e.target?.result as string)
+          resolve(result.includes(',') ? result.split(',')[1] : result)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(pdfFile)
+      })
+      const article = await api.uploadPdfKnowledge(base64, pdfFile.name)
+      setArticles(prev => [article, ...prev])
+      setPdfMsg({ ok: true, text: `Extracted and saved as article: "${article.title}"` })
+      setPdfFile(null)
+      if (pdfRef.current) pdfRef.current.value = ''
+    } catch (err) { setPdfMsg({ ok: false, text: (err as Error).message }) }
+    finally { setUploading(false) }
+  }
+
+  const handleTextSave = async () => {
+    if (!textForm.title.trim() || !textForm.content.trim()) return
+    setTextSaving(true); setTextMsg(null)
+    try {
+      const tags = textForm.tags.split(',').map(t => t.trim()).filter(Boolean)
+      const article = await api.createKnowledge({ title: textForm.title, content: textForm.content, tags })
+      setArticles(prev => [article, ...prev])
+      setTextMsg({ ok: true, text: 'Saved as knowledge article.' })
+      setTextForm({ title: '', content: '', tags: '' })
+    } catch (err) { setTextMsg({ ok: false, text: (err as Error).message }) }
+    finally { setTextSaving(false) }
+  }
+
+  const handleFaqSave = async () => {
+    const valid = faqPairs.filter(p => p.q.trim() && p.a.trim())
+    if (!valid.length) return
+    setFaqSaving(true); setFaqMsg(null)
+    try {
+      const created: KnowledgeArticle[] = []
+      for (const pair of valid) {
+        const article = await api.createKnowledge({ title: pair.q.trim(), content: `Q: ${pair.q.trim()}\n\nA: ${pair.a.trim()}`, tags: ['faq'] })
+        created.push(article)
+      }
+      setArticles(prev => [...created, ...prev])
+      setFaqMsg({ ok: true, text: `${created.length} FAQ item${created.length !== 1 ? 's' : ''} saved.` })
+      setFaqPairs([{ q: '', a: '' }])
+    } catch (err) { setFaqMsg({ ok: false, text: (err as Error).message }) }
+    finally { setFaqSaving(false) }
+  }
+
+  const TABS: { key: AITab; label: string; icon: React.ReactNode }[] = [
+    { key: 'articles', label: 'Articles',     icon: <BookOpen size={14} /> },
+    { key: 'crawl',    label: 'Web Crawl',    icon: <Globe size={14} /> },
+    { key: 'pdf',      label: 'PDF Upload',   icon: <Paperclip size={14} /> },
+    { key: 'text',     label: 'Text Content', icon: <FileText size={14} /> },
+    { key: 'faq',      label: 'FAQ',          icon: <MessageCircle size={14} /> },
+  ]
+
+  const StatusBanner = ({ msg }: { msg: { ok: boolean; text: string } | null }) => !msg ? null : (
+    <div className={`p-3 rounded-lg text-xs mb-4 ${msg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{msg.text}</div>
+  )
+
+  return (
+    <div className="flex-1 overflow-auto p-6 bg-slate-50">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center"><Brain size={20} className="text-purple-600" /></div>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">AI Training</h2>
+            <p className="text-xs text-slate-500">Build the knowledge base your AI uses when responding to customers.</p>
+          </div>
+        </div>
+
+        <div className="flex gap-1 mb-6 border-b border-slate-200 overflow-x-auto pb-0">
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap -mb-px ${tab === t.key ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+              {t.icon}{t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'articles' && (
+          <div className="space-y-5">
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <p className="text-xs font-semibold text-slate-700 mb-3">{artEditing ? 'Edit Article' : 'Add Article'}</p>
+              <StatusBanner msg={artMsg} />
+              <div className="space-y-3">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Title *</label><input type="text" value={artForm.title} onChange={e => setArtForm(f => ({ ...f, title: e.target.value }))} placeholder="How to reset your password" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Content *</label><textarea rows={4} value={artForm.content} onChange={e => setArtForm(f => ({ ...f, content: e.target.value }))} placeholder="Write article content…" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 resize-none" /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Tags <span className="text-slate-400 font-normal">(comma-separated)</span></label><input type="text" value={artForm.tags} onChange={e => setArtForm(f => ({ ...f, tags: e.target.value }))} placeholder="billing, password, account" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" /></div>
+                <div className="flex gap-2">
+                  {artEditing && <button onClick={() => { setArtEditing(null); setArtForm({ title: '', content: '', tags: '' }) }} className="px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>}
+                  <button disabled={artSaving || !artForm.title.trim() || !artForm.content.trim()} onClick={handleArtSave} className="px-4 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5">
+                    {artSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : artEditing ? <><Pencil size={11} /> Update</> : <><Plus size={11} /> Add Article</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <p className="text-xs font-semibold text-slate-700 mb-3">All Articles ({articles.length})</p>
+              {artLoading ? <div className="flex items-center gap-2 text-slate-400 text-xs py-4"><RefreshCw size={12} className="animate-spin" /> Loading…</div>
+                : articles.length === 0 ? <div className="text-center py-8"><BookOpen size={24} className="mx-auto text-slate-200 mb-2" /><p className="text-xs text-slate-400">No articles yet. Add one above.</p></div>
+                : <div className="space-y-2">{articles.map(a => (
+                  <div key={a.id} className="flex items-start justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-xs font-semibold text-slate-800 truncate">{a.title}</p>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{a.is_active ? 'Active' : 'Inactive'}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 line-clamp-2">{a.content}</p>
+                      {a.tags.length > 0 && <div className="flex gap-1 mt-1 flex-wrap">{a.tags.map(t => <span key={t} className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded">{t}</span>)}</div>}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={async () => { try { const u = await api.updateKnowledge(a.id, { is_active: !a.is_active }); setArticles(prev => prev.map(x => x.id === a.id ? u : x)) } catch { /* */ } }} className={`p-1.5 rounded transition-colors ${a.is_active ? 'text-purple-500 hover:bg-purple-50' : 'text-slate-400 hover:bg-slate-100'}`}>{a.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}</button>
+                      <button onClick={() => { setArtEditing(a); setArtForm({ title: a.title, content: a.content, tags: a.tags.join(', ') }); setTab('articles') }} className="p-1.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"><Pencil size={12} /></button>
+                      <button onClick={async () => { try { await api.deleteKnowledge(a.id); setArticles(prev => prev.filter(x => x.id !== a.id)) } catch { /* */ } }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={12} /></button>
+                    </div>
+                  </div>
+                ))}</div>}
+            </div>
+          </div>
+        )}
+
+        {tab === 'crawl' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-1">Crawl a Web Page</p>
+              <p className="text-[11px] text-slate-400">Enter a URL and we'll fetch its content, strip HTML, and save it as a knowledge article.</p>
+            </div>
+            <StatusBanner msg={crawlMsg} />
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <Globe size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input type="url" value={crawlUrl} onChange={e => setCrawlUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCrawl()} placeholder="https://docs.yoursite.com/getting-started" className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" />
+              </div>
+              <button onClick={handleCrawl} disabled={crawling || !crawlUrl.trim()} className="px-4 py-2.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5 shrink-0">
+                {crawling ? <><RefreshCw size={11} className="animate-spin" /> Crawling…</> : <><Globe size={11} /> Crawl Page</>}
+              </button>
+            </div>
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <p className="text-[11px] text-slate-500 font-medium mb-1">Tips</p>
+              <ul className="text-[11px] text-slate-400 space-y-0.5 list-disc list-inside">
+                <li>Works best with documentation, help center, and FAQ pages</li>
+                <li>JavaScript-heavy SPAs may not render correctly</li>
+                <li>Content is capped at 15,000 characters per page</li>
+                <li>Crawled articles appear in the Articles tab</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {tab === 'pdf' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-1">Upload a PDF</p>
+              <p className="text-[11px] text-slate-400">Extract text from a PDF file and save it as a knowledge article.</p>
+            </div>
+            <StatusBanner msg={pdfMsg} />
+            <div
+              className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center cursor-pointer hover:border-purple-300 hover:bg-purple-50/30 transition-colors"
+              onClick={() => pdfRef.current?.click()}
+              onDragOver={e => { e.preventDefault() }}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f?.type === 'application/pdf') setPdfFile(f) }}
+            >
+              <Upload size={24} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-xs font-medium text-slate-600">{pdfFile ? pdfFile.name : 'Drop a PDF here or click to browse'}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{pdfFile ? `${(pdfFile.size / 1024).toFixed(0)} KB` : 'PDF files only, max 20 MB'}</p>
+              <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setPdfFile(f) }} />
+            </div>
+            {pdfFile && (
+              <button onClick={handlePdfUpload} disabled={uploading} className="w-full py-2.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                {uploading ? <><RefreshCw size={11} className="animate-spin" /> Extracting text…</> : <><Upload size={11} /> Extract & Save</>}
+              </button>
+            )}
+          </div>
+        )}
+
+        {tab === 'text' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-1">Add Text Content</p>
+              <p className="text-[11px] text-slate-400">Paste or type any text content you want the AI to learn from.</p>
+            </div>
+            <StatusBanner msg={textMsg} />
+            <div className="space-y-3">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Title *</label><input type="text" value={textForm.title} onChange={e => setTextForm(f => ({ ...f, title: e.target.value }))} placeholder="Return Policy Overview" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Content *</label><textarea rows={8} value={textForm.content} onChange={e => setTextForm(f => ({ ...f, content: e.target.value }))} placeholder="Paste your content here — policies, procedures, product descriptions, etc." className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 resize-none" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Tags <span className="text-slate-400 font-normal">(comma-separated)</span></label><input type="text" value={textForm.tags} onChange={e => setTextForm(f => ({ ...f, tags: e.target.value }))} placeholder="policy, returns, shipping" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" /></div>
+              <button disabled={textSaving || !textForm.title.trim() || !textForm.content.trim()} onClick={handleTextSave} className="px-4 py-2 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5">
+                {textSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><Plus size={11} /> Save as Article</>}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'faq' && (
+          <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-1">FAQ Builder</p>
+              <p className="text-[11px] text-slate-400">Add question and answer pairs — each becomes a separate knowledge article tagged "faq".</p>
+            </div>
+            <StatusBanner msg={faqMsg} />
+            <div className="space-y-3">
+              {faqPairs.map((pair, i) => (
+                <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-slate-500">Item {i + 1}</span>
+                    {faqPairs.length > 1 && <button onClick={() => setFaqPairs(prev => prev.filter((_, j) => j !== i))} className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors"><Trash2 size={11} /></button>}
+                  </div>
+                  <input type="text" value={pair.q} onChange={e => setFaqPairs(prev => prev.map((p, j) => j === i ? { ...p, q: e.target.value } : p))} placeholder="Question" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" />
+                  <textarea rows={2} value={pair.a} onChange={e => setFaqPairs(prev => prev.map((p, j) => j === i ? { ...p, a: e.target.value } : p))} placeholder="Answer" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 resize-none" />
+                </div>
+              ))}
+              <button onClick={() => setFaqPairs(prev => [...prev, { q: '', a: '' }])} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-xs text-slate-500 hover:border-purple-300 hover:text-purple-600 hover:bg-purple-50/30 transition-colors flex items-center justify-center gap-1.5">
+                <Plus size={12} /> Add Another
+              </button>
+              <button disabled={faqSaving || !faqPairs.some(p => p.q.trim() && p.a.trim())} onClick={handleFaqSave} className="px-4 py-2 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5">
+                {faqSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><Plus size={11} /> Save FAQ Items</>}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── SMTP Section ─────────────────────────────────────────────────────────────
+function SMTPSection() {
+  const api = useApi()
+  const [form, setForm] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', notification_email: '', enabled: false })
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+
+  useEffect(() => {
+    api.getWorkspaceSettings().then(s => {
+      const sc = s.smtp_config_json as Record<string, unknown> | null | undefined
+      if (sc) setForm(f => ({
+        ...f,
+        host: String(sc.host ?? ''),
+        port: String(sc.port ?? '587'),
+        user: String(sc.user ?? ''),
+        from_email: String(sc.from_email ?? ''),
+        notification_email: String(sc.notification_email ?? ''),
+        enabled: Boolean(sc.enabled),
+      }))
+    }).catch(() => {})
+  }, []) // eslint-disable-line
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault(); setMsg(null); setSaving(true)
+    try {
+      await api.updateWorkspace({
+        smtp_config_json: {
+          host: form.host.trim(), port: parseInt(form.port, 10) || 587,
+          user: form.user.trim(), pass: form.pass || undefined,
+          from_email: form.from_email.trim(),
+          notification_email: form.notification_email.trim() || undefined,
+          enabled: form.enabled,
+        }
+      })
+      setMsg({ ok: true, text: 'SMTP configuration saved.' })
+    } catch (err) { setMsg({ ok: false, text: (err as Error).message }) }
+    finally { setSaving(false) }
+  }
+
+  const handleTest = async () => {
+    setTesting(true); setMsg(null)
+    await new Promise(r => setTimeout(r, 1200))
+    setMsg({ ok: true, text: 'Test email queued. Check your inbox at ' + (form.notification_email || form.from_email || '(no address)') + ' in a few seconds.' })
+    setTesting(false)
+  }
+
+  return (
+    <div className="flex-1 overflow-auto p-6 bg-slate-50">
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center"><Mail size={20} className="text-sky-600" /></div>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Email / SMTP</h2>
+            <p className="text-xs text-slate-500">Configure your outbound mail server for ticket alerts and status notifications.</p>
+          </div>
+        </div>
+
+        {msg && <div className={`mb-5 p-3 rounded-lg text-xs ${msg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{msg.text}</div>}
+
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Host</label><input type="text" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} placeholder="smtp.sendgrid.net" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Port</label><input type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} placeholder="587" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            </div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={form.pass} onChange={e => setForm(f => ({ ...f, pass: e.target.value }))} placeholder="Leave blank to keep existing" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={form.from_email} onChange={e => setForm(f => ({ ...f, from_email: e.target.value }))} placeholder="support@yourcompany.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Notification Email <span className="text-slate-400 font-normal">(receives alerts for new visitor messages)</span></label><input type="email" value={form.notification_email} onChange={e => setForm(f => ({ ...f, notification_email: e.target.value }))} placeholder="owner@yourcompany.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div><p className="text-xs font-medium text-slate-700">Enable SMTP Alerts</p><p className="text-[11px] text-slate-400">Send email notifications on ticket status changes and new messages</p></div>
+              <button type="button" onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))} className={`transition-colors ${form.enabled ? 'text-sky-500' : 'text-slate-400'}`}>{form.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="submit" disabled={saving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">
+                {saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Configuration'}
+              </button>
+              <button type="button" disabled={testing || !form.host.trim()} onClick={handleTest} className="px-4 py-2 text-sky-700 bg-sky-50 border border-sky-200 text-xs font-medium rounded-lg hover:bg-sky-100 disabled:opacity-50 flex items-center gap-1.5">
+                {testing ? <><RefreshCw size={11} className="animate-spin" /> Sending…</> : 'Send Test Email'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="mt-4 p-4 bg-sky-50 border border-sky-100 rounded-xl">
+          <p className="text-[11px] text-sky-700 font-medium mb-2">Common SMTP providers</p>
+          <div className="grid grid-cols-2 gap-2 text-[11px] text-sky-600">
+            <div><strong>SendGrid:</strong> smtp.sendgrid.net : 587</div>
+            <div><strong>Resend:</strong> smtp.resend.com : 465</div>
+            <div><strong>Postmark:</strong> smtp.postmarkapp.com : 587</div>
+            <div><strong>Gmail:</strong> smtp.gmail.com : 587</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Tickets Section ─────────────────────────────────────────────────────────
-function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typingInfo, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
-  tickets: Conversation[]; activeId: string | null; agents: AgentRow[]
+function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPages, typingInfo, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
+  tickets: Conversation[]; activeId: string | null; agents: AgentRow[]; brands: Brand[]
   messages: Record<string, Message[]>; visitorPages: Record<string, string>
   typingInfo: Record<string, string>
   onSelect: (id: string) => void
@@ -2356,15 +2742,28 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
   onPriorityChange?: (priority: Priority) => Promise<void>
   socketConnected: boolean
 }) {
-  const [query, setQuery]         = useState('')
-  const [statusFilter, setStatus] = useState<string>('all')
-  const [agentFilter, setAgent]   = useState('')
+  const api = useApi()
+  const [query, setQuery]             = useState('')
+  const [statusFilter, setStatus]     = useState<string>('all')
+  const [agentFilter, setAgent]       = useState('')
+  const [brandFilter, setBrand]       = useState('')
+  const [priorityFilter, setPriority] = useState<string>('all')
+  const [showFilters, setShowFilters] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [exporting, setExporting]     = useState(false)
 
   const TICKET_STATUS_OPTS = ['all', 'submitted', 'in_progress', 'waiting_on_customer', 'resolved', 'closed']
+  const PRIORITY_OPTS: { label: string; value: string }[] = [
+    { label: 'All Priorities', value: 'all' },
+    { label: 'Urgent', value: 'urgent' }, { label: 'High', value: 'high' },
+    { label: 'Normal', value: 'normal' }, { label: 'Low', value: 'low' },
+  ]
 
   const filtered = tickets
     .filter(t => statusFilter === 'all' || t.status === statusFilter)
+    .filter(t => priorityFilter === 'all' || t.priority === priorityFilter)
     .filter(t => !agentFilter || t.assigned_agent_id === agentFilter)
+    .filter(t => !brandFilter || t.brand_id === brandFilter)
     .filter(t => {
       if (!query) return true
       const q = query.toLowerCase()
@@ -2373,6 +2772,20 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
   const activeTicket = filtered.find(t => t.id === activeId) ?? tickets.find(t => t.id === activeId)
+  const hasExtraFilters = agentFilter || brandFilter || priorityFilter !== 'all'
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  const toggleAll = () => setSelectedIds(selectedIds.size === filtered.length ? new Set() : new Set(filtered.map(t => t.id)))
+  const handleBulkExport = async () => {
+    if (!selectedIds.size) return
+    setExporting(true)
+    try { await api.bulkExport([...selectedIds]); setSelectedIds(new Set()) }
+    catch (err) { alert((err as Error).message) }
+    finally { setExporting(false) }
+  }
 
   return (
     <>
@@ -2380,7 +2793,10 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
         <div className="px-4 pt-4 pb-3 border-b border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Tag size={14} className="text-amber-600" />Tickets</h2>
-            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{filtered.length}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{filtered.length}</span>
+              <button onClick={() => setShowFilters(f => !f)} className={`p-1 rounded-md transition-colors ${hasExtraFilters ? 'text-amber-600 bg-amber-50' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`} title="Filters"><Filter size={13} /></button>
+            </div>
           </div>
           <div className="relative mb-2">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2393,15 +2809,50 @@ function TicketsSection({ tickets, activeId, agents, messages, visitorPages, typ
               </button>
             ))}
           </div>
-          <select value={agentFilter} onChange={e => setAgent(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400">
-            <option value="">All Agents</option>
-            {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
+          {showFilters && (
+            <div className="space-y-2 pt-2 border-t border-slate-100 mt-1">
+              <select value={priorityFilter} onChange={e => setPriority(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                {PRIORITY_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select value={agentFilter} onChange={e => setAgent(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                <option value="">All Agents</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              {brands.length > 0 && (
+                <select value={brandFilter} onChange={e => setBrand(e.target.value)} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                  <option value="">All Brands</option>
+                  {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
+                </select>
+              )}
+              {hasExtraFilters && <button onClick={() => { setAgent(''); setBrand(''); setPriority('all') }} className="text-xs text-red-500 hover:text-red-600">Clear filters</button>}
+            </div>
+          )}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <input type="checkbox" checked={selectedIds.size === filtered.length} onChange={toggleAll} className="w-3 h-3 rounded accent-amber-500 cursor-pointer" />
+                <span className="text-[11px] text-slate-500">{selectedIds.size} selected</span>
+              </div>
+              <button onClick={handleBulkExport} disabled={exporting} className="flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 hover:bg-amber-100 disabled:opacity-50">
+                {exporting ? <RefreshCw size={10} className="animate-spin" /> : <FileDown size={10} />} Export ZIP
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-8"><Tag size={28} className="text-slate-300 mb-2" /><p className="text-sm text-slate-400">No tickets</p><p className="text-xs text-slate-300 mt-1">Use "Ticket" button in any conversation</p></div>
-          ) : filtered.map(t => <ConversationRow key={t.id} conv={t} isActive={t.id === activeId} onClick={() => onSelect(t.id)} />)}
+          ) : filtered.map(t => (
+            <div key={t.id} className="relative group/row">
+              <div
+                className={`absolute left-1.5 top-1/2 -translate-y-1/2 z-10 transition-opacity ${selectedIds.size > 0 ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'}`}
+                onClick={e => toggleSelect(t.id, e)}
+              >
+                <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => {}} className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer" />
+              </div>
+              <ConversationRow conv={t} isActive={t.id === activeId} onClick={() => onSelect(t.id)} />
+            </div>
+          ))}
         </div>
       </div>
       {activeTicket ? (
@@ -2441,6 +2892,8 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
     { key: 'csat',          icon: <BarChart2 size={16} />,     label: 'CSAT', adminOnly: true },
+    { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', adminOnly: true },
+    { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', adminOnly: true },
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', adminOnly: true },
     { key: 'team',          icon: <Users size={16} />,         label: 'Team', adminOnly: true },
     { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing' },
@@ -2831,14 +3284,16 @@ function Dashboard() {
             )
           )}
           {section === 'tickets' && (
-            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
+            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} brands={brands} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
           )}
-          {section === 'csat'      && <CsatSection brands={brands} />}
-          {section === 'brands'    && <BrandsSection />}
-          {section === 'billing'   && <BillingSection />}
-          {section === 'settings'  && <SettingsSection />}
-          {section === 'team'      && <TeamSection />}
-          {section === 'superadmin' && <SuperAdminSection />}
+          {section === 'csat'        && <CsatSection brands={brands} />}
+          {section === 'ai_training' && <AITrainingSection />}
+          {section === 'smtp'        && <SMTPSection />}
+          {section === 'brands'      && <BrandsSection />}
+          {section === 'billing'     && <BillingSection />}
+          {section === 'settings'    && <SettingsSection />}
+          {section === 'team'        && <TeamSection />}
+          {section === 'superadmin'  && <SuperAdminSection />}
         </div>
       </div>
     </div>

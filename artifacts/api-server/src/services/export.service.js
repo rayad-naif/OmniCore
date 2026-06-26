@@ -425,4 +425,4 @@ async function streamPdfDirect(req, res, conversationId, tenantId) {
   }
 }
 
-module.exports = { handleExportRequest, exportConversation };
+module.exports = { handleExportRequest, exportConversation, buildPdf };
