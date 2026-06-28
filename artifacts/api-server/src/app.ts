@@ -132,14 +132,20 @@ async function notifyTenantAdmins(
       ),
     );
   } catch (err) {
-    logger.warn({ err: (err as Error).message, tenantId }, "tenant_admin_notify_failed");
+    logger.warn(
+      { err: (err as Error).message, tenantId },
+      "tenant_admin_notify_failed",
+    );
   }
 }
 
 // Reads a plan's feature/limit set from the synced `stripe` product metadata and
 // applies it to the tenant's capability columns. Activating a plan therefore
 // grants exactly the features configured on that plan in the plan builder.
-async function applyPlanFeatures(tenantId: string, plan: string | null): Promise<void> {
+async function applyPlanFeatures(
+  tenantId: string,
+  plan: string | null,
+): Promise<void> {
   // Free / no plan → reset to baseline free-tier limits.
   if (!plan || plan === "free") {
     await pool.query(
@@ -199,7 +205,9 @@ async function applyPlanFeatures(tenantId: string, plan: string | null): Promise
 }
 
 // Resolve a tenant id from a Stripe customer id (used by invoice events).
-async function tenantIdForCustomer(customerId: string | undefined): Promise<string | null> {
+async function tenantIdForCustomer(
+  customerId: string | undefined,
+): Promise<string | null> {
   if (!customerId) return null;
   try {
     const { rows } = await pool.query(
@@ -329,25 +337,41 @@ app.use(cookieParser());
 
 // ── Database pool injection (req.db) ──────────────────────────────────────────
 app.use(attachDb);
+// ── Routes ────────────────────────────────────────────────────────────────────
+// Redirect root domain to the dashboard
+app.get("/", (req: express.Request, res: express.Response) => {
+  res.redirect(301, "/dashboard");
+});
 
+app.use("/api", router);
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
 
 // ── Global error handler (4-arg signature required by Express) ────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: Error & { status?: number; statusCode?: number }, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const status  = (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode ?? 500;
-  const message = err.message || "Internal server error";
+app.use(
+  (
+    err: Error & { status?: number; statusCode?: number },
+    req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    const status =
+      (err as { status?: number }).status ??
+      (err as { statusCode?: number }).statusCode ??
+      500;
+    const message = err.message || "Internal server error";
 
-  if (status >= 500) {
-    req.log?.error({ err }, "unhandled_error");
-  }
+    if (status >= 500) {
+      req.log?.error({ err }, "unhandled_error");
+    }
 
-  res.status(status).json({
-    error: message,
-    ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
-  });
-});
+    res.status(status).json({
+      error: message,
+      ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+    });
+  },
+);
 
 // ── Auto-close idle conversations ─────────────────────────────────────────────
 // Runs every 2 minutes. Closes conversations whose brands have auto_close_enabled=true
@@ -376,7 +400,10 @@ function startAutoCloseScheduler(): void {
         logger.info({ closed: rows.length }, "auto_close_conversations");
       }
     } catch (err) {
-      logger.warn({ err: (err as Error).message }, "auto_close_scheduler_error");
+      logger.warn(
+        { err: (err as Error).message },
+        "auto_close_scheduler_error",
+      );
     }
   };
 
