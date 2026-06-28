@@ -15,6 +15,7 @@ import {
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
   Brain, BookOpen, Link2, Webhook, Upload, FileText,
+  KeyRound,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -61,6 +62,13 @@ interface Brand {
 interface AgentRow {
   id: string; name: string; email: string; role: string
   is_active: boolean; created_at: string
+}
+
+interface SuperAdminUser {
+  id: string; name: string; email: string; role: string
+  is_active: boolean; created_at: string
+  tenant_id: string | null; company_name: string | null
+  is_super_admin: boolean
 }
 
 interface SANTenant {
@@ -237,6 +245,10 @@ function useApi() {
       const r = await authFetch(`${API}/agents/me`, { method: 'PATCH', body: JSON.stringify({ name, password }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update profile') }
     },
+    setAgentPassword: async (id: string, password: string): Promise<void> => {
+      const r = await authFetch(`${API}/agents/${id}/password`, { method: 'PATCH', body: JSON.stringify({ password }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to set password') }
+    },
     createUpgradeRequest: async (requested_plan: string, company_size: string, notes: string): Promise<void> => {
       const r = await authFetch(`${API}/billing/upgrade-request`, { method: 'POST', body: JSON.stringify({ requested_plan, company_size, notes }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to submit request') }
@@ -285,6 +297,15 @@ function useApi() {
     removeSuperAdmin: async (id: string): Promise<void> => {
       const r = await authFetch(`${API}/super-admin/super-admins/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('Failed to remove super admin')
+    },
+    listSuperAdminUsers: async (): Promise<SuperAdminUser[]> => {
+      const r = await authFetch(`${API}/super-admin/users`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<SuperAdminUser[]>
+    },
+    setUserPassword: async (id: string, password: string): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ password }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to set password') }
     },
     getPlatformSmtp: async (): Promise<PlatformSmtpConfig> => {
       const r = await authFetch(`${API}/super-admin/platform-smtp`)
@@ -2269,10 +2290,26 @@ function TeamSection() {
   const [inviteErr, setInviteErr]   = useState<string | null>(null)
   const [inviteResult, setInviteResult] = useState<{ email: string; invite_link?: string; email_sent?: boolean } | null>(null)
   const [removing, setRemoving]     = useState<string | null>(null)
+  const [pwdTarget, setPwdTarget]   = useState<AgentRow | null>(null)
+  const [pwdForm, setPwdForm]       = useState({ password: '', confirm: '' })
+  const [pwdSaving, setPwdSaving]   = useState(false)
+  const [pwdMsg, setPwdMsg]         = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     api.listAgents().then(list => { setAgents(list); setLoading(false) }).catch(() => setLoading(false))
   }, []) // eslint-disable-line
+
+  const openPwd = (a: AgentRow) => { setPwdTarget(a); setPwdForm({ password: '', confirm: '' }); setPwdMsg(null) }
+  const closePwd = () => { setPwdTarget(null); setPwdForm({ password: '', confirm: '' }); setPwdMsg(null) }
+  const handleSetPwd = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!pwdTarget) return; setPwdMsg(null)
+    if (pwdForm.password.length < 8) { setPwdMsg({ ok: false, text: 'Password must be at least 8 characters' }); return }
+    if (pwdForm.password !== pwdForm.confirm) { setPwdMsg({ ok: false, text: 'Passwords do not match' }); return }
+    setPwdSaving(true)
+    try { await api.setAgentPassword(pwdTarget.id, pwdForm.password); setPwdMsg({ ok: true, text: `Password updated for ${pwdTarget.name}.` }); setPwdForm({ password: '', confirm: '' }) }
+    catch (err) { setPwdMsg({ ok: false, text: (err as Error).message }) }
+    finally { setPwdSaving(false) }
+  }
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault(); setInviteErr(null); setInviting(true)
@@ -2339,6 +2376,21 @@ function TeamSection() {
           </>)}
         </Modal>
       )}
+      {pwdTarget && (
+        <Modal onClose={closePwd}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Set Password</h2><button onClick={closePwd} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg mb-4"><p className="text-xs text-sky-700">Setting a new password for <strong>{pwdTarget.name}</strong> (<code className="bg-white px-1 rounded">{pwdTarget.email}</code>). Share it with them securely.</p></div>
+          {pwdMsg && <div className={`mb-3 p-2 rounded text-xs ${pwdMsg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{pwdMsg.text}</div>}
+          <form onSubmit={handleSetPwd} className="space-y-3">
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">New Password</label><input type="text" value={pwdForm.password} onChange={e => setPwdForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 8 characters" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Confirm Password</label><input type="text" value={pwdForm.confirm} onChange={e => setPwdForm(f => ({ ...f, confirm: e.target.value }))} placeholder="Re-enter password" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={closePwd} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Close</button>
+              <button type="submit" disabled={pwdSaving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{pwdSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><KeyRound size={11} /> Set Password</>}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       <div className="flex-1 overflow-auto p-6 bg-slate-50">
         <div className="max-w-2xl">
           <div className="flex items-center justify-between mb-6">
@@ -2356,6 +2408,7 @@ function TeamSection() {
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${a.role === 'admin' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{a.role}</span>
                     <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{a.is_active ? 'Active' : 'Inactive'}</span>
+                    {a.id !== me?.id && <button onClick={() => openPwd(a)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Set password"><KeyRound size={12} /></button>}
                     {a.id !== me?.id && <button onClick={() => handleRemove(a.id)} disabled={removing === a.id} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-40">{removing === a.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}</button>}
                   </div>
                 </div>
@@ -2374,7 +2427,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2567,6 +2620,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('tenants')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'tenants' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Tenants ({tenants.length})</button>
             <button onClick={() => setTab('requests')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'requests' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Upgrade Requests ({requests.length})</button>
             <button onClick={() => setTab('super_admins')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'super_admins' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Super Admins</button>
+            <button onClick={() => setTab('user_accounts')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'user_accounts' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>User Accounts</button>
             <button onClick={() => setTab('platform_smtp')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'platform_smtp' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Platform Email</button>
           </div>
 
@@ -2636,9 +2690,95 @@ function SuperAdminSection() {
             </div>
           ) : tab === 'super_admins' ? (
             <SuperAdminsPanel api={api} />
+          ) : tab === 'user_accounts' ? (
+            <UserAccountsPanel api={api} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── User Accounts Panel (super-admin: set any account's password) ────────────
+function UserAccountsPanel({ api }: { api: ReturnType<typeof useApi> }) {
+  const [users, setUsers]     = useState<SuperAdminUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch]   = useState('')
+  const [target, setTarget]   = useState<SuperAdminUser | null>(null)
+  const [form, setForm]       = useState({ password: '', confirm: '' })
+  const [saving, setSaving]   = useState(false)
+  const [msg, setMsg]         = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    api.listSuperAdminUsers().then(setUsers).catch(() => {}).finally(() => setLoading(false))
+  }, []) // eslint-disable-line
+
+  const open  = (u: SuperAdminUser) => { setTarget(u); setForm({ password: '', confirm: '' }); setMsg(null) }
+  const close = () => { setTarget(null); setForm({ password: '', confirm: '' }); setMsg(null) }
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!target) return; setMsg(null)
+    if (form.password.length < 8) { setMsg({ ok: false, text: 'Password must be at least 8 characters' }); return }
+    if (form.password !== form.confirm) { setMsg({ ok: false, text: 'Passwords do not match' }); return }
+    setSaving(true)
+    try { await api.setUserPassword(target.id, form.password); setMsg({ ok: true, text: `Password updated for ${target.name}.` }); setForm({ password: '', confirm: '' }) }
+    catch (err) { setMsg({ ok: false, text: (err as Error).message }) }
+    finally { setSaving(false) }
+  }
+
+  const q = search.trim().toLowerCase()
+  const filtered = q ? users.filter(u =>
+    u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.company_name ?? '').toLowerCase().includes(q)
+  ) : users
+
+  if (loading) return <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div>
+
+  return (
+    <>
+      {target && (
+        <Modal onClose={close}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Set Password</h2><button onClick={close} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg mb-4"><p className="text-xs text-sky-700">Setting a new password for <strong>{target.name}</strong> (<code className="bg-white px-1 rounded">{target.email}</code>){target.company_name ? <> at <strong>{target.company_name}</strong></> : null}. Share it securely.</p></div>
+          {msg && <div className={`mb-3 p-2 rounded text-xs ${msg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{msg.text}</div>}
+          <form onSubmit={save} className="space-y-3">
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">New Password</label><input type="text" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 8 characters" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Confirm Password</label><input type="text" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} placeholder="Re-enter password" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={close} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Close</button>
+              <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><KeyRound size={11} /> Set Password</>}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      <div className="mb-4">
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, email, or company…" className="w-full max-w-sm px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />
+      </div>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>{['User', 'Company', 'Role', 'Status', 'Action'].map(h => <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.length === 0 ? (
+                <tr><td colSpan={5} className="text-center py-12 text-slate-400 text-sm"><Users size={24} className="mx-auto mb-2 text-slate-300" />No users found</td></tr>
+              ) : filtered.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3"><p className="text-xs font-semibold text-slate-800">{u.name}</p><p className="text-[10px] text-slate-400">{u.email}</p></td>
+                  <td className="px-4 py-3"><span className="text-xs text-slate-600">{u.company_name ?? '—'}</span></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${u.role === 'admin' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{u.role}</span>
+                      {u.is_super_admin && <span className="text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide bg-violet-100 text-violet-700">Super</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3"><span className={`text-[10px] font-medium px-2 py-0.5 rounded ${u.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
+                  <td className="px-4 py-3"><button onClick={() => open(u)} className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-600 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors"><KeyRound size={12} /> Set Password</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </>

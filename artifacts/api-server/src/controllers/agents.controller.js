@@ -132,6 +132,39 @@ router.delete('/:id', requireRole('admin'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ─── PATCH /api/agents/:id/password ───────────────────────────────────────────
+// Admin sets a password directly for an agent in their own tenant. Used when the
+// platform email service can't deliver invite / reset links. Tenant-scoped; the
+// protected super-admin account can never be targeted by a tenant admin.
+router.patch('/:id/password', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const { rows: target } = await pool.query(
+      'SELECT id, email FROM agents WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, req.agent.tenantId]
+    );
+    if (!target.length) return res.status(404).json({ error: 'Agent not found' });
+
+    if (SUPER_ADMIN_EMAIL && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Super admin password cannot be changed here' });
+    }
+
+    const hash = await bcrypt.hash(String(password), 10);
+    const { rows } = await pool.query(
+      `UPDATE agents SET password_hash = $1, updated_at = NOW()
+       WHERE id = $2 AND tenant_id = $3
+       RETURNING id, name, email, role`,
+      [hash, req.params.id, req.agent.tenantId]
+    );
+    logger.info({ agentId: req.params.id, by: req.agent.id }, 'agent_password_set_by_admin');
+    return res.json({ ...rows[0], password_set: true });
+  } catch (err) { next(err); }
+});
+
 // ─── PATCH /api/agents/me ─────────────────────────────────────────────────────
 router.patch('/me', async (req, res, next) => {
   try {

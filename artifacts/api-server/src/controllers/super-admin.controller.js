@@ -13,6 +13,7 @@
  */
 
 const { Router }   = require('express');
+const bcrypt       = require('bcryptjs');
 const { pool }     = require('../lib/db');
 const { requireAuth } = require('../middleware/auth');
 const logger       = require('../utils/logger');
@@ -296,6 +297,50 @@ router.delete('/super-admins/:id', async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     logger.info({ id: req.params.id, by: req.agent.email }, 'super_admin_removed');
     return res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+// ─── GET /api/super-admin/users ──────────────────────────────────────────────
+// Lists every account across all tenants so a super admin can manage passwords.
+// Flags super admins (the env primary + any active super_admin_emails entry).
+router.get('/users', async (req, res, next) => {
+  try {
+    const primaryEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+    const { rows } = await pool.query(`
+      SELECT
+        a.id, a.name, a.email, a.role, a.is_active, a.created_at,
+        a.tenant_id, t.company_name,
+        (
+          lower(a.email) = $1
+          OR EXISTS (SELECT 1 FROM super_admin_emails s WHERE s.email = lower(a.email) AND s.is_active = TRUE)
+        ) AS is_super_admin
+      FROM agents a
+      LEFT JOIN tenants t ON t.id = a.tenant_id
+      ORDER BY t.company_name ASC NULLS FIRST, a.created_at ASC
+    `, [primaryEmail]);
+    return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /api/super-admin/users/:id/password ───────────────────────────────
+// Super admin sets a password for any account (agent, admin, or super admin).
+// Used when the platform email service can't deliver invite / reset links.
+router.patch('/users/:id/password', async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+    const hash = await bcrypt.hash(String(password), 10);
+    const { rows } = await pool.query(
+      `UPDATE agents SET password_hash = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, name, email, role`,
+      [hash, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    logger.info({ targetId: req.params.id, by: req.agent.email }, 'user_password_set_by_super_admin');
+    return res.json({ ...rows[0], password_set: true });
   } catch (err) { next(err); }
 });
 
