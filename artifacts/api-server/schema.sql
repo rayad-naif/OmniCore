@@ -73,6 +73,22 @@ CREATE INDEX IF NOT EXISTS idx_agents_tenant_id ON agents (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_agents_role      ON agents (tenant_id, role);
 
 -- ---------------------------------------------------------------------------
+-- PASSWORD RESET / SET-PASSWORD TOKENS
+-- Used by the forgot-password flow and the agent-invite (set-password) flow.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id    UUID        NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
+    token       TEXT        NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prt_token ON password_reset_tokens (token);
+CREATE INDEX IF NOT EXISTS idx_prt_agent ON password_reset_tokens (agent_id);
+
+-- ---------------------------------------------------------------------------
 -- VISITORS
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS visitors (
