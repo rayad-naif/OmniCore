@@ -12,3 +12,12 @@ createRoot(root).render(
     </AuthProvider>
   </StrictMode>
 )
+
+// Register the service worker so the dashboard is installable ("Add to Home Screen").
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/dashboard/sw.js', { scope: '/dashboard/' })
+      .catch(() => { /* installability is best-effort */ })
+  })
+}

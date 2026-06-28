@@ -1,0 +1,16 @@
+{
+  "name": "Atelier OmniCore",
+  "short_name": "OmniCore",
+  "description": "Omnichannel helpdesk & AI customer support dashboard.",
+  "start_url": "/dashboard/",
+  "scope": "/dashboard/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/dashboard/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/dashboard/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/dashboard/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

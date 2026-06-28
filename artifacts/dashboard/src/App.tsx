@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
+import omnicoreLogo from './assets/omnicore-logo.png'
 import {
   MessageSquare, Building2, CreditCard, Settings,
   Search, Send, FileDown, Menu, X, Bot, User,
@@ -592,10 +593,9 @@ function playChime() {
 // ─── Logo ─────────────────────────────────────────────────────────────────────
 function OmniLogo({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const s = size === 'sm' ? 'w-7 h-7' : 'w-9 h-9'
-  const i = size === 'sm' ? 14 : 18
   return (
-    <div className={`${s} bg-sky-500 rounded-xl flex items-center justify-center shadow-lg shadow-sky-500/30`}>
-      <Sparkles size={i} className="text-white" />
+    <div className={`${s} bg-slate-900 rounded-xl flex items-center justify-center shadow-lg shadow-amber-900/20 ring-1 ring-amber-400/20 overflow-hidden`}>
+      <img src={omnicoreLogo} alt="OmniCore" className="w-[78%] h-[78%] object-contain" />
     </div>
   )
 }
@@ -1553,7 +1553,6 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   const [exporting, setExporting] = useState(false)
   const [toast, setToast]         = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [menuOpen, setMenuOpen]   = useState(false)
-  const [csatScore, setCsatScore] = useState<number>(conv.csat_score ?? 0)
   const [ticketStatus, setTicketStatus] = useState<Status>(conv.status)
   const bottomRef   = useRef<HTMLDivElement>(null)
   const menuRef     = useRef<HTMLDivElement>(null)
@@ -1580,12 +1579,6 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
     try { const url = await api.exportPdf(conv.id); if (url) { window.open(url, '_blank'); showToast('success', 'PDF export opened') } }
     catch (e) { showToast('error', (e as Error).message || 'Export unavailable') }
     finally { setExporting(false) }
-  }
-
-  const handleCsatSet = async (score: number) => {
-    setCsatScore(score)
-    try { await api.patchConversation(conv.id, { csat_score: score }) }
-    catch { /* ignore */ }
   }
 
   const handleTicketStatusChange = async (status: Status) => {
@@ -1686,15 +1679,6 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
                     <div className="border-t border-slate-100 mt-1 pt-1" />
                   </>
                 )}
-                <p className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">CSAT Rating</p>
-                <div className="px-3 pb-2 flex gap-1">
-                  {[1,2,3,4,5].map(n => (
-                    <button key={n} onClick={() => { handleCsatSet(n); setMenuOpen(false) }} className="p-0.5">
-                      <Star size={16} className={n <= csatScore ? 'text-amber-400 fill-amber-400' : 'text-slate-200 fill-slate-200 hover:text-amber-300'} />
-                    </button>
-                  ))}
-                </div>
-                <div className="border-t border-slate-100 mt-1 pt-1" />
                 <button onClick={() => { navigator.clipboard.writeText(conv.id); setMenuOpen(false) }} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2"><Copy size={11} />Copy ID</button>
                 {onDelete && (
                   <>
