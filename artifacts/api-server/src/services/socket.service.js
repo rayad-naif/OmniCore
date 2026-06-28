@@ -314,31 +314,12 @@ function attachSocketServer(httpServer) {
             maybeGenerateSubject(conversationId, msgBody).catch(() => {});
           }
 
-          // Non-blocking: AI bot auto-reply (fires when conversation is in ai_handling status)
+          // Non-blocking: AI bot auto-reply (fires when conversation is in
+          // ai_handling status). Shared with the REST widget handler.
           if (msgBody) {
-            (async () => {
-              try {
-                const { rows: aiRows } = await pool.query(
-                  `SELECT c.brand_id, t.ai_auto_reply_enabled, t.ai_feature_enabled
-                   FROM conversations c
-                   JOIN tenants t ON t.id = c.tenant_id
-                   WHERE c.id = $1 AND c.status = 'ai_handling'`,
-                  [conversationId]
-                );
-                if (!aiRows[0] || !aiRows[0].ai_auto_reply_enabled || !aiRows[0].ai_feature_enabled) return;
-                const { handleInboundMessage, triggerHandover } = require('./ai.service');
-                try {
-                  await handleInboundMessage({ conversationId, tenantId, brandId: aiRows[0].brand_id, userMessage: msgBody, io });
-                } catch (genErr) {
-                  // Bot failed (e.g. model error) — never leave the chat stranded in
-                  // ai_handling. Hand it over to a human agent so it surfaces in the inbox.
-                  console.error('[socket] ai_auto_reply_failed_handover', genErr.message);
-                  await triggerHandover({ conversationId, tenantId, brandId: aiRows[0].brand_id, io, reason: 'bot_error' }).catch(() => {});
-                }
-              } catch (aiErr) {
-                console.error('[socket] ai_auto_reply_error', aiErr.message);
-              }
-            })();
+            const { maybeAutoReply } = require('./ai.service');
+            maybeAutoReply({ conversationId, tenantId, userMessage: msgBody, io })
+              .catch(() => { /* non-fatal: handled internally */ });
           }
 
           // Non-blocking: email the tenant's notification_email address
@@ -544,4 +525,7 @@ function attachSocketServer(httpServer) {
   return io;
 }
 
-module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor };
+/** Returns the live Socket.io server instance (or null before init). */
+function getIo() { return _io; }
+
+module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor, getIo };

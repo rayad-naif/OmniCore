@@ -13,6 +13,8 @@ paths = ["/dashboard"]
 run = "pnpm --filter @workspace/dashboard run dev"
 
 [services.production]
+serve = "static"
+publicDir = "artifacts/dashboard/dist/public"
 
 [services.production.build]
 args = ["pnpm", "--filter", "@workspace/dashboard", "run", "build"]
@@ -20,12 +22,9 @@ args = ["pnpm", "--filter", "@workspace/dashboard", "run", "build"]
 [services.production.build.env]
 NODE_ENV = "production"
 
-[services.production.run]
-args = ["npx", "serve", "-s", "artifacts/dashboard/dist", "-l", "5174"]
-
-[services.production.run.env]
-PORT = "5174"
-NODE_ENV = "production"
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
 
 [services.production.health.startup]
 path = "/dashboard/"

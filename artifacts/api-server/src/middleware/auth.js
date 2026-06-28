@@ -15,7 +15,53 @@
 
 const jwt    = require('jsonwebtoken');
 const logger = require('../utils/logger');
+const { pool } = require('../lib/db');
 const { LEVELS, permissionLevel } = require('../lib/permissions');
+
+/**
+ * isSuperAdminAgent(agent)
+ *   Resolves whether the authenticated agent is a platform super admin.
+ *   Matches process.env.SUPER_ADMIN_EMAIL or an active row in super_admin_emails.
+ */
+async function isSuperAdminAgent(agent) {
+  if (!agent?.email) return false;
+  const saEmail = process.env.SUPER_ADMIN_EMAIL;
+  if (saEmail && agent.email === saEmail) return true;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM super_admin_emails WHERE email = $1 AND is_active = TRUE LIMIT 1`,
+      [agent.email]
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * applyWorkspaceOverride(req, res, next)
+ *   Lets a super admin "switch into" another workspace. When the request
+ *   carries an `X-Workspace-Id` header AND the caller is a super admin, the
+ *   effective tenant for downstream tenant-scoped queries is overridden to the
+ *   selected workspace. For non-super-admins the header is silently ignored, so
+ *   tenant isolation is preserved. Must be placed after requireAuth.
+ */
+async function applyWorkspaceOverride(req, res, next) {
+  try {
+    const ws = req.headers['x-workspace-id'];
+    if (!ws || !req.agent) return next();
+    if (ws === req.agent.tenantId) return next();
+    const allowed = await isSuperAdminAgent(req.agent);
+    if (allowed) {
+      req.agent.tenantId = ws;
+      req.agent.workspaceOverride = true;
+    }
+    return next();
+  } catch (err) {
+    logger.warn({ err: err.message }, 'workspace_override_failed');
+    return next();
+  }
+}
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -91,4 +137,4 @@ function requirePermissionByMethod(feature) {
   };
 }
 
-module.exports = { requireAuth, requireRole, requirePermission, requirePermissionByMethod };
+module.exports = { requireAuth, requireRole, requirePermission, requirePermissionByMethod, isSuperAdminAgent, applyWorkspaceOverride };

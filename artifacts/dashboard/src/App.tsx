@@ -208,6 +208,10 @@ function useApi() {
       })
       return r.json() as Promise<Conversation>
     },
+    deleteConversation: async (id: string): Promise<void> => {
+      const r = await authFetch(`${API}/conversations/${id}`, { method: 'DELETE' })
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to delete conversation') }
+    },
     exportPdf: async (id: string): Promise<string> => {
       const r = await authFetch(`${API}/conversations/${id}/export`)
       if (!r.ok) throw new Error('Export failed')
@@ -495,6 +499,10 @@ function useApi() {
       const r = await authFetch(`${API}/contacts/${visitorId}/conversations`)
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<ContactConversation[]>
+    },
+    deleteContact: async (visitorId: string): Promise<void> => {
+      const r = await authFetch(`${API}/contacts/${visitorId}`, { method: 'DELETE' })
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to delete contact') }
     },
     exportContactsCsv: async (params?: Record<string, string>): Promise<void> => {
       const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -1524,7 +1532,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
 }
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt, onSelectConversation }: {
+function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, onDelete, agents, currentPage, socketConnected, typingWho, visitorOnline, visitorReadAt, onSelectConversation }: {
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status, triggerCsat?: boolean) => void
@@ -1533,6 +1541,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
   onDeleteMessage?: (msgId: string) => Promise<void>
   onPriorityChange?: (priority: Priority) => Promise<void>
+  onDelete?: (id: string) => Promise<void>
   agents: AgentRow[]
   currentPage: string | null
   socketConnected: boolean
@@ -1687,6 +1696,20 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
                 </div>
                 <div className="border-t border-slate-100 mt-1 pt-1" />
                 <button onClick={() => { navigator.clipboard.writeText(conv.id); setMenuOpen(false) }} className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2"><Copy size={11} />Copy ID</button>
+                {onDelete && (
+                  <>
+                    <div className="border-t border-slate-100 mt-1 pt-1" />
+                    <button
+                      onClick={async () => {
+                        setMenuOpen(false)
+                        if (!window.confirm(`Delete this ${conv.is_ticket ? 'ticket' : 'conversation'} and all its messages? This cannot be undone.`)) return
+                        try { await onDelete(conv.id) }
+                        catch (e) { showToast('error', (e as Error).message || 'Failed to delete') }
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    ><Trash2 size={11} />Delete {conv.is_ticket ? 'ticket' : 'conversation'}</button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -4057,7 +4080,7 @@ function SMTPSection() {
 }
 
 // ─── Tickets Section ─────────────────────────────────────────────────────────
-function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPages, typingInfo, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, socketConnected }: {
+function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPages, typingInfo, onSelect, onSend, onStatusChange, onConvertToTicket, onAssign, onEditMessage, onDeleteMessage, onPriorityChange, onDelete, socketConnected }: {
   tickets: Conversation[]; activeId: string | null; agents: AgentRow[]; brands: Brand[]
   messages: Record<string, Message[]>; visitorPages: Record<string, string>
   typingInfo: Record<string, string>
@@ -4069,6 +4092,7 @@ function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPa
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
   onDeleteMessage?: (msgId: string) => Promise<void>
   onPriorityChange?: (priority: Priority) => Promise<void>
+  onDelete?: (id: string) => Promise<void>
   socketConnected: boolean
 }) {
   const api = useApi()
@@ -4185,7 +4209,7 @@ function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPa
         </div>
       </div>
       {activeTicket ? (
-        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={false} visitorReadAt={null} />
+        <ChatPanel conv={activeTicket} messages={messages[activeId!] ?? []} onSend={onSend} onStatusChange={onStatusChange} onConvertToTicket={onConvertToTicket} onAssign={onAssign} onEditMessage={onEditMessage} onDeleteMessage={onDeleteMessage} onPriorityChange={onPriorityChange} onDelete={onDelete} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? null} socketConnected={socketConnected} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={false} visitorReadAt={null} />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50 p-8">
           <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mb-4"><Tag size={24} className="text-amber-400" /></div>
@@ -4200,6 +4224,7 @@ function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPa
 // ─── Contacts Section ─────────────────────────────────────────────────────────
 function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: React.MutableRefObject<Socket | null> }) {
   const api = useApi()
+  const { isAdmin } = useAuth() as { isAdmin: boolean }
   const [contacts, setContacts]         = useState<Contact[]>([])
   const [total, setTotal]               = useState(0)
   const [pages, setPages]               = useState(1)
@@ -4403,9 +4428,29 @@ function ContactsSection({ brands, socketRef }: { brands: Brand[]; socketRef: Re
                 </span>
               </div>
             </div>
-            <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-600 transition-colors shrink-0 mt-0.5">
-              <X size={14} />
-            </button>
+            <div className="flex items-center gap-1 shrink-0 mt-0.5">
+              {isAdmin && (
+                <button
+                  onClick={async () => {
+                    if (!selected) return
+                    if (!window.confirm(`Delete ${selected.display_name} and all their conversations? This cannot be undone.`)) return
+                    try {
+                      await api.deleteContact(selected.id)
+                      setSelected(null)
+                      setConvHistory([])
+                      load(page)
+                    } catch { /* ignore */ }
+                  }}
+                  className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                  title="Delete contact"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+              <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={14} />
+              </button>
+            </div>
           </div>
 
           <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50">
@@ -4697,11 +4742,14 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
 
 // ─── Dashboard (authenticated) ────────────────────────────────────────────────
 function Dashboard() {
-  const { accessToken, agent, logout, can } = useAuth() as {
+  const { accessToken, agent, logout, can, isAdmin, workspaceOverride, setWorkspaceOverride } = useAuth() as {
     accessToken: string | null
     agent: { id: string; name: string; email: string; tenantId: string; role: string; isSuperAdmin?: boolean } | null
     logout: () => Promise<void>
     can: (feature: string, level?: string) => boolean
+    isAdmin: boolean
+    workspaceOverride: { tenantId: string; name: string } | null
+    setWorkspaceOverride: (w: { tenantId: string; name: string } | null) => void
   }
   const api = useApi()
 
@@ -4726,9 +4774,27 @@ function Dashboard() {
 
   useEffect(() => { activeIdRef.current = activeId }, [activeId])
 
+  const [tenantList, setTenantList] = useState<SANTenant[]>([])
+
   useEffect(() => {
-    if (agent?.isSuperAdmin) setSection('superadmin')
+    // Super admins land on the Super Admin console by default, but when they
+    // "view as" a workspace we keep them on the data sections instead.
+    if (agent?.isSuperAdmin && !workspaceOverride) setSection('superadmin')
+  }, [agent?.isSuperAdmin, workspaceOverride]) // eslint-disable-line
+
+  useEffect(() => {
+    if (agent?.isSuperAdmin) api.listSANTenants().then(setTenantList).catch(() => {})
   }, [agent?.isSuperAdmin]) // eslint-disable-line
+
+  const enterWorkspace = useCallback((t: SANTenant) => {
+    setWorkspaceOverride({ tenantId: t.id, name: t.company_name })
+    setSection('conversations')
+  }, [setWorkspaceOverride])
+
+  const exitWorkspace = useCallback(() => {
+    setWorkspaceOverride(null)
+    setSection('superadmin')
+  }, [setWorkspaceOverride])
 
   useEffect(() => {
     api.listAgents().then(setAgents).catch(() => {})
@@ -4950,6 +5016,12 @@ function Dashboard() {
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, priority } : c))
   }, [activeId]) // eslint-disable-line
 
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    await api.deleteConversation(id)
+    setConvs(prev => prev.filter(c => c.id !== id))
+    setActiveId(prev => (prev === id ? null : prev))
+  }, [api]) // eslint-disable-line
+
   const totalUnread   = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const totalUnassigned = convs.filter(c => !c.assigned_agent_id && c.status !== 'closed' && !c.is_ticket).length
   const recentActivity  = convs
@@ -4978,6 +5050,33 @@ function Dashboard() {
           {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">{totalUnread}</span>}
         </div>
 
+        {agent?.isSuperAdmin && (
+          workspaceOverride ? (
+            <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-50 border-b border-amber-200">
+              <span className="flex items-center gap-2 text-xs font-medium text-amber-800 min-w-0">
+                <Eye size={13} className="shrink-0" />
+                <span className="truncate">Viewing workspace: <span className="font-semibold">{workspaceOverride.name}</span></span>
+              </span>
+              <button onClick={exitWorkspace} className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md transition-colors shrink-0">
+                <X size={12} /> Exit workspace
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 border-b border-slate-200">
+              <Eye size={13} className="text-slate-500 shrink-0" />
+              <span className="text-xs font-medium text-slate-600 shrink-0">View as workspace:</span>
+              <select
+                value=""
+                onChange={e => { const t = tenantList.find(x => x.id === e.target.value); if (t) enterWorkspace(t) }}
+                className="text-xs text-slate-700 bg-white border border-slate-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-sky-500/30 cursor-pointer max-w-[280px]"
+              >
+                <option value="">Select a workspace…</option>
+                {tenantList.map(t => <option key={t.id} value={t.id}>{t.company_name}</option>)}
+              </select>
+            </div>
+          )
+        )}
+
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {section === 'conversations' && (
             loading ? (
@@ -4987,12 +5086,12 @@ function Dashboard() {
             ) : (
               <>
                 <ConversationsList convs={convs} activeId={activeId} onSelect={handleSelectConversation} brands={brands} agents={agents} />
-                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? activeConv.current_url ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} onSelectConversation={handleSelectConversation} /> : <EmptyChat />}
+                {activeConv ? <ChatPanel conv={activeConv} messages={messages[activeId!] ?? []} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} onDelete={isAdmin ? handleDeleteConversation : undefined} agents={agents} currentPage={visitorPages[activeId ?? ''] ?? activeConv.current_url ?? null} socketConnected={socketOk} typingWho={typingInfo[activeId ?? ''] ?? null} visitorOnline={visitorOnline[activeId ?? ''] ?? false} visitorReadAt={visitorReadAt[activeId ?? ''] ?? null} onSelectConversation={handleSelectConversation} /> : <EmptyChat />}
               </>
             )
           )}
           {section === 'tickets' && (
-            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} brands={brands} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} socketConnected={socketOk} />
+            <TicketsSection tickets={convs.filter(c => c.is_ticket)} activeId={activeId} agents={agents} brands={brands} messages={messages} visitorPages={visitorPages} typingInfo={typingInfo} onSelect={handleSelectTicket} onSend={handleSend} onStatusChange={handleStatusChange} onConvertToTicket={handleConvertToTicket} onAssign={handleAssign} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage} onPriorityChange={handlePriorityChange} onDelete={isAdmin ? handleDeleteConversation : undefined} socketConnected={socketOk} />
           )}
           {section === 'contacts'         && <ContactsSection brands={brands} socketRef={socketRef} />}
           {section === 'canned_responses' && <CannedResponsesSection />}
@@ -5012,7 +5111,7 @@ function Dashboard() {
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const { isAuthenticated, isLoading } = useAuth() as { isAuthenticated: boolean; isLoading: boolean }
+  const { isAuthenticated, isLoading, workspaceOverride } = useAuth() as { isAuthenticated: boolean; isLoading: boolean; workspaceOverride: { tenantId: string } | null }
   const [view, setView]     = useState<AuthView>(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('reset_token') ? 'reset' : 'login'
@@ -5036,7 +5135,7 @@ export default function App() {
     </div>
   )
 
-  if (isAuthenticated) return <Dashboard />
+  if (isAuthenticated) return <Dashboard key={workspaceOverride?.tenantId ?? 'self'} />
 
   if (view === 'signup') return <SignupPage onGoLogin={goLogin} />
   if (view === 'forgot') return <ForgotPasswordPage onGoLogin={goLogin} />

@@ -40,6 +40,9 @@ export function AuthProvider({ children }) {
   const [agent, setAgent]               = useState(null);   // { id, name, email, role, tenantId }
   const [isLoading, setIsLoading]       = useState(true);   // true during initial silent refresh
   const [error, setError]               = useState(null);
+  // Super-admin "view as workspace" override: { tenantId, name } | null.
+  // When set, authFetch sends X-Workspace-Id so the server scopes data to that tenant.
+  const [workspaceOverride, setWorkspaceOverride] = useState(null);
 
   const refreshTimerRef = useRef(null);
 
@@ -118,6 +121,7 @@ export function AuthProvider({ children }) {
           'Content-Type': 'application/json',
           ...options.headers,
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(workspaceOverride ? { 'X-Workspace-Id': workspaceOverride.tenantId } : {}),
         },
       });
     };
@@ -132,7 +136,7 @@ export function AuthProvider({ children }) {
       }
     }
     return res;
-  }, [accessToken, silentRefresh]);
+  }, [accessToken, silentRefresh, workspaceOverride]);
 
   // ── Derived helpers ──────────────────────────────────────────────────────────
   const isAuthenticated = Boolean(accessToken && agent);
@@ -159,6 +163,8 @@ export function AuthProvider({ children }) {
     logout,
     authFetch,
     can,
+    workspaceOverride,
+    setWorkspaceOverride,
     clearError: () => setError(null),
   };
 

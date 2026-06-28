@@ -9,12 +9,13 @@
  */
 
 const { Router }      = require('express');
-const { requireAuth, requirePermissionByMethod } = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod, applyWorkspaceOverride } = require('../middleware/auth');
 const { pool }        = require('../lib/db');
 const logger          = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+router.use(applyWorkspaceOverride);
 router.use(requirePermissionByMethod('contacts'));
 
 const PAGE_LIMIT = 25;
@@ -199,6 +200,25 @@ router.get('/:visitorId/conversations', async (req, res, next) => {
 
     logger.info({ visitorId }, 'contacts_visitor_history_fetched');
     return res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// ── DELETE /api/contacts/:visitorId ───────────────────────────────────────────
+// Admin-only. Permanently removes a contact (visitor) and all of their
+// conversations + messages (cascade via FK ON DELETE CASCADE).
+router.delete('/:visitorId', async (req, res, next) => {
+  try {
+    if (req.agent.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden — admin only' });
+    }
+    const tid = tenantId(req);
+    const { rows } = await pool.query(
+      'DELETE FROM visitors WHERE id = $1 AND tenant_id = $2 RETURNING id',
+      [req.params.visitorId, tid]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Contact not found' });
+    logger.info({ visitorId: req.params.visitorId, by: req.agent.id }, 'contact_deleted');
+    return res.status(204).end();
   } catch (err) { next(err); }
 });
 

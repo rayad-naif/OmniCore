@@ -1,1 +1,2 @@
 - [OmniCore stack decisions](omnicore-stack.md) — socket.io path, schema quirks, seed UUIDs, demo credentials
+- [Deploy static web (vite) artifacts](deploy-static-web-artifacts.md) — vite web artifacts must use `serve = "static"`; a custom `npx serve` run command fails publish (port never opens)

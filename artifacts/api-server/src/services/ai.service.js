@@ -19,6 +19,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { pool } = require('../lib/db');
+const logger = require('../utils/logger');
 
 // ---------------------------------------------------------------------------
 // Client initialisation
@@ -438,6 +439,46 @@ async function embedText(text) {
   return new Array(EMBEDDING_DIMS).fill(0);
 }
 
+/**
+ * maybeAutoReply — transport-agnostic entry point for the AI bot.
+ *
+ * Both the Socket.io `client:send_message` handler and the REST
+ * `POST /api/widget/message` handler call this after persisting a visitor
+ * message, so the bot fires regardless of how the widget delivered it.
+ *
+ * Fires only when the conversation is in `ai_handling` status AND the tenant
+ * has both `ai_feature_enabled` and `ai_auto_reply_enabled`. On any model
+ * failure the conversation is handed over to a human so it never gets stranded
+ * in `ai_handling` with no reply.
+ */
+async function maybeAutoReply({ conversationId, tenantId, userMessage, io }) {
+  if (!userMessage || !String(userMessage).trim()) return;
+  const { rows } = await pool.query(
+    `SELECT c.brand_id, t.ai_auto_reply_enabled, t.ai_feature_enabled
+       FROM conversations c
+       JOIN tenants t ON t.id = c.tenant_id
+      WHERE c.id = $1 AND c.status = 'ai_handling'`,
+    [conversationId]
+  );
+  const row = rows[0];
+  if (!row || !row.ai_auto_reply_enabled || !row.ai_feature_enabled) return;
+
+  try {
+    await handleInboundMessage({
+      conversationId,
+      tenantId,
+      brandId: row.brand_id,
+      userMessage: String(userMessage).trim(),
+      io,
+    });
+  } catch (err) {
+    // Bot failed (model error etc.) — hand over to a human so the chat is not
+    // stranded in ai_handling with no reply.
+    try { logger.error({ err: err.message, conversationId }, 'ai_auto_reply_failed_handover'); } catch { /* noop */ }
+    await triggerHandover({ conversationId, tenantId, brandId: row.brand_id, io, reason: 'bot_error' }).catch(() => {});
+  }
+}
+
 module.exports = {
   embedText,
   chunkText,
@@ -445,6 +486,7 @@ module.exports = {
   retrieveContext,
   retrieveContextFts,
   handleInboundMessage,
+  maybeAutoReply,
   triggerHandover,
   isHandoverTriggered,
   isAskingForHuman,

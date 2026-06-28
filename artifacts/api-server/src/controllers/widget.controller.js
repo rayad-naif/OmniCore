@@ -20,7 +20,8 @@ const fs                    = require('fs');
 const path                  = require('path');
 const { pool }              = require('../lib/db');
 const logger                = require('../utils/logger');
-const { broadcastToTenant, broadcastToConversation } = require('../services/socket.service');
+const { broadcastToTenant, broadcastToConversation, getIo } = require('../services/socket.service');
+const { maybeAutoReply } = require('../services/ai.service');
 const { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl } = require('../lib/r2');
 
 const router = Router();
@@ -363,6 +364,14 @@ router.post('/message', async (req, res, next) => {
     try {
       broadcastToTenant(cRows[0].tenant_id, 'conversation:visitor_message', { conversationId, message: result });
     } catch { /* non-fatal */ }
+
+    // Non-blocking: AI bot auto-reply. The widget delivers text messages over
+    // REST (not socket), so the bot trigger must live here too — otherwise an
+    // ai_handling conversation would show the "AI" label but never get a reply.
+    if ((msgBody || '').trim()) {
+      maybeAutoReply({ conversationId, tenantId: cRows[0].tenant_id, userMessage: msgBody, io: getIo() })
+        .catch(() => { /* non-fatal: handled internally */ });
+    }
 
     return res.status(201).json(result);
   } catch (err) { next(err); }
@@ -1068,6 +1077,47 @@ function buildDom(){
   qs('#omni-tab-chat').addEventListener('click',function(){switchTab('chat');});
   qs('#omni-tab-ticket').addEventListener('click',function(){switchTab('ticket');});
   qs('#omni-ticket-submit').addEventListener('click',submitTicket);
+  enableDrag();
+}
+
+// Drag the chat panel around the screen by its header. Switches the panel from
+// its default bottom/right anchor to absolute left/top on first drag, and clamps
+// the panel within the viewport. Works for mouse and touch.
+function enableDrag(){
+  var header=qs('#omni-header');
+  var root=els.root;
+  if(!header||!root)return;
+  var dragging=false,sx=0,sy=0,ox=0,oy=0;
+  header.style.cursor='move';
+  header.style.userSelect='none';
+  function start(e){
+    if(e.target&&e.target.closest&&e.target.closest('#omni-close-btn'))return;
+    dragging=true;
+    var pt=e.touches?e.touches[0]:e;
+    var r=root.getBoundingClientRect();
+    root.style.left=r.left+'px';root.style.top=r.top+'px';
+    root.style.right='auto';root.style.bottom='auto';
+    sx=pt.clientX;sy=pt.clientY;ox=r.left;oy=r.top;
+    d.addEventListener('mousemove',move);d.addEventListener('mouseup',end);
+    d.addEventListener('touchmove',move,{passive:false});d.addEventListener('touchend',end);
+  }
+  function move(e){
+    if(!dragging)return;
+    if(e.cancelable)e.preventDefault();
+    var pt=e.touches?e.touches[0]:e;
+    var nx=ox+(pt.clientX-sx),ny=oy+(pt.clientY-sy);
+    var maxX=Math.max(0,w.innerWidth-root.offsetWidth);
+    var maxY=Math.max(0,w.innerHeight-root.offsetHeight);
+    root.style.left=Math.max(0,Math.min(nx,maxX))+'px';
+    root.style.top=Math.max(0,Math.min(ny,maxY))+'px';
+  }
+  function end(){
+    dragging=false;
+    d.removeEventListener('mousemove',move);d.removeEventListener('mouseup',end);
+    d.removeEventListener('touchmove',move);d.removeEventListener('touchend',end);
+  }
+  header.addEventListener('mousedown',start);
+  header.addEventListener('touchstart',start,{passive:true});
 }
 
 function switchTab(t){
@@ -1471,7 +1521,8 @@ router.get('/demo', (_req, res) => {
 
 router.get('/widget.js', (_req, res) => {
   res.setHeader('Content-Type',                  'application/javascript; charset=utf-8');
-  res.setHeader('Cache-Control',                 'public, max-age=3600');
+  // Short cache so widget updates (tabs, drag, etc.) reach embedded sites quickly.
+  res.setHeader('Cache-Control',                 'no-cache, must-revalidate');
   res.setHeader('Access-Control-Allow-Origin',   '*');
   res.setHeader('Cross-Origin-Resource-Policy',  'cross-origin');
   res.send(WIDGET_JS.trimStart());

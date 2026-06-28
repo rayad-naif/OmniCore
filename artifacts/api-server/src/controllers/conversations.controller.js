@@ -17,7 +17,7 @@
  */
 
 const { Router }                = require('express');
-const { requireAuth, requirePermissionByMethod, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod, requirePermission, applyWorkspaceOverride } = require('../middleware/auth');
 const { pool }                  = require('../lib/db');
 const { handleExportRequest }   = require('../services/export.service');
 const { sendStatusChangeEmail, sendAgentReplyEmail, sendTicketCreatedEmail } = require('../services/email.service');
@@ -33,6 +33,7 @@ const { R2_ENABLED, uploadToR2 } = require('../lib/r2');
 
 const router = Router();
 router.use(requireAuth);
+router.use(applyWorkspaceOverride);
 router.use(requirePermissionByMethod('inbox'));
 
 // ─── One-time migrations ───────────────────────────────────────────────────────
@@ -478,6 +479,25 @@ router.delete('/:id/messages/:msgId', async (req, res, next) => {
     }
     await pool.query('DELETE FROM messages WHERE id = $1', [req.params.msgId]);
     broadcastToConversation(req.params.id, 'server:message_deleted', { id: req.params.msgId, conversation_id: req.params.id });
+    return res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+// ─── DELETE /api/conversations/:id ────────────────────────────────────────────
+// Admin-only. Permanently removes a conversation/ticket and its messages
+// (messages cascade via FK ON DELETE CASCADE).
+router.delete('/:id', async (req, res, next) => {
+  try {
+    if (req.agent.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden — admin only' });
+    }
+    const { rows } = await pool.query(
+      'DELETE FROM conversations WHERE id = $1 AND tenant_id = $2 RETURNING id',
+      [req.params.id, tenantId(req)]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    broadcastToTenant(tenantId(req), 'conversation:deleted', { conversationId: req.params.id });
+    logger.info({ conversationId: req.params.id, by: req.agent.id }, 'conversation_deleted');
     return res.status(204).end();
   } catch (err) { next(err); }
 });
