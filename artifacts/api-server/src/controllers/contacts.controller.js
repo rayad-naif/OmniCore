@@ -9,12 +9,13 @@
  */
 
 const { Router }      = require('express');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod } = require('../middleware/auth');
 const { pool }        = require('../lib/db');
 const logger          = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+router.use(requirePermissionByMethod('contacts'));
 
 const PAGE_LIMIT = 25;
 function tenantId(req) { return req.agent.tenantId; }

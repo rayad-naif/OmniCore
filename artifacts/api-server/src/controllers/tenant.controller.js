@@ -20,7 +20,7 @@ const {
   PutObjectCommand,
 }                  = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requirePermissionByMethod } = require('../middleware/auth');
 const { pool }     = require('../lib/db');
 const logger       = require('../utils/logger');
 const { sendSmtpTestEmail } = require('../services/email.service');
@@ -311,7 +311,9 @@ router.delete('/:tenantId', requireRole('superadmin'), async (req, res, next) =>
 
 // ---------------------------------------------------------------------------
 // BRANDS  (nested under /api/tenants/:tenantId/brands)
+// Gated by the 'brands' feature permission (admins bypass).
 // ---------------------------------------------------------------------------
+router.use('/:tenantId/brands', requirePermissionByMethod('brands'));
 
 /** GET /api/tenants/:tenantId/brands */
 router.get('/:tenantId/brands', async (req, res, next) => {

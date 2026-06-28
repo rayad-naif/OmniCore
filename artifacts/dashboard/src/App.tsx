@@ -62,6 +62,7 @@ interface Brand {
 interface AgentRow {
   id: string; name: string; email: string; role: string
   is_active: boolean; created_at: string
+  permissions?: Record<string, string>
 }
 
 interface SuperAdminUser {
@@ -92,9 +93,18 @@ interface KnowledgeArticle {
 interface SuperAdminEntry {
   id: string; email: string; added_by: string; is_active: boolean; created_at: string
 }
+interface PlanFeatures { ai_feature_enabled: boolean; smtp_feature_enabled: boolean }
+interface PlanLimits { max_brands_allowed: number | null; max_agents_allowed: number | null; conversation_limit: number | null }
 interface BillingPlan {
   plan: string; name: string; description: string | null
   priceId: string; amount: number; currency: string; interval: string
+  features?: PlanFeatures; limits?: PlanLimits
+}
+interface StripePlan {
+  productId: string; name: string; description: string; plan: string | null
+  self_serve: boolean; active: boolean; priceId: string | null
+  amount: number | null; currency: string; interval: string
+  features: PlanFeatures; limits: PlanLimits
 }
 interface SubscriptionInfo {
   customerId: string | null; subscriptionId: string | null
@@ -248,10 +258,15 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<AgentRow[]>
     },
-    inviteAgent: async (name: string, email: string, role: string): Promise<AgentRow & { invite_link?: string; email_sent?: boolean }> => {
-      const r = await authFetch(`${API}/agents`, { method: 'POST', body: JSON.stringify({ name, email, role }) })
+    inviteAgent: async (name: string, email: string, role: string, permissions?: Record<string, string>): Promise<AgentRow & { invite_link?: string; email_sent?: boolean }> => {
+      const r = await authFetch(`${API}/agents`, { method: 'POST', body: JSON.stringify({ name, email, role, permissions }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to invite agent') }
       return r.json() as Promise<AgentRow & { invite_link?: string; email_sent?: boolean }>
+    },
+    updateAgent: async (id: string, body: { role?: string; permissions?: Record<string, string> }): Promise<AgentRow> => {
+      const r = await authFetch(`${API}/agents/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update agent') }
+      return r.json() as Promise<AgentRow>
     },
     removeAgent: async (id: string): Promise<void> => {
       const r = await authFetch(`${API}/agents/${id}`, { method: 'DELETE' })
@@ -296,6 +311,22 @@ function useApi() {
       const r = await authFetch(`${API}/super-admin/stripe-status`)
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<StripeStatus>
+    },
+    listStripePlans: async (): Promise<StripePlan[]> => {
+      const r = await authFetch(`${API}/super-admin/stripe/plans`)
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to load plans') }
+      const d = await r.json() as { plans: StripePlan[] }
+      return d.plans
+    },
+    createStripePlan: async (body: Record<string, unknown>): Promise<StripePlan> => {
+      const r = await authFetch(`${API}/super-admin/stripe/plans`, { method: 'POST', body: JSON.stringify(body) })
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to create plan') }
+      return r.json() as Promise<StripePlan>
+    },
+    updateStripePlan: async (productId: string, body: Record<string, unknown>): Promise<StripePlan> => {
+      const r = await authFetch(`${API}/super-admin/stripe/plans/${productId}`, { method: 'PATCH', body: JSON.stringify(body) })
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to update plan') }
+      return r.json() as Promise<StripePlan>
     },
     listSANTenants: async (): Promise<SANTenant[]> => {
       const r = await authFetch(`${API}/super-admin/tenants`)
@@ -1977,6 +2008,15 @@ function BillingSection() {
                   <h3 className="text-sm font-semibold text-slate-900">{p.name}</h3>
                   <p className="mt-2"><span className="text-2xl font-bold text-slate-900">{fmtMoney(p.amount, p.currency)}</span><span className="text-xs text-slate-400">/{p.interval}</span></p>
                   {p.description && <p className="text-xs text-slate-500 mt-2 leading-relaxed">{p.description}</p>}
+                  {(p.features || p.limits) && (
+                    <ul className="mt-3 space-y-1.5">
+                      {p.features?.ai_feature_enabled && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> AI auto-replies</li>}
+                      {p.features?.smtp_feature_enabled && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> Custom SMTP / email</li>}
+                      {p.limits?.max_brands_allowed != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.max_brands_allowed} brands</li>}
+                      {p.limits?.max_agents_allowed != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.max_agents_allowed} agents</li>}
+                      {p.limits?.conversation_limit != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.conversation_limit} conversations/mo</li>}
+                    </ul>
+                  )}
                   <div className="flex-1" />
                   <button
                     onClick={() => checkout(p.plan)}
@@ -2434,6 +2474,60 @@ function WebhookPanel({ webhookUrl, onLoad }: { webhookUrl: string; onLoad: () =
 }
 
 // ─── Team Section ─────────────────────────────────────────────────────────────
+// ─── RBAC: feature catalogue + permission matrix editor ───────────────────────
+const FEATURE_META: { key: string; label: string; desc: string }[] = [
+  { key: 'inbox',          label: 'Inbox',          desc: 'Conversations & live chat' },
+  { key: 'contacts',       label: 'Contacts',       desc: 'Visitor / contact directory' },
+  { key: 'knowledge_base', label: 'Knowledge Base', desc: 'KB articles & AI training' },
+  { key: 'brands',         label: 'Brands',         desc: 'Brand & widget configuration' },
+  { key: 'analytics',      label: 'Analytics',      desc: 'CSAT & reporting' },
+  { key: 'billing',        label: 'Billing',        desc: 'Plans & subscription' },
+  { key: 'team',           label: 'Team',           desc: 'Agent management' },
+  { key: 'settings',       label: 'Settings',       desc: 'Workspace settings & SMTP' },
+]
+const PERMISSION_LEVELS = ['none', 'read', 'edit'] as const
+
+// Sensible per-role defaults, mirrored from the server's permissions lib.
+function defaultPermsForRole(role: string): Record<string, string> {
+  if (role === 'admin') return Object.fromEntries(FEATURE_META.map(f => [f.key, 'edit']))
+  if (role === 'supervisor') return { inbox: 'edit', contacts: 'edit', knowledge_base: 'edit', brands: 'read', analytics: 'read', billing: 'read', team: 'read', settings: 'read' }
+  return { inbox: 'edit', contacts: 'read', knowledge_base: 'read', brands: 'none', analytics: 'none', billing: 'none', team: 'none', settings: 'none' }
+}
+
+function PermissionMatrix({ value, onChange, disabled }: {
+  value: Record<string, string>; onChange: (next: Record<string, string>) => void; disabled?: boolean
+}) {
+  return (
+    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+      {FEATURE_META.map(f => (
+        <div key={f.key} className="flex items-center justify-between gap-3 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-700">{f.label}</p>
+            <p className="text-[10px] text-slate-400 truncate">{f.desc}</p>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {PERMISSION_LEVELS.map(lvl => {
+              const sel = (value[f.key] ?? 'none') === lvl
+              const tone = lvl === 'edit' ? 'sky' : lvl === 'read' ? 'emerald' : 'slate'
+              return (
+                <button key={lvl} type="button" disabled={disabled}
+                  onClick={() => onChange({ ...value, [f.key]: lvl })}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded uppercase tracking-wide transition-colors disabled:opacity-50 ${
+                    sel
+                      ? tone === 'sky' ? 'bg-sky-600 text-white' : tone === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'
+                      : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+                  }`}>
+                  {lvl}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TeamSection() {
   const api = useApi()
   const { agent: me } = useAuth() as { agent: { id: string } | null }
@@ -2441,10 +2535,17 @@ function TeamSection() {
   const [loading, setLoading]       = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [inviteForm, setInviteForm] = useState({ name: '', email: '', role: 'agent' })
+  const [invitePerms, setInvitePerms] = useState<Record<string, string>>(() => defaultPermsForRole('agent'))
   const [inviting, setInviting]     = useState(false)
   const [inviteErr, setInviteErr]   = useState<string | null>(null)
   const [inviteResult, setInviteResult] = useState<{ email: string; invite_link?: string; email_sent?: boolean } | null>(null)
   const [removing, setRemoving]     = useState<string | null>(null)
+  // Edit-agent (role + permissions) modal.
+  const [editTarget, setEditTarget] = useState<AgentRow | null>(null)
+  const [editRole, setEditRole]     = useState('agent')
+  const [editPerms, setEditPerms]   = useState<Record<string, string>>({})
+  const [editSaving, setEditSaving] = useState(false)
+  const [editErr, setEditErr]       = useState<string | null>(null)
   const [pwdTarget, setPwdTarget]   = useState<AgentRow | null>(null)
   const [pwdForm, setPwdForm]       = useState({ password: '', confirm: '' })
   const [pwdSaving, setPwdSaving]   = useState(false)
@@ -2469,16 +2570,40 @@ function TeamSection() {
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault(); setInviteErr(null); setInviting(true)
     try {
-      const a = await api.inviteAgent(inviteForm.name, inviteForm.email, inviteForm.role)
+      const perms = inviteForm.role === 'admin' ? undefined : invitePerms
+      const a = await api.inviteAgent(inviteForm.name, inviteForm.email, inviteForm.role, perms)
       const { invite_link, email_sent, ...row } = a
       setAgents(prev => [...prev, row as AgentRow])
       setInviteResult({ email: row.email, invite_link, email_sent })
       setInviteForm({ name: '', email: '', role: 'agent' })
+      setInvitePerms(defaultPermsForRole('agent'))
     } catch (err) { setInviteErr((err as Error).message) }
     finally { setInviting(false) }
   }
 
-  const closeInvite = () => { setShowInvite(false); setInviteErr(null); setInviteResult(null) }
+  const setInviteRole = (role: string) => {
+    setInviteForm(f => ({ ...f, role }))
+    setInvitePerms(defaultPermsForRole(role))
+  }
+
+  const closeInvite = () => { setShowInvite(false); setInviteErr(null); setInviteResult(null); setInviteForm({ name: '', email: '', role: 'agent' }); setInvitePerms(defaultPermsForRole('agent')) }
+
+  const openEdit = (a: AgentRow) => {
+    setEditTarget(a); setEditErr(null)
+    setEditRole(a.role)
+    setEditPerms(a.permissions && Object.keys(a.permissions).length ? { ...a.permissions } : defaultPermsForRole(a.role))
+  }
+  const closeEdit = () => { setEditTarget(null); setEditErr(null) }
+  const setEditRoleAndPerms = (role: string) => { setEditRole(role); setEditPerms(defaultPermsForRole(role)) }
+  const handleEdit = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!editTarget) return; setEditErr(null); setEditSaving(true)
+    try {
+      const updated = await api.updateAgent(editTarget.id, { role: editRole, permissions: editRole === 'admin' ? undefined : editPerms })
+      setAgents(prev => prev.map(a => a.id === updated.id ? updated : a))
+      setEditTarget(null)
+    } catch (err) { setEditErr((err as Error).message) }
+    finally { setEditSaving(false) }
+  }
 
   const handleRemove = async (id: string) => {
     if (!window.confirm('Remove this agent? They will lose access immediately.')) return
@@ -2518,9 +2643,15 @@ function TeamSection() {
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Name *</label><input type="text" value={inviteForm.name} onChange={e => setInviteForm(f => ({ ...f, name: e.target.value }))} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Email *</label><input type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
-              <select value={inviteForm.role} onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
-                <option value="agent">Agent</option><option value="admin">Admin</option>
+              <select value={inviteForm.role} onChange={e => setInviteRole(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
+                <option value="agent">Agent</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Feature Permissions</label>
+              {inviteForm.role === 'admin'
+                ? <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-[11px] text-sky-700">Admins always have full access to every feature.</div>
+                : <PermissionMatrix value={invitePerms} onChange={setInvitePerms} disabled={inviting} />}
             </div>
             <p className="text-[11px] text-slate-400">The agent will be emailed a secure link to set their own password (valid 7 days). If platform email isn't configured, the invite link is shown after creating.</p>
             <div className="flex gap-2 pt-1">
@@ -2529,6 +2660,30 @@ function TeamSection() {
             </div>
           </form>
           </>)}
+        </Modal>
+      )}
+      {editTarget && (
+        <Modal onClose={closeEdit}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Edit Access</h2><button onClick={closeEdit} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg mb-4"><p className="text-xs text-slate-600">Editing role & permissions for <strong>{editTarget.name}</strong> (<code className="bg-white px-1 rounded">{editTarget.email}</code>).</p></div>
+          {editErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{editErr}</div>}
+          <form onSubmit={handleEdit} className="space-y-3">
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
+              <select value={editRole} onChange={e => setEditRoleAndPerms(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400">
+                <option value="agent">Agent</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Feature Permissions</label>
+              {editRole === 'admin'
+                ? <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-[11px] text-sky-700">Admins always have full access to every feature.</div>
+                : <PermissionMatrix value={editPerms} onChange={setEditPerms} disabled={editSaving} />}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={closeEdit} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={editSaving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{editSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><Shield size={11} /> Save Access</>}</button>
+            </div>
+          </form>
         </Modal>
       )}
       {pwdTarget && (
@@ -2563,6 +2718,7 @@ function TeamSection() {
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${a.role === 'admin' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>{a.role}</span>
                     <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{a.is_active ? 'Active' : 'Inactive'}</span>
+                    {a.id !== me?.id && <button onClick={() => openEdit(a)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Edit access"><Shield size={12} /></button>}
                     {a.id !== me?.id && <button onClick={() => openPwd(a)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors" title="Set password"><KeyRound size={12} /></button>}
                     {a.id !== me?.id && <button onClick={() => handleRemove(a.id)} disabled={removing === a.id} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-40">{removing === a.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}</button>}
                   </div>
@@ -2860,21 +3016,96 @@ function SuperAdminSection() {
 }
 
 // ─── Stripe Panel (super-admin: connection state + plan→price mapping) ────────
+type PlanFormState = {
+  name: string; description: string; plan: string; amount: string
+  self_serve: boolean; ai_feature_enabled: boolean; smtp_feature_enabled: boolean
+  max_brands_allowed: string; max_agents_allowed: string; conversation_limit: string
+}
+
+const emptyPlanForm: PlanFormState = {
+  name: '', description: '', plan: '', amount: '',
+  self_serve: true, ai_feature_enabled: false, smtp_feature_enabled: false,
+  max_brands_allowed: '', max_agents_allowed: '', conversation_limit: '',
+}
+
 function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
   const [status, setStatus]   = useState<StripeStatus | null>(null)
+  const [plans, setPlans]     = useState<StripePlan[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
 
+  // Plan builder modal.
+  const [showForm, setShowForm] = useState(false)
+  const [editId, setEditId]     = useState<string | null>(null)   // productId when editing
+  const [form, setForm]         = useState<PlanFormState>(emptyPlanForm)
+  const [saving, setSaving]     = useState(false)
+  const [formErr, setFormErr]   = useState<string | null>(null)
+
   const load = useCallback(async () => {
     setLoading(true); setError(null)
-    try { setStatus(await api.getStripeStatus()) }
+    try {
+      const [st, pl] = await Promise.all([
+        api.getStripeStatus(),
+        api.listStripePlans().catch(() => [] as StripePlan[]),
+      ])
+      setStatus(st); setPlans(pl)
+    }
     catch (err) { setError((err as Error).message) }
     finally { setLoading(false) }
   }, []) // eslint-disable-line
   useEffect(() => { load() }, [load])
 
+  const openCreate = () => { setEditId(null); setForm(emptyPlanForm); setFormErr(null); setShowForm(true) }
+  const openEdit = (p: StripePlan) => {
+    setEditId(p.productId)
+    setForm({
+      name: p.name, description: p.description, plan: p.plan ?? '',
+      amount: p.amount != null ? (p.amount / 100).toString() : '',
+      self_serve: p.self_serve,
+      ai_feature_enabled: p.features.ai_feature_enabled,
+      smtp_feature_enabled: p.features.smtp_feature_enabled,
+      max_brands_allowed: p.limits.max_brands_allowed?.toString() ?? '',
+      max_agents_allowed: p.limits.max_agents_allowed?.toString() ?? '',
+      conversation_limit: p.limits.conversation_limit?.toString() ?? '',
+    })
+    setFormErr(null); setShowForm(true)
+  }
+  const closeForm = () => { setShowForm(false); setEditId(null); setFormErr(null) }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setFormErr(null)
+    if (!form.name.trim()) { setFormErr('Plan name is required'); return }
+    const dollars = parseFloat(form.amount)
+    if (Number.isNaN(dollars) || dollars < 0) { setFormErr('Enter a valid monthly price'); return }
+    setSaving(true)
+    const body: Record<string, unknown> = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      plan: form.plan.trim() || form.name.trim().toLowerCase().replace(/\s+/g, '_'),
+      amount: Math.round(dollars * 100),
+      self_serve: form.self_serve,
+      ai_feature_enabled: form.ai_feature_enabled,
+      smtp_feature_enabled: form.smtp_feature_enabled,
+    }
+    if (form.max_brands_allowed) body.max_brands_allowed = parseInt(form.max_brands_allowed, 10)
+    if (form.max_agents_allowed) body.max_agents_allowed = parseInt(form.max_agents_allowed, 10)
+    if (form.conversation_limit) body.conversation_limit = parseInt(form.conversation_limit, 10)
+    try {
+      if (editId) await api.updateStripePlan(editId, body)
+      else await api.createStripePlan(body)
+      closeForm(); await load()
+    } catch (err) { setFormErr((err as Error).message) }
+    finally { setSaving(false) }
+  }
+
+  const archive = async (p: StripePlan) => {
+    if (!window.confirm(`Archive "${p.name}"? It will no longer be purchasable.`)) return
+    try { await api.updateStripePlan(p.productId, { active: false }); await load() }
+    catch (err) { setError((err as Error).message) }
+  }
+
   if (loading) return <div className="flex items-center gap-2 text-xs text-slate-400 py-8"><RefreshCw size={12} className="animate-spin" /> Loading Stripe status…</div>
-  if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error}</div>
+  if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error} <button onClick={load} className="underline ml-1">Retry</button></div>
   if (!status) return null
 
   return (
@@ -2895,29 +3126,82 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
         </div>
       </div>
 
-      {/* Plan → price mapping */}
+      {/* Plan builder */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100"><h3 className="text-sm font-semibold text-slate-900">Self-Serve Plans</h3></div>
-        {status.plans.length === 0 ? (
-          <div className="text-center py-10 text-slate-400"><CreditCard size={24} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No synced plans yet. Run the seed script to create Starter & Pro.</p></div>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div><h3 className="text-sm font-semibold text-slate-900">Plans</h3><p className="text-[11px] text-slate-400 mt-0.5">Create plans with the features they unlock. Activating a plan grants those features to the client.</p></div>
+          <button onClick={openCreate} disabled={!status.connected} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 disabled:opacity-50"><Plus size={13} /> New Plan</button>
+        </div>
+        {plans.length === 0 ? (
+          <div className="text-center py-10 text-slate-400"><CreditCard size={24} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No plans yet. Click “New Plan” to create one.</p></div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-400">
-              <tr><th className="px-5 py-2 font-semibold">Plan</th><th className="px-5 py-2 font-semibold">Name</th><th className="px-5 py-2 font-semibold">Price</th><th className="px-5 py-2 font-semibold">Price ID</th></tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {status.plans.map(p => (
-                <tr key={p.plan}>
-                  <td className="px-5 py-3"><span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded capitalize">{p.plan}</span></td>
-                  <td className="px-5 py-3 text-xs text-slate-700">{p.name}</td>
-                  <td className="px-5 py-3 text-xs text-slate-700">{fmtMoney(p.amount, p.currency)}/{p.interval}</td>
-                  <td className="px-5 py-3"><code className="text-[10px] text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded">{p.priceId}</code></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="divide-y divide-slate-100">
+            {plans.map(p => (
+              <div key={p.productId} className="px-5 py-3 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-slate-800">{p.name}</span>
+                    {p.plan && <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded capitalize">{p.plan}</span>}
+                    {p.self_serve && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Self-serve</span>}
+                    {!p.active && <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">Archived</span>}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">{p.amount != null ? `${fmtMoney(p.amount, p.currency)}/${p.interval}` : 'No price'}</p>
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    {p.features.ai_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">AI replies</span>}
+                    {p.features.smtp_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">Custom SMTP</span>}
+                    {p.limits.max_brands_allowed != null && <span className="text-[10px] text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded">{p.limits.max_brands_allowed} brands</span>}
+                    {p.limits.max_agents_allowed != null && <span className="text-[10px] text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded">{p.limits.max_agents_allowed} agents</span>}
+                    {p.limits.conversation_limit != null && <span className="text-[10px] text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded">{p.limits.conversation_limit} convos</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openEdit(p)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded" title="Edit plan"><Pencil size={13} /></button>
+                  {p.active && <button onClick={() => archive(p)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded" title="Archive plan"><Trash2 size={13} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
+
+      {/* Plan builder modal */}
+      {showForm && (
+        <Modal onClose={closeForm}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">{editId ? 'Edit Plan' : 'New Plan'}</h2><button onClick={closeForm} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          {formErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{formErr}</div>}
+          <form onSubmit={submit} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan name *</label><input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Growth" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan key</label><input type="text" value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="auto from name" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+            </div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Description</label><input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Monthly price (USD) *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="49.00" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" />{editId && <p className="text-[10px] text-slate-400 mt-1">Changing the price creates a new Stripe price and archives the old one.</p>}</div>
+
+            <div className="pt-1">
+              <p className="text-xs font-medium text-slate-600 mb-1.5">Features unlocked</p>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.self_serve} onChange={e => setForm(f => ({ ...f, self_serve: e.target.checked }))} className="rounded" /> Available for self-serve checkout</label>
+                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.ai_feature_enabled} onChange={e => setForm(f => ({ ...f, ai_feature_enabled: e.target.checked }))} className="rounded" /> AI auto-replies</label>
+                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.smtp_feature_enabled} onChange={e => setForm(f => ({ ...f, smtp_feature_enabled: e.target.checked }))} className="rounded" /> Custom SMTP / email</label>
+              </div>
+            </div>
+
+            <div className="pt-1">
+              <p className="text-xs font-medium text-slate-600 mb-1.5">Limits granted (optional)</p>
+              <div className="grid grid-cols-3 gap-2">
+                <div><label className="block text-[10px] text-slate-400 mb-1">Brands</label><input type="number" min="1" value={form.max_brands_allowed} onChange={e => setForm(f => ({ ...f, max_brands_allowed: e.target.value }))} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+                <div><label className="block text-[10px] text-slate-400 mb-1">Agents</label><input type="number" min="1" value={form.max_agents_allowed} onChange={e => setForm(f => ({ ...f, max_agents_allowed: e.target.value }))} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+                <div><label className="block text-[10px] text-slate-400 mb-1">Convos</label><input type="number" min="1" value={form.conversation_limit} onChange={e => setForm(f => ({ ...f, conversation_limit: e.target.value }))} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={closeForm} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : editId ? 'Save Plan' : 'Create Plan'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -4152,11 +4436,12 @@ function CannedResponsesSection() {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout }: {
+function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout, can }: {
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
   recentActivity: Conversation[]; onSelectConv: (id: string) => void
   agent: { name: string; email: string; role: string; isSuperAdmin?: boolean } | null
   onLogout: () => Promise<void>
+  can: (feature: string, level?: string) => boolean
 }) {
   const [bellOpen, setBellOpen] = useState(false)
   const bellRef = useRef<HTMLDivElement>(null)
@@ -4171,24 +4456,24 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
     return () => document.removeEventListener('mousedown', handler)
   }, [bellOpen])
 
-  const items: { key: Section; icon: React.ReactNode; label: string; adminOnly?: boolean; superAdminOnly?: boolean }[] = [
-    { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox' },
-    { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets' },
-    { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts' },
-    { key: 'canned_responses', icon: <Zap size={16} />,        label: 'Canned Responses', adminOnly: true },
-    { key: 'csat',            icon: <BarChart2 size={16} />,   label: 'CSAT', adminOnly: true },
-    { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', adminOnly: true },
-    { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', adminOnly: true },
-    { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', adminOnly: true },
-    { key: 'team',          icon: <Users size={16} />,         label: 'Team', adminOnly: true },
-    { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing' },
-    { key: 'settings',      icon: <Settings size={16} />,      label: 'Settings' },
+  const items: { key: Section; icon: React.ReactNode; label: string; feature?: string; superAdminOnly?: boolean }[] = [
+    { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox', feature: 'inbox' },
+    { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets', feature: 'inbox' },
+    { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts', feature: 'contacts' },
+    { key: 'canned_responses', icon: <Zap size={16} />,        label: 'Canned Responses', feature: 'inbox' },
+    { key: 'csat',            icon: <BarChart2 size={16} />,   label: 'CSAT', feature: 'analytics' },
+    { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', feature: 'knowledge_base' },
+    { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', feature: 'settings' },
+    { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', feature: 'brands' },
+    { key: 'team',          icon: <Users size={16} />,         label: 'Team', feature: 'team' },
+    { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing', feature: 'billing' },
+    { key: 'settings',      icon: <Settings size={16} />,      label: 'Settings', feature: 'settings' },
     { key: 'superadmin',    icon: <Shield size={16} />,        label: 'Super Admin', superAdminOnly: true },
   ]
 
   const visible = items.filter(i => {
     if (i.superAdminOnly) return agent?.isSuperAdmin
-    if (i.adminOnly) return agent?.role === 'admin' || agent?.isSuperAdmin
+    if (i.feature) return can(i.feature, 'read')
     return true
   })
 
@@ -4287,10 +4572,11 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
 
 // ─── Dashboard (authenticated) ────────────────────────────────────────────────
 function Dashboard() {
-  const { accessToken, agent, logout } = useAuth() as {
+  const { accessToken, agent, logout, can } = useAuth() as {
     accessToken: string | null
     agent: { id: string; name: string; email: string; tenantId: string; role: string; isSuperAdmin?: boolean } | null
     logout: () => Promise<void>
+    can: (feature: string, level?: string) => boolean
   }
   const api = useApi()
 
@@ -4555,10 +4841,10 @@ function Dashboard() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
-          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} /></div>
+          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} /></div>
         </div>
       )}
-      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} /></div>
+      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} /></div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">

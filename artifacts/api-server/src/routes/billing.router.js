@@ -16,7 +16,7 @@
 
 const express         = require('express');
 const { Router }      = express;
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 const { pool }        = require('../lib/db');
 const logger          = require('../utils/logger');
 const {
@@ -29,15 +29,15 @@ const {
 
 const router = Router();
 
-// ── Authenticated billing routes ──────────────────────────────────────────────
-router.get ('/billing/plans',          requireAuth, getPlans);
-router.post('/checkout',               requireAuth, createCheckout);
-router.post('/billing/portal',         requireAuth, getPortalUrl);
-router.get ('/billing/subscription',   requireAuth, getSubscription);
-router.get ('/billing/usage',          requireAuth, getUsage);
+// ── Authenticated billing routes (gated by the 'billing' feature permission) ──
+router.get ('/billing/plans',          requireAuth, requirePermission('billing', 'read'), getPlans);
+router.post('/checkout',               requireAuth, requirePermission('billing', 'edit'), createCheckout);
+router.post('/billing/portal',         requireAuth, requirePermission('billing', 'edit'), getPortalUrl);
+router.get ('/billing/subscription',   requireAuth, requirePermission('billing', 'read'), getSubscription);
+router.get ('/billing/usage',          requireAuth, requirePermission('billing', 'read'), getUsage);
 
 // ── Manual upgrade request (replaces LemonSqueezy redirect) ──────────────────
-router.post('/billing/upgrade-request', requireAuth, async (req, res, next) => {
+router.post('/billing/upgrade-request', requireAuth, requirePermission('billing', 'edit'), async (req, res, next) => {
   try {
     const { requested_plan, company_size, notes } = req.body || {};
     if (!requested_plan?.trim()) {

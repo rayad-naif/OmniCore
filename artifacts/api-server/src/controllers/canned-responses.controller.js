@@ -1,10 +1,11 @@
 const { Router }     = require('express');
 const { pool }        = require('../lib/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod } = require('../middleware/auth');
 const logger          = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+router.use(requirePermissionByMethod('inbox'));
 
 // Self-healing migration
 pool.query(`

@@ -17,7 +17,7 @@
  */
 
 const { Router }                = require('express');
-const { requireAuth }           = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod, requirePermission } = require('../middleware/auth');
 const { pool }                  = require('../lib/db');
 const { handleExportRequest }   = require('../services/export.service');
 const { sendStatusChangeEmail, sendAgentReplyEmail, sendTicketCreatedEmail } = require('../services/email.service');
@@ -33,6 +33,7 @@ const { R2_ENABLED, uploadToR2 } = require('../lib/r2');
 
 const router = Router();
 router.use(requireAuth);
+router.use(requirePermissionByMethod('inbox'));
 
 // ─── One-time migrations ───────────────────────────────────────────────────────
 pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN NOT NULL DEFAULT false`)
@@ -94,7 +95,7 @@ router.post('/upload', async (req, res, next) => {
 });
 
 // ─── GET /api/conversations/csat ─────────────────────────────────────────────
-router.get('/csat', async (req, res, next) => {
+router.get('/csat', requirePermission('analytics', 'read'), async (req, res, next) => {
   try {
     const tid         = tenantId(req);
     const { brand_id, date_from, date_to } = req.query;

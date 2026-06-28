@@ -138,6 +138,16 @@ export function AuthProvider({ children }) {
   const isAuthenticated = Boolean(accessToken && agent);
   const isAdmin         = agent?.role === 'admin';
 
+  // Per-feature RBAC check. Admins always pass. `level` is 'read' | 'edit'.
+  // The server sends the resolved effective permission map on `agent.permissions`.
+  const can = useCallback((feature, level = 'read') => {
+    if (!agent) return false;
+    if (agent.role === 'admin' || agent.isSuperAdmin) return true;
+    const rank = { none: 0, read: 1, edit: 2 };
+    const held = agent.permissions?.[feature] ?? 'none';
+    return (rank[held] ?? 0) >= (rank[level] ?? 1);
+  }, [agent]);
+
   const value = {
     agent,
     accessToken,
@@ -148,6 +158,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     authFetch,
+    can,
     clearError: () => setError(null),
   };
 

@@ -489,4 +489,167 @@ router.get('/stripe-status', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ─── STRIPE PLAN BUILDER ─────────────────────────────────────────────────────
+// Manage subscription plans (products + monthly prices) directly from the
+// dashboard. Feature flags & limits are stored on the Stripe product metadata
+// and applied to a tenant when the matching plan's subscription becomes active.
+
+// Canonical capability flags/limits configurable per plan.
+const PLAN_FEATURE_KEYS = ['ai_feature_enabled', 'smtp_feature_enabled'];
+const PLAN_LIMIT_KEYS   = ['max_brands_allowed', 'max_agents_allowed', 'conversation_limit'];
+
+function buildPlanMetadata(body) {
+  const meta = {};
+  const plan = String(body.plan || '').trim().toLowerCase();
+  if (plan) meta.plan = plan;
+  meta.self_serve = body.self_serve ? 'true' : 'false';
+  for (const k of PLAN_FEATURE_KEYS) {
+    if (body[k] !== undefined) meta[k] = body[k] ? 'true' : 'false';
+  }
+  for (const k of PLAN_LIMIT_KEYS) {
+    if (body[k] !== undefined) {
+      const n = parseInt(body[k], 10);
+      if (!Number.isNaN(n) && n > 0) meta[k] = String(n);
+    }
+  }
+  return meta;
+}
+
+function shapePlan(product, price) {
+  const m = product.metadata || {};
+  return {
+    productId:   product.id,
+    name:        product.name,
+    description: product.description || '',
+    plan:        m.plan || null,
+    self_serve:  m.self_serve === 'true',
+    active:      product.active,
+    priceId:     price ? price.id : null,
+    amount:      price ? price.unit_amount : null,
+    currency:    price ? price.currency : 'usd',
+    interval:    price && price.recurring ? price.recurring.interval : 'month',
+    features: {
+      ai_feature_enabled:   m.ai_feature_enabled   === 'true',
+      smtp_feature_enabled: m.smtp_feature_enabled === 'true',
+    },
+    limits: {
+      max_brands_allowed: m.max_brands_allowed ? parseInt(m.max_brands_allowed, 10) : null,
+      max_agents_allowed: m.max_agents_allowed ? parseInt(m.max_agents_allowed, 10) : null,
+      conversation_limit: m.conversation_limit ? parseInt(m.conversation_limit, 10) : null,
+    },
+  };
+}
+
+/** GET /api/super-admin/stripe/plans — live list from Stripe (products + default price). */
+router.get('/stripe/plans', async (req, res, next) => {
+  try {
+    // eslint-disable-next-line global-require
+    const { getUncachableStripeClient } = require('../lib/stripeClient');
+    const stripe = await getUncachableStripeClient();
+    const products = await stripe.products.list({ active: true, limit: 100, expand: ['data.default_price'] });
+    const plans = products.data.map((p) => {
+      const price = p.default_price && typeof p.default_price === 'object' ? p.default_price : null;
+      return shapePlan(p, price);
+    });
+    return res.json({ plans });
+  } catch (err) {
+    logger.warn({ err: err.message }, 'stripe_plans_list_failed');
+    return res.status(503).json({ error: 'Stripe is not connected or unavailable' });
+  }
+});
+
+/**
+ * POST /api/super-admin/stripe/plans
+ * Body: { name, description?, plan, self_serve?, amount (cents), currency?,
+ *         ai_feature_enabled?, smtp_feature_enabled?,
+ *         max_brands_allowed?, max_agents_allowed?, conversation_limit? }
+ * Creates a product + recurring monthly price, sets it as the default price.
+ */
+router.post('/stripe/plans', async (req, res, next) => {
+  try {
+    const { name, description, amount, currency = 'usd' } = req.body || {};
+    if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+    const cents = parseInt(amount, 10);
+    if (Number.isNaN(cents) || cents < 0) return res.status(400).json({ error: 'amount (in cents) is required' });
+
+    // eslint-disable-next-line global-require
+    const { getUncachableStripeClient } = require('../lib/stripeClient');
+    const stripe = await getUncachableStripeClient();
+
+    const metadata = buildPlanMetadata(req.body);
+    const product = await stripe.products.create({
+      name: name.trim(),
+      description: description?.trim() || undefined,
+      metadata,
+    });
+    const price = await stripe.prices.create({
+      product: product.id,
+      unit_amount: cents,
+      currency: String(currency).toLowerCase(),
+      recurring: { interval: 'month' },
+    });
+    await stripe.products.update(product.id, { default_price: price.id });
+
+    logger.info({ productId: product.id, priceId: price.id, plan: metadata.plan }, 'stripe_plan_created');
+    return res.status(201).json(shapePlan({ ...product, metadata }, price));
+  } catch (err) {
+    logger.error({ err: err.message }, 'stripe_plan_create_failed');
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to create plan' });
+  }
+});
+
+/**
+ * PATCH /api/super-admin/stripe/plans/:productId
+ * Updates name/description/metadata. If `amount` is supplied and differs, a new
+ * price is created (Stripe prices are immutable), set as default, and the old
+ * one archived. Set `active:false` to archive the plan.
+ */
+router.patch('/stripe/plans/:productId', async (req, res, next) => {
+  try {
+    const { productId } = req.params;
+    const { name, description, amount, currency, active } = req.body || {};
+
+    // eslint-disable-next-line global-require
+    const { getUncachableStripeClient } = require('../lib/stripeClient');
+    const stripe = await getUncachableStripeClient();
+
+    const existing = await stripe.products.retrieve(productId, { expand: ['default_price'] });
+    const mergedMeta = { ...(existing.metadata || {}), ...buildPlanMetadata(req.body) };
+
+    const productUpdate = { metadata: mergedMeta };
+    if (name?.trim()) productUpdate.name = name.trim();
+    if (description !== undefined) productUpdate.description = description?.trim() || null;
+    if (active !== undefined) productUpdate.active = !!active;
+
+    let price = existing.default_price && typeof existing.default_price === 'object' ? existing.default_price : null;
+
+    if (amount !== undefined) {
+      const cents = parseInt(amount, 10);
+      if (Number.isNaN(cents) || cents < 0) return res.status(400).json({ error: 'amount must be a non-negative integer (cents)' });
+      const changed = !price || price.unit_amount !== cents;
+      if (changed) {
+        const newPrice = await stripe.prices.create({
+          product: productId,
+          unit_amount: cents,
+          currency: String(currency || price?.currency || 'usd').toLowerCase(),
+          recurring: { interval: 'month' },
+        });
+        productUpdate.default_price = newPrice.id;
+        // Archive the previous price so it no longer shows as purchasable.
+        if (price?.id) {
+          try { await stripe.prices.update(price.id, { active: false }); } catch { /* non-fatal */ }
+        }
+        price = newPrice;
+      }
+    }
+
+    const updated = await stripe.products.update(productId, productUpdate);
+    logger.info({ productId, plan: mergedMeta.plan }, 'stripe_plan_updated');
+    return res.json(shapePlan(updated, price));
+  } catch (err) {
+    logger.error({ err: err.message }, 'stripe_plan_update_failed');
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to update plan' });
+  }
+});
+
 module.exports = router;

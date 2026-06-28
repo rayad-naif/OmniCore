@@ -16,6 +16,7 @@ const crypto     = require('crypto');
 const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
 const { sendPasswordResetEmail } = require('../services/email.service');
+const { effectivePermissions } = require('../lib/permissions');
 
 const router = Router();
 
@@ -44,6 +45,7 @@ function signAccess(agent) {
       role:         agent.role,
       email:        agent.email,
       name:         agent.name,
+      permissions:  agent.permissions_json || {},
       isSuperAdmin: !!(process.env.SUPER_ADMIN_EMAIL && agent.email === process.env.SUPER_ADMIN_EMAIL),
     },
     getSecret(),
@@ -60,13 +62,19 @@ function signRefresh(agentId, tenantId) {
 }
 
 function safeAgent(row) {
+  const isSuperAdmin = !!(process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL);
   return {
     id:           row.id,
     tenantId:     row.tenant_id,
     role:         row.role,
     email:        row.email,
     name:         row.name,
-    isSuperAdmin: !!(process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL),
+    isSuperAdmin,
+    // Effective (resolved) permissions for UI gating. Admins/super admins → full.
+    permissions:  effectivePermissions({
+      role: isSuperAdmin ? 'admin' : row.role,
+      permissions: row.permissions_json || {},
+    }),
   };
 }
 
@@ -79,7 +87,7 @@ router.post('/login', async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, tenant_id, name, email, role, password_hash, is_active
+      `SELECT id, tenant_id, name, email, role, password_hash, is_active, permissions_json
        FROM agents WHERE email = $1 LIMIT 1`,
       [email.trim().toLowerCase()]
     );
@@ -122,7 +130,7 @@ router.post('/refresh', async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, tenant_id, name, email, role, is_active
+      `SELECT id, tenant_id, name, email, role, is_active, permissions_json
        FROM agents WHERE id = $1 LIMIT 1`,
       [payload.sub]
     );

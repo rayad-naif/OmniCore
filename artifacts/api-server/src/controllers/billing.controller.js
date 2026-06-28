@@ -29,9 +29,10 @@ const logger   = require('../utils/logger');   // pino singleton
 // stripeClient.ts is bundled by esbuild (CJS↔ESM interop via the build banner).
 const { getUncachableStripeClient } = require('../lib/stripeClient');
 
-// Self-serve plans that can be purchased via Stripe checkout. Enterprise is
-// intentionally excluded — it stays a manual "request upgrade" flow.
-const SELF_SERVE_PLANS = ['starter', 'pro'];
+// Self-serve plans are now driven by Stripe product metadata: any active
+// product whose metadata.self_serve === 'true' is purchasable via checkout.
+// Legacy 'starter'/'pro' products (without the flag) remain self-serve too.
+const LEGACY_SELF_SERVE_PLANS = ['starter', 'pro'];
 
 // ─── Idempotent migration: ensure Stripe linkage columns exist ───────────────
 (async () => {
@@ -69,6 +70,7 @@ async function loadPlansFromSchema() {
        p.id                       AS product_id,
        p.name                     AS name,
        p.description              AS description,
+       p.metadata                 AS metadata,
        p.metadata ->> 'plan'      AS plan,
        pr.id                      AS price_id,
        pr.unit_amount             AS unit_amount,
@@ -77,16 +79,18 @@ async function loadPlansFromSchema() {
      FROM stripe.products p
      JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
      WHERE p.active = true
-       AND p.metadata ->> 'plan' = ANY($1)
+       AND p.metadata ->> 'plan' IS NOT NULL
+       AND (p.metadata ->> 'self_serve' = 'true' OR p.metadata ->> 'plan' = ANY($1))
        AND pr.recurring ->> 'interval' = 'month'
      ORDER BY pr.unit_amount ASC`,
-    [SELF_SERVE_PLANS]
+    [LEGACY_SELF_SERVE_PLANS]
   );
 
-  // Keep the first (cheapest) active monthly price per plan.
+  // Keep the first (cheapest) active monthly price per plan, with its features.
   const byPlan = new Map();
   for (const r of rows) {
     if (!byPlan.has(r.plan)) {
+      const m = r.metadata || {};
       byPlan.set(r.plan, {
         plan:        r.plan,
         name:        r.name,
@@ -95,10 +99,20 @@ async function loadPlansFromSchema() {
         amount:      r.unit_amount,
         currency:    r.currency,
         interval:    r.interval,
+        features: {
+          ai_feature_enabled:   m.ai_feature_enabled   === 'true',
+          smtp_feature_enabled: m.smtp_feature_enabled === 'true',
+        },
+        limits: {
+          max_brands_allowed: m.max_brands_allowed ? parseInt(m.max_brands_allowed, 10) : null,
+          max_agents_allowed: m.max_agents_allowed ? parseInt(m.max_agents_allowed, 10) : null,
+          conversation_limit: m.conversation_limit ? parseInt(m.conversation_limit, 10) : null,
+        },
       });
     }
   }
-  return SELF_SERVE_PLANS.map((p) => byPlan.get(p)).filter(Boolean);
+  // Cheapest first.
+  return [...byPlan.values()].sort((a, b) => (a.amount || 0) - (b.amount || 0));
 }
 
 // ─── GET /api/billing/plans ──────────────────────────────────────────────────
@@ -118,14 +132,14 @@ async function createCheckout(req, res) {
   if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
 
   const plan = String(req.body?.plan || '').trim().toLowerCase();
-  if (!SELF_SERVE_PLANS.includes(plan)) {
-    return res.status(400).json({ error: 'plan must be one of: ' + SELF_SERVE_PLANS.join(', ') });
+  if (!plan) {
+    return res.status(400).json({ error: 'plan is required' });
   }
 
   const plans  = await loadPlansFromSchema();
   const target = plans.find((p) => p.plan === plan);
   if (!target?.priceId) {
-    return res.status(503).json({ error: 'This plan is not available for checkout yet. Try again shortly.' });
+    return res.status(400).json({ error: 'This plan is not available for self-serve checkout.' });
   }
 
   const { rows } = await pool.query(

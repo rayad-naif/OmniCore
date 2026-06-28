@@ -51,6 +51,11 @@ Frontend sends `{ body, isInternalNote }` (camelCase) to POST /conversations/:id
 # RBAC
 Agents (role=agent) only see conversations assigned to them OR unassigned (assigned_agent_id IS NULL). Applied in conversations.controller.js GET /conversations. Sidebar nav is RBAC-aware: agents see Conversations + Settings only; admins add Brands, Team, Billing; super admins add Super Admin panel.
 
+# Per-feature RBAC enforcement — guard every route, not just routers
+Feature permissions are none/read/edit per feature (keys: inbox, contacts, knowledge_base, brands, analytics, billing, team, settings). Backend guards: `requirePermission(feature, level)` (single route) and `requirePermissionByMethod(feature)` (router-wide, maps GET→read / write verbs→edit). Frontend mirror is `can(feature, level)` in AuthContext.jsx, driving sidebar gating.
+**Why:** A router-wide guard does NOT cover every route's true feature. Several routes leaked because they only had `requireAuth` or inherited the wrong feature: `POST /billing/upgrade-request` (needs billing:edit), `GET/PATCH /ai/settings` (needs knowledge_base read/edit — siblings of /knowledge-base but the router only guarded the /knowledge-base subpath), and `GET /conversations/csat` (analytics:read, but conversations router applies inbox via requirePermissionByMethod).
+**How to apply:** When adding/auditing a route, ask which FEATURE it belongs to (not which router it lives in) and add an explicit `requirePermission` even if a router-wide guard exists. The inline guard runs after the router guard, so it can only tighten. Server safeAgent() returns resolved effective permissions (role defaults when blank) so non-admins always have a populated permissions object; role/permission mutation is not exposed on /agents/me self-routes.
+
 # Super Admin
 Controlled by SUPER_ADMIN_EMAIL env var. If unset, super-admin endpoints return 503. isSuperAdmin bool is in JWT payload and safeAgent() response. New controllers: agents.controller.js (GET/POST/DELETE agents, PATCH /me), super-admin.controller.js (tenant list, upgrade requests, status/billing PATCH, purge DELETE). Super admins management panel (add/remove) at GET/POST/DELETE /api/super-admin/super-admins — already fully implemented on backend.
 

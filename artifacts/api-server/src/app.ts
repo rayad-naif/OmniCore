@@ -11,6 +11,8 @@ import { logger } from "./lib/logger";
 const { attachSocketServer } = require("./services/socket.service");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { pool } = require("./lib/db");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { sendAccountUpdateEmail } = require("./services/email.service");
 
 // Injects the shared pg.Pool as req.db — consumed by CJS controllers via req.db.query()
 function attachDb(
@@ -111,6 +113,105 @@ function mapStripeStatus(status: string | undefined): string {
   }
 }
 
+// Notify a tenant's active admins about a billing/account change (best-effort).
+async function notifyTenantAdmins(
+  tenantId: string,
+  subject: string,
+  heading: string,
+  message: string,
+): Promise<void> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT email, name FROM agents
+       WHERE tenant_id = $1 AND role = 'admin' AND is_active = TRUE`,
+      [tenantId],
+    );
+    await Promise.all(
+      rows.map((a: { email: string }) =>
+        sendAccountUpdateEmail({ to: a.email, subject, heading, message }),
+      ),
+    );
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, tenantId }, "tenant_admin_notify_failed");
+  }
+}
+
+// Reads a plan's feature/limit set from the synced `stripe` product metadata and
+// applies it to the tenant's capability columns. Activating a plan therefore
+// grants exactly the features configured on that plan in the plan builder.
+async function applyPlanFeatures(tenantId: string, plan: string | null): Promise<void> {
+  // Free / no plan → reset to baseline free-tier limits.
+  if (!plan || plan === "free") {
+    await pool.query(
+      `UPDATE tenants SET
+         max_brands_allowed   = 1,
+         max_agents_allowed   = 2,
+         conversation_limit   = 100,
+         ai_feature_enabled   = false,
+         smtp_feature_enabled = false,
+         updated_at           = NOW()
+       WHERE id = $1`,
+      [tenantId],
+    );
+    return;
+  }
+
+  let meta: Record<string, string> | null = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata FROM stripe.products
+       WHERE active = true AND metadata ->> 'plan' = $1
+       ORDER BY created DESC LIMIT 1`,
+      [plan],
+    );
+    meta = (rows[0]?.metadata as Record<string, string>) || null;
+  } catch {
+    meta = null; // stripe schema not migrated yet
+  }
+  if (!meta) return; // unknown plan — leave limits untouched
+
+  const num = (v: string | undefined, fallback: number): number => {
+    const n = parseInt(String(v ?? ""), 10);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  const bool = (v: string | undefined, fallback: boolean): boolean =>
+    v === undefined ? fallback : v === "true" || v === "1";
+
+  await pool.query(
+    `UPDATE tenants SET
+       max_brands_allowed   = $1,
+       max_agents_allowed   = $2,
+       conversation_limit   = $3,
+       ai_feature_enabled   = $4,
+       smtp_feature_enabled = $5,
+       updated_at           = NOW()
+     WHERE id = $6`,
+    [
+      num(meta.max_brands_allowed, 3),
+      num(meta.max_agents_allowed, 10),
+      num(meta.conversation_limit, 1000),
+      bool(meta.ai_feature_enabled, true),
+      bool(meta.smtp_feature_enabled, false),
+      tenantId,
+    ],
+  );
+  logger.info({ tenantId, plan }, "stripe_plan_features_applied");
+}
+
+// Resolve a tenant id from a Stripe customer id (used by invoice events).
+async function tenantIdForCustomer(customerId: string | undefined): Promise<string | null> {
+  if (!customerId) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM tenants WHERE stripe_customer_id = $1 LIMIT 1`,
+      [customerId],
+    );
+    return rows[0]?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 // Reconciles the tenant row from a verified Stripe webhook payload.
 async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
   let event: {
@@ -150,6 +251,57 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
       [customerId, deleted ? null : subId, plan, status, tenantId],
     );
     logger.info({ tenantId, plan, status }, "stripe_tenant_provisioned");
+
+    // Grant / revoke the plan's features on the tenant.
+    if (deleted || status === "cancelled") {
+      await applyPlanFeatures(tenantId, "free");
+      await notifyTenantAdmins(
+        tenantId,
+        "Your subscription has been cancelled",
+        "Subscription cancelled",
+        "Your subscription has ended and your workspace has been moved to the free tier. Reactivate any time from Billing to restore your plan features.",
+      );
+    } else if (status === "active" || status === "trialing") {
+      await applyPlanFeatures(tenantId, plan);
+      await notifyTenantAdmins(
+        tenantId,
+        "Your plan is now active",
+        "Plan activated",
+        `Your ${plan || "subscription"} plan is now active and its features have been enabled on your workspace. Thank you for subscribing!`,
+      );
+    } else if (status === "past_due") {
+      await notifyTenantAdmins(
+        tenantId,
+        "Payment issue on your subscription",
+        "Payment past due",
+        "We couldn't process your latest payment. Please update your payment method in Billing to avoid losing access to your plan features.",
+      );
+    }
+  } else if (type === "invoice.payment_succeeded") {
+    const customerId = obj.customer as string;
+    const tid = await tenantIdForCustomer(customerId);
+    if (!tid) return;
+    const amount = typeof obj.amount_paid === "number" ? obj.amount_paid : 0;
+    const currency = ((obj.currency as string) || "usd").toUpperCase();
+    const formatted = `${currency} ${(amount / 100).toFixed(2)}`;
+    const hostedUrl = (obj.hosted_invoice_url as string) || "";
+    await notifyTenantAdmins(
+      tid,
+      "Payment received — receipt",
+      "Payment received",
+      `We've received your payment of ${formatted}. Thank you!${hostedUrl ? ` You can view your receipt here: ${hostedUrl}` : ""}`,
+    );
+  } else if (type === "invoice.payment_failed") {
+    const customerId = obj.customer as string;
+    const tid = await tenantIdForCustomer(customerId);
+    if (!tid) return;
+    const hostedUrl = (obj.hosted_invoice_url as string) || "";
+    await notifyTenantAdmins(
+      tid,
+      "Payment failed on your subscription",
+      "Payment failed",
+      `Your most recent payment could not be processed. Please update your payment method to keep your plan active.${hostedUrl ? ` Retry your payment here: ${hostedUrl}` : ""}`,
+    );
   } else if (type === "checkout.session.completed") {
     const tenantId =
       (obj.client_reference_id as string) ||

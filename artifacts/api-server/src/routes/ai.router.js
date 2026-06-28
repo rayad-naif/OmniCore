@@ -12,13 +12,16 @@
  */
 
 const { Router }      = require('express');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermissionByMethod, requirePermission } = require('../middleware/auth');
 const { rephraseText } = require('../services/ai.service');
 const logger          = require('../utils/logger');
 const { pool }        = require('../lib/db');
 
 const router = Router();
 router.use(requireAuth);
+// Knowledge-base management is gated by the 'knowledge_base' feature permission.
+// (rephrase / AI settings remain available to any authenticated agent.)
+router.use('/knowledge-base', requirePermissionByMethod('knowledge_base'));
 
 // ─── Idempotent migrations ────────────────────────────────────────────────────
 (async () => {
@@ -144,7 +147,7 @@ router.delete('/knowledge-base/:id', async (req, res, next) => {
 
 // ─── GET /api/ai/settings ─────────────────────────────────────────────────────
 // Returns AI settings per brand for the current tenant
-router.get('/settings', async (req, res, next) => {
+router.get('/settings', requirePermission('knowledge_base', 'read'), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, brand_name, ai_system_prompt
@@ -158,7 +161,7 @@ router.get('/settings', async (req, res, next) => {
 });
 
 // ─── PATCH /api/ai/settings/:brandId ─────────────────────────────────────────
-router.patch('/settings/:brandId', async (req, res, next) => {
+router.patch('/settings/:brandId', requirePermission('knowledge_base', 'edit'), async (req, res, next) => {
   try {
     const { ai_system_prompt } = req.body || {};
     const { rows } = await pool.query(

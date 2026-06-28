@@ -18,24 +18,37 @@ const { pool }     = require('../lib/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const logger       = require('../utils/logger');
 const { sendAgentInviteEmail } = require('../services/email.service');
+const { normalizePermissions, defaultPermissionsForRole } = require('../lib/permissions');
 
 const router = Router();
 router.use(requireAuth);
 
+// Self-healing migration: per-feature RBAC permission map.
+pool.query(
+  `ALTER TABLE agents ADD COLUMN IF NOT EXISTS permissions_json JSONB NOT NULL DEFAULT '{}'`
+).catch((err) => logger.warn({ err: err.message }, 'agents_permissions_migration_warning'));
+
 const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+
+const VALID_ROLES = new Set(['admin', 'agent', 'supervisor']);
 
 // ─── GET /api/agents ──────────────────────────────────────────────────────────
 router.get('/', requireRole('admin'), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, email, role, is_active, created_at
+      `SELECT id, name, email, role, is_active, permissions_json, created_at
        FROM agents
        WHERE tenant_id = $1
          AND ($2 = '' OR lower(email) != $2)
        ORDER BY created_at ASC`,
       [req.agent.tenantId, SUPER_ADMIN_EMAIL]
     );
-    return res.json(rows);
+    // Return resolved permissions so the UI always has a complete map.
+    const withPerms = rows.map((r) => ({
+      ...r,
+      permissions: normalizePermissions(r.permissions_json || {}, r.role),
+    }));
+    return res.json(withPerms);
   } catch (err) { next(err); }
 });
 
@@ -45,9 +58,12 @@ router.get('/', requireRole('admin'), async (req, res, next) => {
 // SMTP. The invite link is only returned in the response in non-production.
 router.post('/', requireRole('admin'), async (req, res, next) => {
   try {
-    const { name, email, role = 'agent' } = req.body || {};
+    const { name, email, role = 'agent', permissions } = req.body || {};
     if (!name?.trim() || !email?.trim()) {
       return res.status(400).json({ error: 'name and email are required' });
+    }
+    if (!VALID_ROLES.has(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -59,14 +75,19 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
+    // Build the permission map: explicit selection if provided, else role defaults.
+    const perms = permissions
+      ? normalizePermissions(permissions, role)
+      : defaultPermissionsForRole(role);
+
     // Random throwaway password — the agent sets their own via the invite link.
     const randomPassword = crypto.randomBytes(24).toString('hex');
     const password_hash = await bcrypt.hash(randomPassword, 10);
     const { rows } = await pool.query(
-      `INSERT INTO agents (tenant_id, name, email, role, password_hash, is_active)
-       VALUES ($1, $2, $3, $4, $5, true)
-       RETURNING id, name, email, role, is_active, created_at`,
-      [req.agent.tenantId, name.trim(), normalizedEmail, role, password_hash]
+      `INSERT INTO agents (tenant_id, name, email, role, password_hash, is_active, permissions_json)
+       VALUES ($1, $2, $3, $4, $5, true, $6)
+       RETURNING id, name, email, role, is_active, permissions_json, created_at`,
+      [req.agent.tenantId, name.trim(), normalizedEmail, role, password_hash, JSON.stringify(perms)]
     );
     const agent = rows[0];
 
@@ -194,6 +215,57 @@ router.patch('/me', async (req, res, next) => {
       values
     );
     return res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+// ─── PATCH /api/agents/:id ────────────────────────────────────────────────────
+// Admin updates an agent's role and/or per-feature permissions. Tenant-scoped;
+// the protected super-admin account can never be edited by a tenant admin, and
+// admins cannot demote/strip their own access here (use /me for self profile).
+router.patch('/:id', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { role, permissions } = req.body || {};
+    if (role === undefined && permissions === undefined) {
+      return res.status(400).json({ error: 'Provide role or permissions to update' });
+    }
+    if (role !== undefined && !VALID_ROLES.has(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const { rows: target } = await pool.query(
+      'SELECT id, email, role FROM agents WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, req.agent.tenantId]
+    );
+    if (!target.length) return res.status(404).json({ error: 'Agent not found' });
+    if (SUPER_ADMIN_EMAIL && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Super admin cannot be edited here' });
+    }
+
+    const nextRole = role !== undefined ? role : target[0].role;
+
+    const updates = [];
+    const values  = [];
+    if (role !== undefined) {
+      values.push(role);
+      updates.push(`role = $${values.length}`);
+    }
+    if (permissions !== undefined) {
+      const perms = normalizePermissions(permissions, nextRole);
+      values.push(JSON.stringify(perms));
+      updates.push(`permissions_json = $${values.length}`);
+    }
+    values.push(req.params.id, req.agent.tenantId);
+
+    const { rows } = await pool.query(
+      `UPDATE agents SET ${updates.join(', ')}, updated_at = NOW()
+       WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
+       RETURNING id, name, email, role, is_active, permissions_json, created_at`,
+      values
+    );
+    const updated = rows[0];
+    updated.permissions = normalizePermissions(updated.permissions_json || {}, updated.role);
+    logger.info({ agentId: req.params.id, by: req.agent.id }, 'agent_permissions_updated');
+    return res.json(updated);
   } catch (err) { next(err); }
 });
 
