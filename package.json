@@ -12,5 +12,9 @@
   "devDependencies": {
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "stripe": "^22.3.0",
+    "stripe-replit-sync": "^1.0.0"
   }
 }

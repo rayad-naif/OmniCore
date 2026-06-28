@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS tenants (
                                             )),
     lemon_squeezy_customer_id   TEXT        UNIQUE,
     lemon_squeezy_subscription_id TEXT      UNIQUE,
+    stripe_customer_id          TEXT,
+    stripe_subscription_id      TEXT,
     grace_period_ends_at        TIMESTAMPTZ,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()

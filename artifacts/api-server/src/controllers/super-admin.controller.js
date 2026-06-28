@@ -437,4 +437,56 @@ router.delete('/tenants/:id/purge', async (req, res, next) => {
   }
 });
 
+// ─── GET /api/super-admin/stripe-status ──────────────────────────────────────
+// Reports Stripe connection state + the synced self-serve plans (plan→price).
+router.get('/stripe-status', async (req, res, next) => {
+  try {
+    let connected = false;
+    let account = null;
+    try {
+      // eslint-disable-next-line global-require
+      const { getUncachableStripeClient } = require('../lib/stripeClient');
+      const stripe = await getUncachableStripeClient();
+      const acct = await stripe.accounts.retrieve();
+      connected = true;
+      account = { id: acct.id, email: acct.email || null, country: acct.country || null };
+    } catch (err) {
+      logger.warn({ err: err.message }, 'stripe_status_not_connected');
+    }
+
+    // Synced plan→price mapping from the `stripe` schema (if it exists yet).
+    let plans = [];
+    let subscriptions = 0;
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           p.name                      AS name,
+           p.metadata ->> 'plan'       AS plan,
+           pr.id                       AS price_id,
+           pr.unit_amount              AS amount,
+           pr.currency                 AS currency,
+           pr.recurring ->> 'interval' AS interval
+         FROM stripe.products p
+         JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
+         WHERE p.active = true
+           AND p.metadata ->> 'plan' IN ('starter','pro')
+           AND pr.recurring ->> 'interval' = 'month'
+         ORDER BY pr.unit_amount ASC`
+      );
+      const seen = new Set();
+      for (const r of rows) {
+        if (seen.has(r.plan)) continue;
+        seen.add(r.plan);
+        plans.push({ plan: r.plan, name: r.name, priceId: r.price_id, amount: r.amount, currency: r.currency, interval: r.interval });
+      }
+      const subCount = await pool.query('SELECT COUNT(*)::int AS n FROM stripe.subscriptions');
+      subscriptions = subCount.rows[0]?.n || 0;
+    } catch {
+      // stripe schema not migrated yet — leave defaults.
+    }
+
+    return res.json({ connected, account, schemaReady: plans.length > 0 || subscriptions > 0, plans, subscriptions });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
