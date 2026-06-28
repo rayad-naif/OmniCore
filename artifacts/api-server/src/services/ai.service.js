@@ -2,23 +2,19 @@
 
 /**
  * ai.service.js
- * Atelier OmniCore — Section 7: Dual-Layer AI Engine (Gemini 1.5 Flash)
+ * Atelier OmniCore — Dual-Layer AI Engine (Gemini Flash)
  *
  * Layer 1 — Inbound RAG Core
- *   - Brand-scoped pgvector cosine similarity search (never leaks cross-brand data)
+ *   - Brand-scoped full-text search on knowledge_articles (replaces pgvector; not available on Replit)
  *   - System prompt injection from brand.ai_system_prompt
- *   - Confidence-threshold evaluation → [TRIGGER_HANDOVER_PROTOCOL] detection
- *   - Human handover: sets conversation status = 'open', notifies agents via Socket.io
+ *   - Bot message limit (bot_max_messages from widget_config_json)
+ *   - Human-request detection before AI call
+ *   - [TRIGGER_HANDOVER_PROTOCOL] sentinel detection
+ *   - Human handover: sets status→open, optional round-robin auto-assign, Socket.io notify
  *
  * Layer 2 — Agent Copilot
- *   - rephraseText(draftText, tone)   — rewrites agent draft for clarity & tone
- *   - summariseThread(messages)       — private summary generated when agent takes over
- *
- * Embedding model : text-embedding-004  (768 dims)
- * Generation model: gemini-1.5-flash
- *
- * NOTE: If you used VECTOR(1536) in schema.sql, alter the column:
- *   ALTER TABLE ai_embeddings ALTER COLUMN embedding_vector TYPE VECTOR(768);
+ *   - rephraseText(draftText, tone)
+ *   - summariseThread(messages)
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -34,16 +30,23 @@ if (!GEMINI_API_KEY) {
 
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
-const EMBEDDING_MODEL    = 'text-embedding-004';
-const GENERATION_MODEL   = 'gemini-2.5-flash';
-const EMBEDDING_DIMS     = 768;
-const MAX_OUTPUT_TOKENS  = 8192;
+const GENERATION_MODEL  = 'gemini-2.5-flash';
+const MAX_OUTPUT_TOKENS = 8192;
+const EMBEDDING_DIMS    = 768; // kept for API compat even though we no longer embed
 
 // ---------------------------------------------------------------------------
 // Handover sentinel
 // ---------------------------------------------------------------------------
-const HANDOVER_SENTINEL   = '[TRIGGER_HANDOVER_PROTOCOL]';
-const DEFAULT_CONFIDENCE  = 0.70;   // minimum cosine similarity to attempt an AI answer
+const HANDOVER_SENTINEL = '[TRIGGER_HANDOVER_PROTOCOL]';
+
+// Patterns that indicate the visitor wants a human regardless of bot context
+const HUMAN_REQUEST_PATTERNS = [
+  /\b(talk|speak|chat|connect|transfer|escalate)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|representative|support|team)/i,
+  /\b(human|live\s+agent|real\s+person)\s+(please|help|support|needed)/i,
+  /\bI\s+want\s+(a|to\s+talk\s+to\s+a?)?\s*(human|agent|person)/i,
+  /\b(not\s+(a\s+)?(bot|robot|ai|automated)|speak\s+to\s+someone)/i,
+  /\bget\s+me\s+(a\s+)?(human|agent|person|representative)/i,
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,65 +56,57 @@ function assertAI() {
   if (!genAI) throw new Error('AI features unavailable: GEMINI_API_KEY is not configured');
 }
 
-/**
- * Generate an embedding vector for a piece of text.
- * @param {string} text
- * @returns {Promise<number[]>} 768-dimensional float array
- */
-async function embedText(text) {
-  assertAI();
-  const model  = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
-  const result = await model.embedContent(text);
-  return result.embedding.values;
-}
-
-/**
- * Format a vector array as a pgvector literal: '[0.1,0.2,...]'
- */
-function toVectorLiteral(arr) {
-  return `[${arr.join(',')}]`;
+function isAskingForHuman(text) {
+  return HUMAN_REQUEST_PATTERNS.some(p => p.test(text));
 }
 
 // ---------------------------------------------------------------------------
-// Layer 1 — RAG Core
+// Layer 1 — RAG Core (Full-Text Search on knowledge_articles)
 // ---------------------------------------------------------------------------
 
 /**
- * Retrieve the top-K knowledge chunks most similar to `query` for a given brand.
- * Enforces brand_id isolation — other brands' embeddings are never considered.
+ * Retrieve relevant knowledge articles using Postgres full-text search.
+ * Falls back to most-recently-updated articles when FTS finds nothing.
  *
  * @param {{ brandId: string, tenantId: string, query: string, topK?: number }} opts
- * @returns {Promise<Array<{ chunked_text: string, similarity: number, article_id: string }>>}
+ * @returns {Promise<Array<{ title: string, content: string }>>}
  */
-async function retrieveContext({ brandId, tenantId, query, topK = 5 }) {
-  const vector = await embedText(query);
-  const literal = toVectorLiteral(vector);
-
+async function retrieveContextFts({ brandId, tenantId, query, topK = 5 }) {
+  // Primary: FTS ranked search
   const { rows } = await pool.query(
-    `SELECT
-        e.chunked_text,
-        e.article_id,
-        1 - (e.embedding_vector <=> $1::vector) AS similarity
-     FROM ai_embeddings e
-     WHERE e.brand_id  = $2
-       AND e.tenant_id = $3
-     ORDER BY e.embedding_vector <=> $1::vector
+    `SELECT title, content,
+            ts_rank(
+              to_tsvector('english', COALESCE(title,'') || ' ' || COALESCE(content,'')),
+              plainto_tsquery('english', $1)
+            ) AS rank
+     FROM knowledge_articles
+     WHERE tenant_id = $2
+       AND (brand_id = $3 OR brand_id IS NULL)
+       AND is_active = TRUE
+       AND to_tsvector('english', COALESCE(title,'') || ' ' || COALESCE(content,''))
+           @@ plainto_tsquery('english', $1)
+     ORDER BY rank DESC
      LIMIT $4`,
-    [literal, brandId, tenantId, topK]
+    [query, tenantId, brandId, topK]
   );
-  return rows;
+
+  if (rows.length) return rows;
+
+  // Fallback: inject most recent articles as general context
+  const { rows: fallback } = await pool.query(
+    `SELECT title, content FROM knowledge_articles
+     WHERE tenant_id = $1 AND (brand_id = $2 OR brand_id IS NULL) AND is_active = TRUE
+     ORDER BY updated_at DESC LIMIT $3`,
+    [tenantId, brandId, topK]
+  );
+  return fallback;
 }
 
+// Keep legacy name as alias so any external callers don't break
+const retrieveContext = retrieveContextFts;
+
 /**
- * Build the structured prompt for the RAG first-responder.
- *
- * The model is instructed to:
- *  - Answer ONLY from the provided context.
- *  - Respond with exactly [TRIGGER_HANDOVER_PROTOCOL] (and nothing else)
- *    if it cannot answer with confidence.
- *
- * @param {{ systemPrompt: string, context: string, userMessage: string }} opts
- * @returns {string}
+ * Build the structured RAG prompt.
  */
 function buildRagPrompt({ systemPrompt, context, userMessage }) {
   return `${systemPrompt || 'You are a helpful customer support assistant.'}
@@ -133,22 +128,13 @@ User question: ${userMessage}`;
 
 /**
  * Detect whether the model output is a handover trigger.
- * Handles whitespace, punctuation, or partial wrapping around the sentinel.
- *
- * @param {string} responseText  Raw text from the model
- * @returns {boolean}
  */
 function isHandoverTriggered(responseText) {
   if (!responseText) return true;
   const trimmed = responseText.trim();
-
-  // Exact match
   if (trimmed === HANDOVER_SENTINEL) return true;
-
-  // Model sometimes wraps in quotes or adds trailing punctuation
   if (trimmed.includes(HANDOVER_SENTINEL)) return true;
 
-  // Semantic fallback: model explicitly says it cannot help
   const FALLBACK_PATTERNS = [
     /\bi (don'?t|do not|cannot|can'?t) (have|find|know|answer)/i,
     /\b(no|not enough) (information|context|data|detail)/i,
@@ -159,87 +145,103 @@ function isHandoverTriggered(responseText) {
 }
 
 /**
- * Execute the full RAG pipeline for a visitor message.
+ * Execute the full RAG pipeline for a single visitor message.
  *
- * @param {{
- *   conversationId: string,
- *   tenantId:       string,
- *   brandId:        string,
- *   userMessage:    string,
- *   io?:            object,   Socket.io instance
- * }} opts
- *
- * @returns {Promise<{
- *   reply:      string | null,
- *   handedOver: boolean,
- *   topChunks:  Array
- * }>}
+ * Bot behaviour controlled by widget_config_json on the brand:
+ *   bot_max_messages       (int,  default 10)  — max bot replies before forced handover
+ *   auto_assign_strategy   (str,  default 'round_robin') — 'round_robin'|'least_load'|'manual'
  */
 async function handleInboundMessage({ conversationId, tenantId, brandId, userMessage, io = null }) {
   assertAI();
 
-  // 1. Fetch brand config
+  // 1. Fetch brand config (system prompt + bot settings from widget_config_json)
   const { rows: brandRows } = await pool.query(
-    `SELECT ai_system_prompt, ai_confidence_threshold
+    `SELECT ai_system_prompt, widget_config_json
      FROM brands WHERE id = $1 AND tenant_id = $2`,
     [brandId, tenantId]
   );
-  const brand = brandRows[0];
-  const confidenceThreshold = brand
-    ? parseFloat(brand.ai_confidence_threshold) || DEFAULT_CONFIDENCE
-    : DEFAULT_CONFIDENCE;
+  const brand        = brandRows[0];
+  const wConf        = (brand?.widget_config_json) || {};
   const systemPrompt = brand?.ai_system_prompt || '';
+  const botMaxMsgs   = parseInt(String(wConf.bot_max_messages ?? '10'), 10) || 10;
+  const autoStrategy = wConf.auto_assign_strategy || 'round_robin';
 
-  // 2. Vector search — brand-scoped
-  const chunks = await retrieveContext({ brandId, tenantId, query: userMessage });
+  // 2. Fetch conversation + visitor info
+  const { rows: convRows } = await pool.query(
+    `SELECT c.visitor_id, c.status FROM conversations c WHERE c.id = $1`,
+    [conversationId]
+  );
+  const visitorId = convRows[0]?.visitor_id;
 
-  // 3. Confidence gate: if the best chunk similarity is below threshold, hand over immediately
-  const bestSimilarity = chunks.length ? chunks[0].similarity : 0;
-  if (bestSimilarity < confidenceThreshold) {
-    await triggerHandover({ conversationId, tenantId, io, reason: 'low_similarity' });
-    return { reply: null, handedOver: true, topChunks: chunks };
+  // 3. Visitor asking for human? Handover immediately.
+  if (isAskingForHuman(userMessage)) {
+    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'visitor_requested_human' });
+    return { reply: null, handedOver: true, topChunks: [] };
   }
 
-  // 4. Build prompt and call Gemini
-  const contextText = chunks.map((c, i) => `[${i + 1}] ${c.chunked_text}`).join('\n\n');
+  // 4. Bot message count gate
+  const { rows: countRows } = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM messages
+     WHERE conversation_id = $1 AND sender_type = 'bot'`,
+    [conversationId]
+  );
+  const botMsgCount = parseInt(countRows[0]?.cnt ?? '0', 10);
+  if (botMsgCount >= botMaxMsgs) {
+    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'bot_message_limit' });
+    return { reply: null, handedOver: true, topChunks: [] };
+  }
+
+  // 5. FTS retrieval — brand-scoped
+  const articles = await retrieveContextFts({ brandId, tenantId, query: userMessage });
+
+  // 6. Build prompt and call Gemini
+  const contextText = articles.map((a, i) => `[${i + 1}] ${a.title}\n${a.content}`).join('\n\n');
   const fullPrompt  = buildRagPrompt({ systemPrompt, context: contextText, userMessage });
 
-  const model    = genAI.getGenerativeModel({ model: GENERATION_MODEL });
-  const result   = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+  const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+  const result = await model.generateContent({
+    contents:         [{ role: 'user', parts: [{ text: fullPrompt }] }],
     generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: 0.3 },
   });
 
   const rawReply = result.response.text();
 
-  // 5. Handover detection
+  // 7. Handover detection from model output
   if (isHandoverTriggered(rawReply)) {
-    await triggerHandover({ conversationId, tenantId, io, reason: 'model_uncertain' });
-    return { reply: null, handedOver: true, topChunks: chunks };
+    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'model_uncertain' });
+    return { reply: null, handedOver: true, topChunks: articles };
   }
 
-  // 6. Persist bot message
-  await pool.query(
+  // 8. Persist bot message
+  const { rows: msgRows } = await pool.query(
     `INSERT INTO messages (conversation_id, sender_type, message_body)
-     VALUES ($1, 'bot', $2)`,
+     VALUES ($1, 'bot', $2)
+     RETURNING id, conversation_id, sender_type, message_body, created_at`,
     [conversationId, rawReply]
   );
   await pool.query(
     `UPDATE conversations SET updated_at = NOW() WHERE id = $1`,
     [conversationId]
   );
+  const msg = msgRows[0];
 
-  // 7. Emit to Socket.io room
+  // 9. Emit to Socket.io rooms
   if (io) {
-    io.to(`conv:${conversationId}`).emit('server:new_message', {
-      conversationId,
-      senderType:  'bot',
-      messageBody: rawReply,
-      createdAt:   new Date().toISOString(),
-    });
+    const enriched = {
+      id:               msg.id,
+      conversation_id:  conversationId,
+      sender_type:      'bot',
+      sender_name:      'AI Assistant',
+      message_body:     rawReply,
+      created_at:       msg.created_at,
+    };
+    io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+    if (visitorId) {
+      io.to(`vis:${visitorId}`).emit('server:new_message', enriched);
+    }
   }
 
-  return { reply: rawReply, handedOver: false, topChunks: chunks };
+  return { reply: rawReply, handedOver: false, topChunks: articles };
 }
 
 // ---------------------------------------------------------------------------
@@ -247,20 +249,11 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
 // ---------------------------------------------------------------------------
 
 /**
- * triggerHandover
+ * triggerHandover — transitions conversation from ai_handling → open, optionally auto-assigns.
  *
- * Implements the [TRIGGER_HANDOVER_PROTOCOL] flow:
- *  1. Sets conversation status → 'open'
- *  2. Emits server:handover_required to the Socket.io conversation room
- *  3. Emits server:new_assignment_available to the tenant's supervisor room
- *
- * Called when:
- *  - Best vector similarity < brand confidence threshold
- *  - Model output contains [TRIGGER_HANDOVER_PROTOCOL] or semantic equivalent
- *
- * @param {{ conversationId: string, tenantId: string, io?: object, reason?: string }} opts
+ * @param {{ conversationId, tenantId, brandId?, strategy?, io?, reason? }} opts
  */
-async function triggerHandover({ conversationId, tenantId, io = null, reason = 'unknown' }) {
+async function triggerHandover({ conversationId, tenantId, brandId = null, strategy = 'round_robin', io = null, reason = 'unknown' }) {
   const { rows } = await pool.query(
     `UPDATE conversations
      SET status     = 'open',
@@ -270,22 +263,71 @@ async function triggerHandover({ conversationId, tenantId, io = null, reason = '
     [conversationId]
   );
 
-  if (!rows.length) return;   // already open or closed — no-op
+  if (!rows.length) return; // already open or closed — no-op
 
-  console.log(`[ai.service] handover triggered  conv=${conversationId}  reason=${reason}`);
+  const conv = rows[0];
+  console.log(`[ai.service] handover  conv=${conversationId}  reason=${reason}  strategy=${strategy}`);
 
+  // Auto-assign agent (skip if manual or already assigned)
+  if (strategy !== 'manual' && !conv.assigned_agent_id) {
+    try {
+      const effectiveBrandId = brandId || conv.brand_id;
+      let agentId = null;
+
+      if (strategy === 'round_robin') {
+        // Rotate through agents: pick the one who was assigned least recently
+        const { rows: rr } = await pool.query(
+          `SELECT a.id FROM agents a
+           WHERE a.tenant_id = $1 AND a.is_active = TRUE AND a.role != 'viewer'
+             AND ($2::uuid IS NULL OR a.id IN (
+                   SELECT agent_id FROM brand_agents WHERE brand_id = $2
+                 ) OR NOT EXISTS (SELECT 1 FROM brand_agents WHERE brand_id = $2))
+           ORDER BY (
+             SELECT COALESCE(MAX(c2.updated_at), '1970-01-01'::timestamptz)
+             FROM conversations c2 WHERE c2.assigned_agent_id = a.id
+           ) ASC
+           LIMIT 1`,
+          [tenantId, effectiveBrandId]
+        );
+        agentId = rr[0]?.id ?? null;
+      } else {
+        // least_load: pick agent with fewest open conversations
+        const { rows: ll } = await pool.query(
+          `SELECT a.id FROM agents a
+           WHERE a.tenant_id = $1 AND a.is_active = TRUE AND a.role != 'viewer'
+           ORDER BY (
+             SELECT COUNT(*) FROM conversations c3
+             WHERE c3.assigned_agent_id = a.id AND c3.status = 'open'
+           ) ASC
+           LIMIT 1`,
+          [tenantId]
+        );
+        agentId = ll[0]?.id ?? null;
+      }
+
+      if (agentId) {
+        await pool.query(
+          `UPDATE conversations SET assigned_agent_id = $1, updated_at = NOW() WHERE id = $2`,
+          [agentId, conversationId]
+        );
+        console.log(`[ai.service] auto-assigned  conv=${conversationId}  agent=${agentId}`);
+      }
+    } catch (err) {
+      console.error('[ai.service] auto-assign error', err.message);
+    }
+  }
+
+  // Socket.io notifications
   if (io) {
-    // Notify agents already watching this conversation
     io.to(`conv:${conversationId}`).emit('server:handover_required', {
-      conversationId,
-      reason,
-      ts: new Date().toISOString(),
+      conversationId, reason, ts: new Date().toISOString(),
     });
-
-    // Broadcast to tenant supervisor room so any available agent can claim it
-    io.to(`tenant:${tenantId}:supervisors`).emit('server:new_assignment_available', {
-      conversationId,
-      reason,
+    io.to(`tenant:${tenantId}`).emit('server:new_assignment_available', {
+      conversationId, reason,
+    });
+    // Also emit general conversation update so sidebar refreshes
+    io.to(`tenant:${tenantId}`).emit('conversation:updated', {
+      conversationId, status: 'open', reason,
     });
   }
 }
@@ -295,11 +337,7 @@ async function triggerHandover({ conversationId, tenantId, io = null, reason = '
 // ---------------------------------------------------------------------------
 
 /**
- * rephraseText
- * Rewrites an agent's draft message for clarity and tone.
- *
- * @param {{ draft: string, tone?: string }} opts
- * @returns {Promise<string>} Rephrased text
+ * rephraseText — rewrites an agent's draft for clarity and tone.
  */
 async function rephraseText({ draft, tone = 'professional and empathetic' }) {
   assertAI();
@@ -312,19 +350,14 @@ Draft: ${draft}`;
 
   const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
   const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents:         [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: 0.5 },
   });
   return result.response.text().trim();
 }
 
 /**
- * summariseThread
- * Generates a concise private summary of a conversation for the taking-over agent.
- * The summary is stored as an internal note (is_internal_note = TRUE).
- *
- * @param {{ conversationId: string, messages: Array<{ senderType: string, messageBody: string }> }} opts
- * @returns {Promise<string>} Summary text
+ * summariseThread — concise private summary for the taking-over agent.
  */
 async function summariseThread({ conversationId, messages }) {
   assertAI();
@@ -348,12 +381,11 @@ ${transcript}`;
 
   const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
   const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents:         [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
   });
   const summary = result.response.text().trim();
 
-  // Persist as internal note
   await pool.query(
     `INSERT INTO messages (conversation_id, sender_type, message_body, is_internal_note)
      VALUES ($1, 'system', $2, TRUE)`,
@@ -364,16 +396,11 @@ ${transcript}`;
 }
 
 // ---------------------------------------------------------------------------
-// Vectorisation helpers (used by crawler.worker.js and article publish flow)
+// Vectorisation helpers (simplified — no pgvector on Replit)
 // ---------------------------------------------------------------------------
 
 /**
- * chunkText
- * Splits plain text into overlapping chunks for embedding.
- *
- * @param {string} text
- * @param {{ chunkSize?: number, overlap?: number }} opts
- * @returns {string[]}
+ * chunkText — kept for API compatibility; still useful if embedding is restored later.
  */
 function chunkText(text, { chunkSize = 500, overlap = 100 } = {}) {
   const words  = text.split(/\s+/).filter(Boolean);
@@ -387,62 +414,28 @@ function chunkText(text, { chunkSize = 500, overlap = 100 } = {}) {
 }
 
 /**
- * vectoriseArticle
- * Generates embeddings for all chunks of a knowledge article and inserts them.
- * Clears existing embeddings for the article before inserting new ones.
- *
- * @param {{
- *   articleId: string,
- *   tenantId:  string,
- *   brandId:   string,
- *   plainText: string,
- *   sourceUrl?: string,
- * }} opts
+ * vectoriseArticle — pgvector not available on Replit Postgres.
+ * Marks the article as ready for FTS retrieval immediately.
  */
-async function vectoriseArticle({ articleId, tenantId, brandId, plainText, sourceUrl = null }) {
-  assertAI();
-
-  const chunks = chunkText(plainText);
-  if (!chunks.length) return;
-
-  // Delete stale embeddings
-  await pool.query(`DELETE FROM ai_embeddings WHERE article_id = $1`, [articleId]);
-
-  const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
-
-  for (const chunk of chunks) {
-    let values;
-    try {
-      const res = await model.embedContent(chunk);
-      values = res.embedding.values;
-    } catch (err) {
-      console.error('[ai.service] embedding error for chunk', err.message);
-      continue;
-    }
-
+async function vectoriseArticle({ articleId }) {
+  try {
     await pool.query(
-      `INSERT INTO ai_embeddings
-         (article_id, tenant_id, brand_id, source_url, chunked_text, embedding_vector, token_count)
-       VALUES ($1, $2, $3, $4, $5, $6::vector, $7)`,
-      [
-        articleId,
-        tenantId,
-        brandId,
-        sourceUrl,
-        chunk,
-        toVectorLiteral(values),
-        chunk.split(/\s+/).length,
-      ]
+      `UPDATE knowledge_articles SET updated_at = NOW() WHERE id = $1`,
+      [articleId]
     );
+    console.log(`[ai.service] article=${articleId} marked ready (FTS mode)`);
+  } catch (err) {
+    console.error('[ai.service] vectoriseArticle error', err.message);
   }
+}
 
-  // Mark article as vectorised
-  await pool.query(
-    `UPDATE knowledge_articles SET is_vectorized = TRUE, updated_at = NOW() WHERE id = $1`,
-    [articleId]
-  );
-
-  console.log(`[ai.service] vectorised article=${articleId}  chunks=${chunks.length}`);
+/**
+ * embedText — stub; kept for API compatibility.
+ */
+async function embedText(text) {
+  assertAI();
+  // pgvector not available; return zero vector for compat
+  return new Array(EMBEDDING_DIMS).fill(0);
 }
 
 module.exports = {
@@ -450,9 +443,11 @@ module.exports = {
   chunkText,
   vectoriseArticle,
   retrieveContext,
+  retrieveContextFts,
   handleInboundMessage,
   triggerHandover,
   isHandoverTriggered,
+  isAskingForHuman,
   rephraseText,
   summariseThread,
   HANDOVER_SENTINEL,

@@ -146,11 +146,15 @@ router.delete('/knowledge-base/:id', async (req, res, next) => {
 });
 
 // ─── GET /api/ai/settings ─────────────────────────────────────────────────────
-// Returns AI settings per brand for the current tenant
+// Returns AI + bot settings per brand for the current tenant
 router.get('/settings', requirePermission('knowledge_base', 'read'), async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, brand_name, ai_system_prompt
+      `SELECT id, brand_name, ai_system_prompt,
+              COALESCE(widget_config_json->>'bot_max_messages', '10')      AS bot_max_messages,
+              COALESCE(widget_config_json->>'auto_assign_strategy', 'round_robin') AS auto_assign_strategy,
+              COALESCE((widget_config_json->>'auto_close_enabled')::boolean, false) AS auto_close_enabled,
+              COALESCE(widget_config_json->>'auto_close_idle_minutes', '60') AS auto_close_idle_minutes
        FROM brands
        WHERE tenant_id = $1
        ORDER BY brand_name`,
@@ -161,14 +165,47 @@ router.get('/settings', requirePermission('knowledge_base', 'read'), async (req,
 });
 
 // ─── PATCH /api/ai/settings/:brandId ─────────────────────────────────────────
+// Updates AI system prompt AND bot configuration for a brand.
+// Bot settings are stored in widget_config_json (JSONB merge).
 router.patch('/settings/:brandId', requirePermission('knowledge_base', 'edit'), async (req, res, next) => {
   try {
-    const { ai_system_prompt } = req.body || {};
+    const {
+      ai_system_prompt,
+      bot_max_messages,
+      auto_assign_strategy,
+      auto_close_enabled,
+      auto_close_idle_minutes,
+    } = req.body || {};
+
+    // Build widget_config_json patch (only include provided fields)
+    const botPatch = {};
+    if (bot_max_messages      !== undefined) botPatch.bot_max_messages      = parseInt(String(bot_max_messages), 10) || 10;
+    if (auto_assign_strategy  !== undefined) botPatch.auto_assign_strategy  = auto_assign_strategy;
+    if (auto_close_enabled    !== undefined) botPatch.auto_close_enabled    = Boolean(auto_close_enabled);
+    if (auto_close_idle_minutes !== undefined) botPatch.auto_close_idle_minutes = parseInt(String(auto_close_idle_minutes), 10) || 60;
+
+    const hasBotPatch = Object.keys(botPatch).length > 0;
+
     const { rows } = await pool.query(
-      `UPDATE brands SET ai_system_prompt = $1, updated_at = NOW()
-       WHERE id = $2 AND tenant_id = $3
-       RETURNING id, brand_name, ai_system_prompt`,
-      [ai_system_prompt ?? null, req.params.brandId, req.agent.tenantId]
+      `UPDATE brands
+       SET ai_system_prompt   = COALESCE($1, ai_system_prompt),
+           widget_config_json = CASE WHEN $3 THEN
+             COALESCE(widget_config_json, '{}'::jsonb) || $2::jsonb
+           ELSE widget_config_json END,
+           updated_at         = NOW()
+       WHERE id = $4 AND tenant_id = $5
+       RETURNING id, brand_name, ai_system_prompt,
+                 COALESCE(widget_config_json->>'bot_max_messages', '10')      AS bot_max_messages,
+                 COALESCE(widget_config_json->>'auto_assign_strategy', 'round_robin') AS auto_assign_strategy,
+                 COALESCE((widget_config_json->>'auto_close_enabled')::boolean, false) AS auto_close_enabled,
+                 COALESCE(widget_config_json->>'auto_close_idle_minutes', '60') AS auto_close_idle_minutes`,
+      [
+        ai_system_prompt ?? null,
+        JSON.stringify(botPatch),
+        hasBotPatch,
+        req.params.brandId,
+        req.agent.tenantId,
+      ]
     );
     if (!rows.length) return res.status(404).json({ error: 'Brand not found' });
     return res.json(rows[0]);

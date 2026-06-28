@@ -464,6 +464,72 @@ router.patch('/conversations/:id/read', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── POST /api/widget/ticket ───────────────────────────────────────────────────
+// Visitor submits a support ticket. Creates an email-channel conversation.
+router.post('/ticket', async (req, res, next) => {
+  try {
+    const { brandId, sessionToken, subject, description, priority, visitorName, visitorEmail } = req.body || {};
+    if (!brandId)            return res.status(400).json({ error: 'brandId is required' });
+    if (!subject?.trim())    return res.status(400).json({ error: 'subject is required' });
+    if (!description?.trim())return res.status(400).json({ error: 'description is required' });
+
+    let visitorId, tenantId;
+
+    // Try to find existing visitor by session token
+    if (sessionToken) {
+      const { rows: vr } = await pool.query(
+        `SELECT v.id, v.tenant_id FROM visitors v
+         WHERE v.session_token = $1 AND v.brand_id = $2`,
+        [sessionToken, brandId]
+      );
+      if (vr[0]) { visitorId = vr[0].id; tenantId = vr[0].tenant_id; }
+    }
+
+    // Fallback: get tenant from brand and create a new visitor
+    if (!visitorId) {
+      const { rows: br } = await pool.query(`SELECT tenant_id FROM brands WHERE id = $1`, [brandId]);
+      if (!br[0]) return res.status(404).json({ error: 'Brand not found' });
+      tenantId = br[0].tenant_id;
+      const newToken = require('crypto').randomBytes(32).toString('hex');
+      const { rows: vNew } = await pool.query(
+        `INSERT INTO visitors (tenant_id, brand_id, session_token, display_name, email)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [tenantId, brandId, newToken, visitorName || 'Visitor', visitorEmail || null]
+      );
+      visitorId = vNew[0].id;
+    } else if (visitorName || visitorEmail) {
+      await pool.query(
+        `UPDATE visitors SET
+           display_name = COALESCE($1, display_name),
+           email        = COALESCE($2, email)
+         WHERE id = $3`,
+        [visitorName || null, visitorEmail || null, visitorId]
+      );
+    }
+
+    const validPriority = ['low', 'normal', 'high', 'urgent'].includes(priority) ? priority : 'normal';
+
+    // Create ticket conversation (email channel so it shows as a ticket in inbox)
+    const { rows: cr } = await pool.query(
+      `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject, priority, is_ticket)
+       VALUES ($1, $2, $3, 'open', 'email', $4, $5, true)
+       RETURNING id, status, subject, priority, created_at`,
+      [tenantId, brandId, visitorId, subject.trim(), validPriority]
+    );
+    const conv = cr[0];
+
+    // Add description as first message
+    await pool.query(
+      `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body)
+       VALUES ($1, 'visitor', $2, $3)`,
+      [conv.id, visitorId, description.trim()]
+    );
+
+    logger.info({ conversationId: conv.id, brandId, tenantId }, 'widget_ticket_submitted');
+    return res.status(201).json({ ok: true, ticketId: conv.id, subject: conv.subject });
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/widget/widget.js ─────────────────────────────────────────────────
 const WIDGET_JS = `
 /* OmniCore Chat Widget — https://omnicore.chat */
@@ -490,7 +556,8 @@ var state={
   messages:[],socket:null,connected:false,
   brandName:LABEL,unread:0,
   visitorName:null,visitorEmail:null,
-  csatShown:false,csatPending:false,csatConvId:null
+  csatShown:false,csatPending:false,csatConvId:null,
+  tab:'chat'
 };
 try{
   state.sessionToken=localStorage.getItem(SK);
@@ -864,7 +931,21 @@ function buildDom(){
     '#omni-snd{width:36px;height:36px;background:'+COLOR+';border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s;}',
     '#omni-snd:hover{opacity:.9;}',
     '#omni-snd:disabled{opacity:.35;cursor:default;}',
-    '#omni-footer{padding:5px;text-align:center;background:#fff;border-top:1px solid #f1f5f9;font-size:9.5px;color:#94a3b8;font-family:inherit;flex-shrink:0;}'
+    '#omni-footer{padding:5px;text-align:center;background:#fff;border-top:1px solid #f1f5f9;font-size:9.5px;color:#94a3b8;font-family:inherit;flex-shrink:0;}',
+    '#omni-tabs{display:flex;border-bottom:1px solid #e2e8f0;background:#fff;flex-shrink:0;}',
+    '.omni-tab{flex:1;padding:9px 0;font-size:12px;font-weight:600;border:none;background:none;cursor:pointer;color:#94a3b8;transition:color .15s,border-color .15s;border-bottom:2px solid transparent;font-family:inherit;}',
+    '.omni-tab.active{color:'+COLOR+';border-bottom-color:'+COLOR+';}',
+    '#omni-ticket-panel{flex:1;overflow-y:auto;padding:16px;background:#f8fafc;display:none;flex-direction:column;}',
+    '#omni-ticket-panel h4{font-size:14px;font-weight:700;color:#0f172a;margin:0 0 4px;}',
+    '#omni-ticket-panel p{font-size:12px;color:#64748b;margin:0 0 14px;line-height:1.5;}',
+    '.om-tfield{margin-bottom:12px;}',
+    '.om-tfield label{display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em;}',
+    '.om-tfield input,.om-tfield textarea,.om-tfield select{width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:13px;color:#1e293b;outline:none;box-sizing:border-box;background:#fff;font-family:inherit;transition:border-color .15s;}',
+    '.om-tfield input:focus,.om-tfield textarea:focus,.om-tfield select:focus{border-color:'+COLOR+';}',
+    '.om-tfield textarea{resize:vertical;min-height:80px;}',
+    '#omni-ticket-submit{width:100%;padding:11px;background:'+COLOR+';color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;font-family:inherit;margin-top:4px;}',
+    '#omni-ticket-submit:disabled{opacity:.5;cursor:default;}',
+    '#omni-ticket-msg{font-size:12px;text-align:center;margin-top:10px;min-height:16px;}'
   ].join('');
   d.head.appendChild(style);
 
@@ -883,6 +964,10 @@ function buildDom(){
       '</div>'+
       '<button id="omni-close-btn" aria-label="Close">\u2715</button>'+
     '</div>'+
+    '<div id="omni-tabs">'+
+      '<button class="omni-tab active" id="omni-tab-chat">\uD83D\uDCAC Chat</button>'+
+      '<button class="omni-tab" id="omni-tab-ticket">\uD83C\uDFAB Submit Ticket</button>'+
+    '</div>'+
     '<div id="omni-prechat" style="display:none">'+
       '<h3>\uD83D\uDC4B Welcome!</h3>'+
       '<p>Please introduce yourself so our support team can assist you.</p>'+
@@ -898,6 +983,17 @@ function buildDom(){
       '<input type="file" id="omni-file-input" accept="image/*,.pdf,.csv,.doc,.docx,.xls,.xlsx,.txt" style="display:none">'+
       '<textarea id="omni-inp" rows="1" placeholder="Type a message\u2026"></textarea>'+
       '<button id="omni-snd" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>'+
+    '</div>'+
+    '<div id="omni-ticket-panel">'+
+      '<h4>\uD83C\uDFAB Submit a Ticket</h4>'+
+      '<p>Describe your issue and we\u2019ll get back to you by email.</p>'+
+      '<div class="om-tfield"><label>Name</label><input id="om-t-name" type="text" placeholder="Jane Smith" autocomplete="name"></div>'+
+      '<div class="om-tfield"><label>Email</label><input id="om-t-email" type="email" placeholder="jane@example.com" autocomplete="email"></div>'+
+      '<div class="om-tfield"><label>Subject <span style="color:#ef4444">*</span></label><input id="om-t-subject" type="text" placeholder="Briefly describe your issue"></div>'+
+      '<div class="om-tfield"><label>Description <span style="color:#ef4444">*</span></label><textarea id="om-t-desc" placeholder="Tell us more\u2026"></textarea></div>'+
+      '<div class="om-tfield"><label>Priority</label><select id="om-t-priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>'+
+      '<button id="omni-ticket-submit">Send Ticket</button>'+
+      '<p id="omni-ticket-msg" style="color:#64748b"></p>'+
     '</div>'+
     '<div id="omni-footer">Powered by <strong>OmniCore</strong></div>'
   );
@@ -950,6 +1046,70 @@ function buildDom(){
   qs('#om-start-btn').addEventListener('click',submitPreChat);
   qs('#om-vname').addEventListener('keydown',function(e){if(e.key==='Enter'){var em=qs('#om-vemail');em?em.focus():submitPreChat();}});
   qs('#om-vemail').addEventListener('keydown',function(e){if(e.key==='Enter')submitPreChat();});
+  qs('#omni-tab-chat').addEventListener('click',function(){switchTab('chat');});
+  qs('#omni-tab-ticket').addEventListener('click',function(){switchTab('ticket');});
+  qs('#omni-ticket-submit').addEventListener('click',submitTicket);
+}
+
+function switchTab(t){
+  state.tab=t;
+  var tabChat=qs('#omni-tab-chat');
+  var tabTicket=qs('#omni-tab-ticket');
+  var ticketPanel=qs('#omni-ticket-panel');
+  if(t==='chat'){
+    if(tabChat)tabChat.className='omni-tab active';
+    if(tabTicket)tabTicket.className='omni-tab';
+    if(ticketPanel)ticketPanel.style.display='none';
+    if(state.loaded){
+      if(els.msgs)els.msgs.style.display='block';
+      if(els.composer)els.composer.style.display='flex';
+    }else if(!state.visitorName&&!state.sessionToken){
+      if(els.prechat)els.prechat.style.display='flex';
+    }else if(state.loading){
+      if(els.loading)els.loading.style.display='flex';
+    }
+  }else{
+    if(tabChat)tabChat.className='omni-tab';
+    if(tabTicket)tabTicket.className='omni-tab active';
+    if(ticketPanel)ticketPanel.style.display='flex';
+    if(els.prechat)els.prechat.style.display='none';
+    if(els.loading)els.loading.style.display='none';
+    if(els.msgs)els.msgs.style.display='none';
+    if(els.composer)els.composer.style.display='none';
+    var tn=qs('#om-t-name');if(tn&&state.visitorName&&!tn.value)tn.value=state.visitorName;
+    var te=qs('#om-t-email');if(te&&state.visitorEmail&&!te.value)te.value=state.visitorEmail;
+  }
+}
+
+function submitTicket(){
+  var subj=(qs('#om-t-subject')||{value:''}).value.trim();
+  var desc=(qs('#om-t-desc')||{value:''}).value.trim();
+  var name=((qs('#om-t-name')||{value:''}).value||'').trim()||state.visitorName||'Visitor';
+  var email=((qs('#om-t-email')||{value:''}).value||'').trim()||state.visitorEmail||null;
+  var priority=((qs('#om-t-priority')||{value:'normal'}).value)||'normal';
+  var msgEl=qs('#omni-ticket-msg');
+  var btn=qs('#omni-ticket-submit');
+  if(!subj){if(msgEl){msgEl.style.color='#ef4444';msgEl.textContent='Subject is required.';}return;}
+  if(!desc){if(msgEl){msgEl.style.color='#ef4444';msgEl.textContent='Description is required.';}return;}
+  if(btn)btn.disabled=true;
+  if(msgEl){msgEl.style.color='#64748b';msgEl.textContent='Sending\u2026';}
+  fetch(API_BASE+'/widget/ticket',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({brandId:BRAND_ID,sessionToken:state.sessionToken,subject:subj,description:desc,priority:priority,visitorName:name,visitorEmail:email})
+  }).then(function(r){return r.json();}).then(function(data){
+    if(data.ok){
+      if(msgEl){msgEl.style.color='#22c55e';msgEl.textContent='\u2713 Ticket submitted! We\u2019ll reply to your email.';}
+      var subEl=qs('#om-t-subject');if(subEl)subEl.value='';
+      var dscEl=qs('#om-t-desc');if(dscEl)dscEl.value='';
+    }else{
+      if(msgEl){msgEl.style.color='#ef4444';msgEl.textContent=data.error||'Submission failed.';}
+    }
+    if(btn)btn.disabled=false;
+  }).catch(function(){
+    if(msgEl){msgEl.style.color='#ef4444';msgEl.textContent='Network error. Please try again.';}
+    if(btn)btn.disabled=false;
+  });
 }
 
 function chatIcon(){

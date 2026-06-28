@@ -314,6 +314,26 @@ function attachSocketServer(httpServer) {
             maybeGenerateSubject(conversationId, msgBody).catch(() => {});
           }
 
+          // Non-blocking: AI bot auto-reply (fires when conversation is in ai_handling status)
+          if (msgBody) {
+            (async () => {
+              try {
+                const { rows: aiRows } = await pool.query(
+                  `SELECT c.brand_id, t.ai_auto_reply_enabled, t.ai_feature_enabled
+                   FROM conversations c
+                   JOIN tenants t ON t.id = c.tenant_id
+                   WHERE c.id = $1 AND c.status = 'ai_handling'`,
+                  [conversationId]
+                );
+                if (!aiRows[0] || !aiRows[0].ai_auto_reply_enabled || !aiRows[0].ai_feature_enabled) return;
+                const { handleInboundMessage } = require('./ai.service');
+                await handleInboundMessage({ conversationId, tenantId, brandId: aiRows[0].brand_id, userMessage: msgBody, io });
+              } catch (aiErr) {
+                console.error('[socket] ai_auto_reply_error', aiErr.message);
+              }
+            })();
+          }
+
           // Non-blocking: email the tenant's notification_email address
           sendNewVisitorMessageEmail(tenantId, conversationId, senderName, hasBody ? body.trim() : '')
             .catch(() => {});

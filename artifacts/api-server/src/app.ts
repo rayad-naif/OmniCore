@@ -349,6 +349,42 @@ app.use((err: Error & { status?: number; statusCode?: number }, req: express.Req
   });
 });
 
+// ── Auto-close idle conversations ─────────────────────────────────────────────
+// Runs every 2 minutes. Closes conversations whose brands have auto_close_enabled=true
+// and whose last activity exceeded auto_close_idle_minutes.
+function startAutoCloseScheduler(): void {
+  const RUN_INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes
+
+  const run = async () => {
+    try {
+      const { rows } = await pool.query<{ id: string; tenant_id: string }>(`
+        UPDATE conversations c
+        SET status = 'closed', updated_at = NOW()
+        FROM brands b
+        WHERE c.brand_id = b.id
+          AND c.status   = 'open'
+          AND (b.widget_config_json->>'auto_close_enabled')::boolean = true
+          AND c.updated_at < NOW() - (
+            COALESCE(
+              (b.widget_config_json->>'auto_close_idle_minutes')::integer,
+              60
+            ) || ' minutes'
+          )::interval
+        RETURNING c.id, c.tenant_id
+      `);
+      if (rows.length) {
+        logger.info({ closed: rows.length }, "auto_close_conversations");
+      }
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, "auto_close_scheduler_error");
+    }
+  };
+
+  // Run once at startup, then on interval
+  run().catch(() => {});
+  setInterval(run, RUN_INTERVAL_MS);
+}
+
 // ── HTTP server + Socket.io factory ──────────────────────────────────────────
 export function createAppServer(): HttpServer {
   const httpServer = createServer(app);
@@ -357,6 +393,9 @@ export function createAppServer(): HttpServer {
   // Passing it to emailWebhook.setIo() lets inbound-mail events flow in real time.
   const io = attachSocketServer(httpServer) as { to: unknown };
   emailWebhook.setIo(io);
+
+  // Start background auto-close scheduler
+  startAutoCloseScheduler();
 
   return httpServer;
 }

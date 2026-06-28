@@ -127,7 +127,13 @@ interface PlatformSmtpConfig {
   from_email?: string; enabled?: boolean; pass_set?: boolean
 }
 interface AIBrandSetting {
-  id: string; brand_name: string; ai_system_prompt: string | null
+  id: string
+  brand_name: string
+  ai_system_prompt: string | null
+  bot_max_messages: string | number
+  auto_assign_strategy: string
+  auto_close_enabled: boolean
+  auto_close_idle_minutes: string | number
 }
 
 interface CsatAgent {
@@ -441,6 +447,11 @@ function useApi() {
     updateAISettings: async (brandId: string, prompt: string | null): Promise<void> => {
       const r = await authFetch(`${API}/ai/settings/${brandId}`, { method: 'PATCH', body: JSON.stringify({ ai_system_prompt: prompt }) })
       if (!r.ok) throw new Error('Failed to update AI settings')
+    },
+    updateBotSettings: async (brandId: string, settings: { ai_system_prompt?: string | null; bot_max_messages?: number; auto_assign_strategy?: string; auto_close_enabled?: boolean; auto_close_idle_minutes?: number }): Promise<AIBrandSetting> => {
+      const r = await authFetch(`${API}/ai/settings/${brandId}`, { method: 'PATCH', body: JSON.stringify(settings) })
+      if (!r.ok) throw new Error('Failed to update bot settings')
+      return r.json() as Promise<AIBrandSetting>
     },
     getWorkspaceSettings: async (): Promise<{ company_name?: string; default_timezone?: string; ai_auto_reply_enabled?: boolean; ai_feature_enabled?: boolean; smtp_feature_enabled?: boolean; custom_domain?: string; smtp_config_json?: Record<string, unknown>; imap_config_json?: Record<string, unknown>; webhook_config_json?: Record<string, unknown> }> => {
       const r = await authFetch(`${API}/tenants/settings/current`)
@@ -3472,7 +3483,7 @@ function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDis
 }
 
 // ─── AI Training Section ──────────────────────────────────────────────────────
-type AITab = 'articles' | 'crawl' | 'pdf' | 'text' | 'faq'
+type AITab = 'articles' | 'crawl' | 'pdf' | 'text' | 'faq' | 'bot-settings'
 
 function AITrainingSection() {
   const api = useApi()
@@ -3497,12 +3508,62 @@ function AITrainingSection() {
   const [faqSaving, setFaqSaving] = useState(false)
   const [faqMsg, setFaqMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
+  // ── Bot Settings state ───────────────────────────────────────────────────────
+  const [brands, setBrands] = useState<AIBrandSetting[]>([])
+  const [brandsLoading, setBrandsLoading] = useState(false)
+  type BotForm = { ai_system_prompt: string; bot_max_messages: string; auto_assign_strategy: string; auto_close_enabled: boolean; auto_close_idle_minutes: string }
+  const [botForms, setBotForms] = useState<Record<string, BotForm>>({})
+  const [botSaving, setBotSaving] = useState<Record<string, boolean>>({})
+  const [botMsg, setBotMsg] = useState<Record<string, { ok: boolean; text: string }>>({})
+
+  const loadBrands = useCallback(() => {
+    setBrandsLoading(true)
+    api.listAISettings().then(b => {
+      setBrands(b)
+      const forms: Record<string, BotForm> = {}
+      b.forEach(br => {
+        forms[br.id] = {
+          ai_system_prompt:       br.ai_system_prompt || '',
+          bot_max_messages:       String(br.bot_max_messages ?? 10),
+          auto_assign_strategy:   br.auto_assign_strategy || 'round_robin',
+          auto_close_enabled:     Boolean(br.auto_close_enabled),
+          auto_close_idle_minutes: String(br.auto_close_idle_minutes ?? 60),
+        }
+      })
+      setBotForms(forms)
+      setBrandsLoading(false)
+    }).catch(() => setBrandsLoading(false))
+  }, []) // eslint-disable-line
+
+  const handleBotSave = async (brandId: string) => {
+    const form = botForms[brandId]
+    if (!form) return
+    setBotSaving(s => ({ ...s, [brandId]: true }))
+    setBotMsg(m => ({ ...m, [brandId]: { ok: true, text: '' } }))
+    try {
+      const updated = await api.updateBotSettings(brandId, {
+        ai_system_prompt:       form.ai_system_prompt || null,
+        bot_max_messages:       parseInt(form.bot_max_messages, 10) || 10,
+        auto_assign_strategy:   form.auto_assign_strategy,
+        auto_close_enabled:     form.auto_close_enabled,
+        auto_close_idle_minutes: parseInt(form.auto_close_idle_minutes, 10) || 60,
+      })
+      setBrands(prev => prev.map(b => b.id === brandId ? updated : b))
+      setBotMsg(m => ({ ...m, [brandId]: { ok: true, text: 'Settings saved.' } }))
+    } catch (err) {
+      setBotMsg(m => ({ ...m, [brandId]: { ok: false, text: (err as Error).message } }))
+    } finally {
+      setBotSaving(s => ({ ...s, [brandId]: false }))
+    }
+  }
+
   const loadArticles = useCallback(() => {
     setArtLoading(true)
     api.listKnowledge().then(a => { setArticles(a); setArtLoading(false) }).catch(() => setArtLoading(false))
   }, []) // eslint-disable-line
 
   useEffect(() => { loadArticles() }, []) // eslint-disable-line
+  useEffect(() => { if (tab === 'bot-settings' && !brands.length) loadBrands() }, [tab]) // eslint-disable-line
 
   const handleArtSave = async () => {
     setArtSaving(true); setArtMsg(null)
@@ -3587,11 +3648,12 @@ function AITrainingSection() {
   }
 
   const TABS: { key: AITab; label: string; icon: React.ReactNode }[] = [
-    { key: 'articles', label: 'Articles',     icon: <BookOpen size={14} /> },
-    { key: 'crawl',    label: 'Web Crawl',    icon: <Globe size={14} /> },
-    { key: 'pdf',      label: 'PDF Upload',   icon: <Paperclip size={14} /> },
-    { key: 'text',     label: 'Text Content', icon: <FileText size={14} /> },
-    { key: 'faq',      label: 'FAQ',          icon: <MessageCircle size={14} /> },
+    { key: 'articles',     label: 'Articles',     icon: <BookOpen size={14} /> },
+    { key: 'crawl',        label: 'Web Crawl',    icon: <Globe size={14} /> },
+    { key: 'pdf',          label: 'PDF Upload',   icon: <Paperclip size={14} /> },
+    { key: 'text',         label: 'Text Content', icon: <FileText size={14} /> },
+    { key: 'faq',          label: 'FAQ',          icon: <MessageCircle size={14} /> },
+    { key: 'bot-settings', label: 'Bot Settings', icon: <Settings size={14} /> },
   ]
 
   const StatusBanner = ({ msg }: { msg: { ok: boolean; text: string } | null }) => !msg ? null : (
@@ -3757,6 +3819,69 @@ function AITrainingSection() {
                 {faqSaving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><Plus size={11} /> Save FAQ Items</>}
               </button>
             </div>
+          </div>
+        )}
+
+        {tab === 'bot-settings' && (
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-blue-800 mb-1">Bot Behaviour per Brand</p>
+              <p className="text-[11px] text-blue-600">Configure how the AI bot responds, hands over to agents, and auto-closes idle conversations. Settings are saved per brand.</p>
+            </div>
+            {brandsLoading && <div className="flex items-center gap-2 text-slate-400 text-xs py-4"><RefreshCw size={12} className="animate-spin" /> Loading brands…</div>}
+            {!brandsLoading && brands.length === 0 && <div className="text-center py-8 text-xs text-slate-400">No brands found. Create a brand first.</div>}
+            {brands.map(brand => {
+              const form = botForms[brand.id]
+              if (!form) return null
+              const saving = botSaving[brand.id] ?? false
+              const msg = botMsg[brand.id]
+              return (
+                <div key={brand.id} className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800">{brand.brand_name}</p>
+                    {msg && <span className={`text-[11px] font-medium ${msg.ok ? 'text-emerald-600' : 'text-red-500'}`}>{msg.text}</span>}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">AI System Prompt</label>
+                    <textarea rows={3} value={form.ai_system_prompt} onChange={e => setBotForms(f => ({ ...f, [brand.id]: { ...f[brand.id], ai_system_prompt: e.target.value } }))} placeholder="You are a helpful support assistant for this brand…" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 resize-none" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">Max Bot Messages <span className="text-slate-400 font-normal">(before handover)</span></label>
+                      <input type="number" min={1} max={50} value={form.bot_max_messages} onChange={e => setBotForms(f => ({ ...f, [brand.id]: { ...f[brand.id], bot_max_messages: e.target.value } }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">Auto-assign Strategy</label>
+                      <select value={form.auto_assign_strategy} onChange={e => setBotForms(f => ({ ...f, [brand.id]: { ...f[brand.id], auto_assign_strategy: e.target.value } }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400">
+                        <option value="round_robin">Round Robin</option>
+                        <option value="least_load">Least Load</option>
+                        <option value="manual">Manual (no auto-assign)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.auto_close_enabled} onChange={e => setBotForms(f => ({ ...f, [brand.id]: { ...f[brand.id], auto_close_enabled: e.target.checked } }))} className="rounded" />
+                      <span className="text-xs text-slate-700 font-medium">Auto-close idle conversations</span>
+                    </label>
+                    {form.auto_close_enabled && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-600">after</label>
+                        <input type="number" min={5} max={10080} value={form.auto_close_idle_minutes} onChange={e => setBotForms(f => ({ ...f, [brand.id]: { ...f[brand.id], auto_close_idle_minutes: e.target.value } }))} className="w-20 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-400" />
+                        <label className="text-xs text-slate-600">minutes idle</label>
+                      </div>
+                    )}
+                  </div>
+
+                  <button disabled={saving} onClick={() => handleBotSave(brand.id)} className="px-4 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5">
+                    {saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><Check size={11} /> Save Settings</>}
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
