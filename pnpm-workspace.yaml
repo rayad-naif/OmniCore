@@ -26,7 +26,7 @@ catalog:
   tailwind-merge: ^3.3.1
   tailwindcss: ^4.1.14
   tsx: 4.21.0
-  vite: ^7.3.2
+  vite: ^7.3.5
   wouter: ^3.3.5
   zod: ^3.25.76
 
@@ -64,7 +64,14 @@ overrides:
   '@tailwindcss/oxide>@tailwindcss/oxide-linux-x64-musl': '-'
   '@tailwindcss/oxide>@tailwindcss/oxide-win32-arm64-msvc': '-'
   '@tailwindcss/oxide>@tailwindcss/oxide-win32-x64-msvc': '-'
-  esbuild: 0.27.3
+  '@babel/core': ^7.29.6
+  esbuild: ^0.28.1
+  js-yaml: ^4.2.0
+  linkify-it: ^5.0.1
+  markdown-it: ^14.2.0
+  qs: ^6.15.2
+  undici: ^7.28.0
+  ws: ^8.21.0
   esbuild>@esbuild/aix-ppc64: '-'
   esbuild>@esbuild/android-arm: '-'
   esbuild>@esbuild/android-arm64: '-'
