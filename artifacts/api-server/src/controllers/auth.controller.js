@@ -196,31 +196,8 @@ router.post('/forgot-password', async (req, res) => {
       : (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.headers.host}` : `http://${req.headers.host}`);
     const resetLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
 
-    // Try to send via tenant SMTP
-    let emailSent = false;
-    try {
-      const { rows: tenantRows } = await pool.query(
-        `SELECT smtp_config_json FROM tenants WHERE id = $1`, [agent.tenant_id]
-      );
-      const cfg = tenantRows[0]?.smtp_config_json;
-      if (cfg?.enabled && cfg?.host && cfg?.user && cfg?.pass) {
-        const nodemailer = require('nodemailer');
-        const transporter = nodemailer.createTransport({
-          host: cfg.host, port: cfg.port || 587,
-          secure: Boolean(cfg.secure), auth: { user: cfg.user, pass: cfg.pass },
-        });
-        await transporter.sendMail({
-          from: cfg.from_email || cfg.user,
-          to: agent.email,
-          subject: 'Reset your OmniCore password',
-          text: `Hi ${agent.name},\n\nClick the link below to reset your password (valid for 1 hour):\n\n${resetLink}\n\nIf you didn't request this, ignore this email.`,
-          html: `<p>Hi ${agent.name},</p><p>Click below to reset your password (valid for 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p><p>If you didn't request this, ignore this email.</p>`,
-        });
-        emailSent = true;
-      }
-    } catch (mailErr) {
-      logger.warn({ err: mailErr }, 'forgot_password_mail_error');
-    }
+    // Send reset email via platform SMTP (falling back to tenant SMTP).
+    const emailSent = await sendPasswordResetEmail(agent.tenant_id, agent.email, agent.name, resetLink);
 
     logger.info({ agentId: agent.id }, 'forgot_password_requested');
 

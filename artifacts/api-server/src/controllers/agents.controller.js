@@ -13,9 +13,11 @@
 
 const { Router }   = require('express');
 const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const { pool }     = require('../lib/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const logger       = require('../utils/logger');
+const { sendAgentInviteEmail } = require('../services/email.service');
 
 const router = Router();
 router.use(requireAuth);
@@ -38,30 +40,67 @@ router.get('/', requireRole('admin'), async (req, res, next) => {
 });
 
 // ─── POST /api/agents ─────────────────────────────────────────────────────────
+// Invites (creates) an agent. The agent is created with a random throwaway
+// password and emailed a "set your password" link (valid 7 days) via platform
+// SMTP. The invite link is only returned in the response in non-production.
 router.post('/', requireRole('admin'), async (req, res, next) => {
   try {
-    const { name, email, role = 'agent', password = 'Welcome1!' } = req.body || {};
+    const { name, email, role = 'agent' } = req.body || {};
     if (!name?.trim() || !email?.trim()) {
       return res.status(400).json({ error: 'name and email are required' });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
     const existing = await pool.query(
       'SELECT id FROM agents WHERE email = $1',
-      [email.trim().toLowerCase()]
+      [normalizedEmail]
     );
     if (existing.rows.length) {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
+    // Random throwaway password — the agent sets their own via the invite link.
+    const randomPassword = crypto.randomBytes(24).toString('hex');
+    const password_hash = await bcrypt.hash(randomPassword, 10);
     const { rows } = await pool.query(
       `INSERT INTO agents (tenant_id, name, email, role, password_hash, is_active)
        VALUES ($1, $2, $3, $4, $5, true)
        RETURNING id, name, email, role, is_active, created_at`,
-      [req.agent.tenantId, name.trim(), email.trim().toLowerCase(), role, password_hash]
+      [req.agent.tenantId, name.trim(), normalizedEmail, role, password_hash]
     );
-    logger.info({ agentId: rows[0].id, invitedBy: req.agent.id }, 'agent_invited');
-    return res.status(201).json(rows[0]);
+    const agent = rows[0];
+
+    // Issue a set-password token (reusing the password reset table, 7-day expiry).
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await pool.query(
+      `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [agent.id, rawToken, expiresAt]
+    );
+
+    // Build the invite link (set-password flow reuses the reset_token route).
+    const appOrigin = process.env.REPLIT_DOMAINS
+      ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
+      : (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.headers.host}` : `http://${req.headers.host}`);
+    const inviteLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
+
+    // Resolve the tenant's company name for a friendlier email.
+    let companyName = '';
+    try {
+      const { rows: tRows } = await pool.query('SELECT company_name FROM tenants WHERE id = $1', [req.agent.tenantId]);
+      companyName = tRows[0]?.company_name || '';
+    } catch { /* non-fatal */ }
+
+    const emailSent = await sendAgentInviteEmail({ to: agent.email, name: agent.name, inviteLink, companyName });
+
+    logger.info({ agentId: agent.id, invitedBy: req.agent.id, emailSent }, 'agent_invited');
+    return res.status(201).json({
+      ...agent,
+      email_sent: emailSent,
+      // Only expose the link in non-production (dev convenience / no SMTP).
+      ...(process.env.NODE_ENV !== 'production' && { invite_link: inviteLink }),
+    });
   } catch (err) { next(err); }
 });
 

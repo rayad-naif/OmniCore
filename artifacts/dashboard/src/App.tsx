@@ -84,6 +84,14 @@ interface KnowledgeArticle {
 interface SuperAdminEntry {
   id: string; email: string; added_by: string; is_active: boolean; created_at: string
 }
+interface PlatformSmtpInput {
+  host: string; port: number; secure: boolean; user: string
+  from_email: string; enabled: boolean; pass: string
+}
+interface PlatformSmtpConfig {
+  host?: string; port?: number; secure?: boolean; user?: string
+  from_email?: string; enabled?: boolean; pass_set?: boolean
+}
 interface AIBrandSetting {
   id: string; brand_name: string; ai_system_prompt: string | null
 }
@@ -216,10 +224,10 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<AgentRow[]>
     },
-    inviteAgent: async (name: string, email: string, role: string): Promise<AgentRow> => {
+    inviteAgent: async (name: string, email: string, role: string): Promise<AgentRow & { invite_link?: string; email_sent?: boolean }> => {
       const r = await authFetch(`${API}/agents`, { method: 'POST', body: JSON.stringify({ name, email, role }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to invite agent') }
-      return r.json() as Promise<AgentRow>
+      return r.json() as Promise<AgentRow & { invite_link?: string; email_sent?: boolean }>
     },
     removeAgent: async (id: string): Promise<void> => {
       const r = await authFetch(`${API}/agents/${id}`, { method: 'DELETE' })
@@ -277,6 +285,20 @@ function useApi() {
     removeSuperAdmin: async (id: string): Promise<void> => {
       const r = await authFetch(`${API}/super-admin/super-admins/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('Failed to remove super admin')
+    },
+    getPlatformSmtp: async (): Promise<PlatformSmtpConfig> => {
+      const r = await authFetch(`${API}/super-admin/platform-smtp`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json() as Promise<PlatformSmtpConfig>
+    },
+    updatePlatformSmtp: async (cfg: Partial<PlatformSmtpInput>): Promise<PlatformSmtpConfig> => {
+      const r = await authFetch(`${API}/super-admin/platform-smtp`, { method: 'PUT', body: JSON.stringify(cfg) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to save platform SMTP') }
+      return r.json() as Promise<PlatformSmtpConfig>
+    },
+    testPlatformSmtp: async (to?: string): Promise<{ ok: boolean; message: string; to?: string }> => {
+      const r = await authFetch(`${API}/super-admin/platform-smtp/test`, { method: 'POST', body: JSON.stringify({ to }) })
+      return r.json() as Promise<{ ok: boolean; message: string; to?: string }>
     },
     listKnowledge: async (): Promise<KnowledgeArticle[]> => {
       const r = await authFetch(`${API}/ai/knowledge-base`)
@@ -2245,6 +2267,7 @@ function TeamSection() {
   const [inviteForm, setInviteForm] = useState({ name: '', email: '', role: 'agent' })
   const [inviting, setInviting]     = useState(false)
   const [inviteErr, setInviteErr]   = useState<string | null>(null)
+  const [inviteResult, setInviteResult] = useState<{ email: string; invite_link?: string; email_sent?: boolean } | null>(null)
   const [removing, setRemoving]     = useState<string | null>(null)
 
   useEffect(() => {
@@ -2255,10 +2278,15 @@ function TeamSection() {
     e.preventDefault(); setInviteErr(null); setInviting(true)
     try {
       const a = await api.inviteAgent(inviteForm.name, inviteForm.email, inviteForm.role)
-      setAgents(prev => [...prev, a]); setShowInvite(false); setInviteForm({ name: '', email: '', role: 'agent' })
+      const { invite_link, email_sent, ...row } = a
+      setAgents(prev => [...prev, row as AgentRow])
+      setInviteResult({ email: row.email, invite_link, email_sent })
+      setInviteForm({ name: '', email: '', role: 'agent' })
     } catch (err) { setInviteErr((err as Error).message) }
     finally { setInviting(false) }
   }
+
+  const closeInvite = () => { setShowInvite(false); setInviteErr(null); setInviteResult(null) }
 
   const handleRemove = async (id: string) => {
     if (!window.confirm('Remove this agent? They will lose access immediately.')) return
@@ -2271,8 +2299,28 @@ function TeamSection() {
   return (
     <>
       {showInvite && (
-        <Modal onClose={() => { setShowInvite(false); setInviteErr(null) }}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Invite Agent</h2><button onClick={() => { setShowInvite(false); setInviteErr(null) }} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+        <Modal onClose={closeInvite}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Invite Agent</h2><button onClick={closeInvite} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          {inviteResult ? (
+            <div className="space-y-4">
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <p className="text-xs font-semibold text-emerald-700 mb-1">Agent invited</p>
+                <p className="text-xs text-emerald-600">{inviteResult.email_sent
+                  ? <>An invite email with a set-password link was sent to <code className="bg-white px-1 rounded">{inviteResult.email}</code>.</>
+                  : <>Platform email isn't configured, so no email was sent. Share the link below so they can set their password.</>}</p>
+              </div>
+              {inviteResult.invite_link && (
+                <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl space-y-2">
+                  <p className="text-[11px] font-semibold text-sky-700">Set-password link (valid 7 days)</p>
+                  <div className="flex gap-2">
+                    <input readOnly value={inviteResult.invite_link} className="flex-1 px-2 py-1.5 bg-white border border-sky-200 rounded text-[11px] text-slate-700 font-mono" onFocus={e => e.target.select()} />
+                    <button type="button" onClick={() => navigator.clipboard?.writeText(inviteResult.invite_link!)} className="px-2.5 py-1.5 bg-sky-600 text-white text-[11px] font-medium rounded hover:bg-sky-700">Copy</button>
+                  </div>
+                </div>
+              )}
+              <button onClick={closeInvite} className="w-full py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg">Done</button>
+            </div>
+          ) : (<>
           {inviteErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{inviteErr}</div>}
           <form onSubmit={handleInvite} className="space-y-3">
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Name *</label><input type="text" value={inviteForm.name} onChange={e => setInviteForm(f => ({ ...f, name: e.target.value }))} required className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
@@ -2282,12 +2330,13 @@ function TeamSection() {
                 <option value="agent">Agent</option><option value="admin">Admin</option>
               </select>
             </div>
-            <p className="text-[11px] text-slate-400">Temporary password: <code className="bg-slate-100 px-1 rounded">Welcome1!</code></p>
+            <p className="text-[11px] text-slate-400">The agent will be emailed a secure link to set their own password (valid 7 days). If platform email isn't configured, the invite link is shown after creating.</p>
             <div className="flex gap-2 pt-1">
-              <button type="button" onClick={() => setShowInvite(false)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button type="button" onClick={closeInvite} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
               <button type="submit" disabled={inviting} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{inviting ? <><RefreshCw size={11} className="animate-spin" /> Inviting…</> : <><UserPlus size={11} /> Invite</>}</button>
             </div>
           </form>
+          </>)}
         </Modal>
       )}
       <div className="flex-1 overflow-auto p-6 bg-slate-50">
@@ -2325,7 +2374,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2518,6 +2567,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('tenants')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'tenants' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Tenants ({tenants.length})</button>
             <button onClick={() => setTab('requests')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'requests' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Upgrade Requests ({requests.length})</button>
             <button onClick={() => setTab('super_admins')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'super_admins' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Super Admins</button>
+            <button onClick={() => setTab('platform_smtp')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'platform_smtp' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Platform Email</button>
           </div>
 
           {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
@@ -2584,12 +2634,115 @@ function SuperAdminSection() {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : tab === 'super_admins' ? (
             <SuperAdminsPanel api={api} />
+          ) : (
+            <PlatformSmtpPanel api={api} />
           )}
         </div>
       </div>
     </>
+  )
+}
+
+// ─── Platform SMTP Panel (super-admin owned, powers system emails) ────────────
+function PlatformSmtpPanel({ api }: { api: ReturnType<typeof useApi> }) {
+  const [form, setForm] = useState({ host: '', port: '587', user: '', pass: '', from_email: '', secure: false, enabled: false })
+  const [passSet, setPassSet] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testTo, setTestTo]   = useState('')
+  const [msg, setMsg]         = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    api.getPlatformSmtp().then(c => {
+      setForm({
+        host: c.host ?? '', port: String(c.port ?? 587), user: c.user ?? '',
+        pass: '', from_email: c.from_email ?? '',
+        secure: Boolean(c.secure), enabled: Boolean(c.enabled),
+      })
+      setPassSet(Boolean(c.pass_set))
+    }).catch(() => {}).finally(() => setLoading(false))
+  }, []) // eslint-disable-line
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault(); setMsg(null); setSaving(true)
+    try {
+      const saved = await api.updatePlatformSmtp({
+        host: form.host.trim(), port: parseInt(form.port, 10) || 587,
+        user: form.user.trim(), from_email: form.from_email.trim(),
+        secure: form.secure, enabled: form.enabled,
+        ...(form.pass ? { pass: form.pass } : {}),
+      })
+      setPassSet(Boolean(saved.pass_set))
+      setForm(f => ({ ...f, pass: '' }))
+      setMsg({ ok: true, text: 'Platform SMTP configuration saved.' })
+    } catch (err) { setMsg({ ok: false, text: (err as Error).message }) }
+    finally { setSaving(false) }
+  }
+
+  const handleTest = async () => {
+    setTesting(true); setMsg(null)
+    try {
+      const result = await api.testPlatformSmtp(testTo.trim() || undefined)
+      setMsg({ ok: result.ok, text: result.message })
+    } catch {
+      setMsg({ ok: false, text: 'Request failed — make sure platform SMTP is saved and enabled first.' })
+    } finally { setTesting(false) }
+  }
+
+  if (loading) return <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div>
+
+  return (
+    <div className="max-w-2xl">
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-10 h-10 bg-sky-100 rounded-xl flex items-center justify-center"><Mail size={20} className="text-sky-600" /></div>
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Platform Email (System SMTP)</h2>
+          <p className="text-xs text-slate-500">Powers password resets, agent invites, and account/plan notifications across all tenants. Independent of per-tenant SMTP.</p>
+        </div>
+      </div>
+
+      {msg && <div className={`mb-5 p-3 rounded-lg text-xs ${msg.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-600'}`}>{msg.text}</div>}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Host</label><input type="text" value={form.host} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} placeholder="smtp.sendgrid.net" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Port</label><input type="number" value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} placeholder="587" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+          </div>
+          <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Username</label><input type="text" value={form.user} onChange={e => setForm(f => ({ ...f, user: e.target.value }))} placeholder="apikey or your@email.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+          <div><label className="block text-xs font-medium text-slate-600 mb-1.5">SMTP Password / API Key</label><input type="password" value={form.pass} onChange={e => setForm(f => ({ ...f, pass: e.target.value }))} placeholder={passSet ? 'Leave blank to keep existing' : 'Enter password or API key'} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" />{passSet && <p className="mt-1 text-[11px] text-emerald-600">A password is currently stored. Leave blank to keep it.</p>}</div>
+          <div><label className="block text-xs font-medium text-slate-600 mb-1.5">From Email</label><input type="email" value={form.from_email} onChange={e => setForm(f => ({ ...f, from_email: e.target.value }))} placeholder="noreply@yourplatform.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div><p className="text-xs font-medium text-slate-700">Use TLS/SSL (secure)</p><p className="text-[11px] text-slate-400">Enable for port 465. Leave off for STARTTLS on 587.</p></div>
+            <button type="button" onClick={() => setForm(f => ({ ...f, secure: !f.secure }))} className={`transition-colors ${form.secure ? 'text-sky-500' : 'text-slate-400'}`}>{form.secure ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+          </div>
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div><p className="text-xs font-medium text-slate-700">Enable Platform Emails</p><p className="text-[11px] text-slate-400">When off, system emails fall back to dev mode (reset links returned in-app)</p></div>
+            <button type="button" onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))} className={`transition-colors ${form.enabled ? 'text-sky-500' : 'text-slate-400'}`}>{form.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-2 items-end pt-1">
+            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Send test email to <span className="text-slate-400 font-normal">(optional — defaults to From Email)</span></label><input type="email" value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="you@example.com" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-400" /></div>
+            <button type="button" disabled={testing || !form.host.trim()} onClick={handleTest} className="px-4 py-2 text-sky-700 bg-sky-50 border border-sky-200 text-xs font-medium rounded-lg hover:bg-sky-100 disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap">{testing ? <><RefreshCw size={11} className="animate-spin" /> Sending…</> : 'Send Test'}</button>
+          </div>
+          <div className="flex gap-2 pt-2 border-t border-slate-100">
+            <button type="submit" disabled={saving} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Configuration'}</button>
+          </div>
+        </form>
+      </div>
+
+      <div className="mt-4 p-4 bg-sky-50 border border-sky-100 rounded-xl">
+        <p className="text-[11px] text-sky-700 font-medium mb-2">Common SMTP providers</p>
+        <div className="grid grid-cols-2 gap-2 text-[11px] text-sky-600">
+          <div><strong>SendGrid:</strong> smtp.sendgrid.net : 587</div>
+          <div><strong>Resend:</strong> smtp.resend.com : 465</div>
+          <div><strong>Postmark:</strong> smtp.postmarkapp.com : 587</div>
+          <div><strong>Mailgun:</strong> smtp.mailgun.org : 465</div>
+        </div>
+      </div>
+    </div>
   )
 }
 

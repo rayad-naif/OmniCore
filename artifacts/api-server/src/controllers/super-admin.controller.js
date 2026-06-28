@@ -326,7 +326,7 @@ router.put('/platform-smtp', async (req, res, next) => {
       user:       String(body.user ?? existing.user ?? '').trim(),
       from_email: String(body.from_email ?? existing.from_email ?? '').trim(),
       enabled:    body.enabled !== undefined ? Boolean(body.enabled) : Boolean(existing.enabled),
-      pass:       (body.pass && String(body.pass).length) ? String(body.pass) : (existing.pass || ''),
+      pass:       (body.pass && String(body.pass).trim().length) ? String(body.pass) : (existing.pass || ''),
     };
 
     await pool.query(
