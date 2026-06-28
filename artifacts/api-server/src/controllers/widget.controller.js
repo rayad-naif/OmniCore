@@ -446,7 +446,7 @@ router.get('/messages', async (req, res, next) => {
     if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
 
     const { rows: cRows } = await pool.query(
-      'SELECT id FROM conversations WHERE id = $1 AND visitor_id = $2 AND is_ticket = false',
+      'SELECT id, status, csat_requested, csat_score FROM conversations WHERE id = $1 AND visitor_id = $2 AND is_ticket = false',
       [cid, vRows[0].id]
     );
     if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
@@ -465,7 +465,15 @@ router.get('/messages', async (req, res, next) => {
        ORDER BY m.created_at ASC LIMIT 40`,
       params
     );
-    return res.json(messages);
+    // Return conversation state alongside messages so the widget's polling
+    // fallback can surface a close / CSAT survey even when the live socket
+    // event was missed (otherwise the survey only shows on the next action).
+    return res.json({
+      messages,
+      status: cRows[0].status,
+      csatRequested: cRows[0].csat_requested === true,
+      csatScore: cRows[0].csat_score,
+    });
   } catch (err) { next(err); }
 });
 
@@ -584,7 +592,7 @@ var state={
   messages:[],socket:null,connected:false,
   brandName:LABEL,unread:0,
   visitorName:null,visitorEmail:null,
-  csatShown:false,csatPending:false,csatConvId:null,
+  csatShown:false,csatPending:false,csatConvId:null,closedShown:false,
   tab:'chat'
 };
 try{
@@ -606,8 +614,10 @@ function startPolling(){
   _pollTimer=setInterval(function(){
     if(!state.sessionToken||!state.conversationId)return;
     var url=API_BASE+'/widget/messages?tok='+encodeURIComponent(state.sessionToken)+'&cid='+encodeURIComponent(state.conversationId)+(_lastMsgTime?'&after='+encodeURIComponent(_lastMsgTime):'');
-    fetch(url).then(function(r){return r.ok?r.json():[];}).then(function(msgs){
-      if(!Array.isArray(msgs)||!msgs.length)return;
+    fetch(url).then(function(r){return r.ok?r.json():null;}).then(function(data){
+      if(!data)return;
+      var isObj=!Array.isArray(data);
+      var msgs=isObj?(data.messages||[]):data;
       var hadNew=false;
       msgs.forEach(function(msg){
         if(msg.is_internal_note)return;
@@ -618,8 +628,18 @@ function startPolling(){
         if(!state.open){setUnread(state.unread+1);}else{markRead();}
       });
       if(hadNew)playChime();
-      var last=msgs[msgs.length-1];
-      if(last&&last.created_at)_lastMsgTime=last.created_at;
+      if(msgs.length){var last=msgs[msgs.length-1];if(last&&last.created_at)_lastMsgTime=last.created_at;}
+      // Polling fallback: if the conversation was closed by an agent, surface
+      // the CSAT survey (or a closed notice) immediately instead of waiting for
+      // the visitor's next action, then stop polling.
+      if(isObj&&data.status==='closed'){
+        if(data.csatRequested&&(data.csatScore===null||data.csatScore===undefined)&&!state.csatShown){
+          showCsatSurvey(state.conversationId);
+        }else if(!data.csatRequested){
+          showClosedChip();
+        }
+        stopPolling();
+      }
     }).catch(function(){});
   },3000);
 }
@@ -638,6 +658,8 @@ function playChime(){
 }
 
 function showClosedChip(){
+  if(state.closedShown)return;
+  state.closedShown=true;
   if(els.inp){els.inp.disabled=true;els.inp.placeholder='Conversation closed';}
   if(els.snd)els.snd.disabled=true;
   var box=qs('#omni-msgs');
@@ -909,7 +931,7 @@ function submitCsat(score,convId){
   });
 }
 function startFreshChat(){
-  state.loaded=false;state.messages=[];state.csatShown=false;state.csatPending=false;state.csatConvId=null;
+  state.loaded=false;state.messages=[];state.csatShown=false;state.csatPending=false;state.csatConvId=null;state.closedShown=false;
   if(els.msgs){while(els.msgs.firstChild)els.msgs.removeChild(els.msgs.firstChild);}
   if(els.inp){els.inp.disabled=false;els.inp.placeholder='Type a message\u2026';}
   if(els.snd)els.snd.disabled=false;

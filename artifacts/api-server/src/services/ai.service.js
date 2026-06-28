@@ -269,49 +269,63 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
   const conv = rows[0];
   console.log(`[ai.service] handover  conv=${conversationId}  reason=${reason}  strategy=${strategy}`);
 
-  // Auto-assign agent (skip if manual or already assigned)
+  // Auto-assign agent (skip if manual or already assigned).
+  // Assignment order per product spec:
+  //   1. Prefer agents who are currently ONLINE (live dashboard socket).
+  //   2. Among those, apply the configured strategy (least_load / round_robin).
+  //   3. If nobody is online, fall back to any active eligible agent so the
+  //      conversation still gets an owner.
   if (strategy !== 'manual' && !conv.assigned_agent_id) {
     try {
       const effectiveBrandId = brandId || conv.brand_id;
-      let agentId = null;
 
-      if (strategy === 'round_robin') {
-        // Rotate through agents: pick the one who was assigned least recently
+      let onlineIds = [];
+      try { onlineIds = require('./socket.service').getOnlineAgentIds() || []; } catch { onlineIds = []; }
+
+      // restrictIds: array of agent IDs to limit the pool to, or null for no limit.
+      const pickAgent = async (restrictIds) => {
+        if (strategy === 'least_load') {
+          const { rows: ll } = await pool.query(
+            `SELECT a.id FROM agents a
+             WHERE a.tenant_id = $1 AND a.is_active = TRUE AND a.role != 'viewer'
+               AND ($2::uuid[] IS NULL OR a.id = ANY($2))
+             ORDER BY (
+               SELECT COUNT(*) FROM conversations c3
+               WHERE c3.assigned_agent_id = a.id AND c3.status = 'open'
+             ) ASC
+             LIMIT 1`,
+            [tenantId, restrictIds]
+          );
+          return ll[0]?.id ?? null;
+        }
+        // round_robin (default): least-recently assigned agent
         const { rows: rr } = await pool.query(
           `SELECT a.id FROM agents a
            WHERE a.tenant_id = $1 AND a.is_active = TRUE AND a.role != 'viewer'
              AND ($2::uuid IS NULL OR a.id IN (
                    SELECT agent_id FROM brand_agents WHERE brand_id = $2
                  ) OR NOT EXISTS (SELECT 1 FROM brand_agents WHERE brand_id = $2))
+             AND ($3::uuid[] IS NULL OR a.id = ANY($3))
            ORDER BY (
              SELECT COALESCE(MAX(c2.updated_at), '1970-01-01'::timestamptz)
              FROM conversations c2 WHERE c2.assigned_agent_id = a.id
            ) ASC
            LIMIT 1`,
-          [tenantId, effectiveBrandId]
+          [tenantId, effectiveBrandId, restrictIds]
         );
-        agentId = rr[0]?.id ?? null;
-      } else {
-        // least_load: pick agent with fewest open conversations
-        const { rows: ll } = await pool.query(
-          `SELECT a.id FROM agents a
-           WHERE a.tenant_id = $1 AND a.is_active = TRUE AND a.role != 'viewer'
-           ORDER BY (
-             SELECT COUNT(*) FROM conversations c3
-             WHERE c3.assigned_agent_id = a.id AND c3.status = 'open'
-           ) ASC
-           LIMIT 1`,
-          [tenantId]
-        );
-        agentId = ll[0]?.id ?? null;
-      }
+        return rr[0]?.id ?? null;
+      };
+
+      // Online agents first; fall back to all active eligible agents.
+      let agentId = onlineIds.length ? await pickAgent(onlineIds) : null;
+      if (!agentId) agentId = await pickAgent(null);
 
       if (agentId) {
         await pool.query(
           `UPDATE conversations SET assigned_agent_id = $1, updated_at = NOW() WHERE id = $2`,
           [agentId, conversationId]
         );
-        console.log(`[ai.service] auto-assigned  conv=${conversationId}  agent=${agentId}`);
+        console.log(`[ai.service] auto-assigned  conv=${conversationId}  agent=${agentId}  online=${onlineIds.includes(agentId)}`);
       }
     } catch (err) {
       console.error('[ai.service] auto-assign error', err.message);
@@ -479,6 +493,51 @@ async function maybeAutoReply({ conversationId, tenantId, userMessage, io }) {
   }
 }
 
+/**
+ * summarizeForVisitor — produce a short, customer-facing summary of a
+ * conversation, suitable for inclusion in the ticket-created email.
+ * Unlike summariseThread (agent-facing bullets + internal note), this returns
+ * plain prose addressed to the customer and never writes to the DB.
+ * Degrades gracefully to a transcript-based preview when AI is unavailable.
+ */
+async function summarizeForVisitor(conversationId) {
+  const { rows } = await pool.query(
+    `SELECT sender_type, message_body FROM messages
+     WHERE conversation_id = $1 AND is_internal_note = FALSE
+       AND sender_type != 'system' AND COALESCE(message_body, '') <> ''
+     ORDER BY created_at ASC LIMIT 80`,
+    [conversationId]
+  );
+  if (!rows.length) return '';
+
+  const transcript = rows.map(m => {
+    const who = m.sender_type === 'visitor' ? 'Customer'
+      : m.sender_type === 'bot' ? 'Assistant' : 'Agent';
+    return `${who}: ${m.message_body}`;
+  }).join('\n');
+
+  // Fallback: first customer message, trimmed.
+  const firstCustomer = rows.find(m => m.sender_type === 'visitor');
+  const base = (firstCustomer ? firstCustomer.message_body : rows[0].message_body) || '';
+  const fallback = base.length > 280 ? base.slice(0, 277) + '…' : base;
+
+  if (!genAI) return fallback;
+  try {
+    const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text:
+        `Summarise this customer support conversation for the customer's own records. `
+        + `Write 2-4 short, plain-language sentences describing what they asked about and what was discussed or resolved. `
+        + `Address it neutrally (no greeting, no sign-off, do not invent details).\n\nConversation:\n${transcript}` }] }],
+      generationConfig: { maxOutputTokens: 512, temperature: 0.3 },
+    });
+    const text = result?.response?.text?.()?.trim();
+    return text || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 module.exports = {
   embedText,
   chunkText,
@@ -492,6 +551,7 @@ module.exports = {
   isAskingForHuman,
   rephraseText,
   summariseThread,
+  summarizeForVisitor,
   HANDOVER_SENTINEL,
   EMBEDDING_DIMS,
 };

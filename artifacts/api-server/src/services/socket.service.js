@@ -46,6 +46,24 @@ const typingRegistry = new Map();
 const TYPING_TTL_MS  = 5_000;
 
 // ---------------------------------------------------------------------------
+// In-memory agent presence registry  { agentId -> active socket count }
+// Used by the assignment engine to prefer agents who are currently online.
+// ---------------------------------------------------------------------------
+const onlineAgents = new Map();
+function markAgentOnline(agentId) {
+  if (!agentId) return;
+  onlineAgents.set(agentId, (onlineAgents.get(agentId) || 0) + 1);
+}
+function markAgentOffline(agentId) {
+  if (!agentId) return;
+  const n = (onlineAgents.get(agentId) || 0) - 1;
+  if (n <= 0) onlineAgents.delete(agentId);
+  else onlineAgents.set(agentId, n);
+}
+/** Returns an array of agent IDs that currently have at least one live socket. */
+function getOnlineAgentIds() { return Array.from(onlineAgents.keys()); }
+
+// ---------------------------------------------------------------------------
 // Module-level io reference so broadcast helpers can be called externally
 // ---------------------------------------------------------------------------
 let _io = null;
@@ -202,6 +220,7 @@ function attachSocketServer(httpServer) {
     // (e.g. conversation:created from the widget session endpoint)
     if (actorType === 'agent' && tenantId) {
       socket.join(`tenant:${tenantId}`);
+      markAgentOnline(socket.data.agentId);
     }
     // Visitors auto-join a personal room so agent replies reach them even if
     // they haven't yet successfully joined the conv room (race conditions, reconnects).
@@ -499,6 +518,7 @@ function attachSocketServer(httpServer) {
     // ── Disconnect ──────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
       if (actorType === 'agent') {
+        markAgentOffline(socket.data.agentId);
         const convId = socket.data.activeConversation;
         if (convId) {
           const entry = typingRegistry.get(convId);
@@ -528,4 +548,4 @@ function attachSocketServer(httpServer) {
 /** Returns the live Socket.io server instance (or null before init). */
 function getIo() { return _io; }
 
-module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor, getIo };
+module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor, getIo, getOnlineAgentIds };

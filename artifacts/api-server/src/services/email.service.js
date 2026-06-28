@@ -218,8 +218,11 @@ async function sendNewVisitorMessageEmail(tenantId, conversationId, visitorName,
  * Send a ticket-created confirmation to the visitor.
  * Triggered when an agent converts a conversation to a ticket.
  */
-async function sendTicketCreatedEmail(tenantId, conversationId, ticketNumber, visitorEmail, subject) {
+async function sendTicketCreatedEmail(tenantId, conversationId, ticketNumber, visitorEmail, subject, summary) {
   if (!visitorEmail) return;
+  const safeSummary = summary
+    ? String(summary).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    : '';
   let cfg;
   try { cfg = await getTenantSmtpConfig(tenantId); } catch (err) {
     logger.warn({ err, tenantId }, 'smtp_config_load_failed'); return;
@@ -237,6 +240,10 @@ async function sendTicketCreatedEmail(tenantId, conversationId, ticketNumber, vi
         <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:16px;margin:0 0 16px;">
           <p style="margin:0;font-size:13px;color:#0369a1;font-weight:600;">Ticket number: <span style="font-size:18px;">#${ticketNumber}</span></p>
         </div>
+        ${safeSummary ? `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin:0 0 16px;">
+          <p style="margin:0 0 6px;font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.04em;">Summary of your conversation</p>
+          <p style="margin:0;font-size:13px;color:#475569;line-height:1.55;white-space:pre-line;">${safeSummary}</p>
+        </div>` : ''}
         <p style="font-size:13px;color:#64748b;">
           Our support team has received your message and will get back to you shortly.
           Use the ticket number above if you need to reference this case.

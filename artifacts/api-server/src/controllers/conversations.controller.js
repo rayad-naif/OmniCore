@@ -298,13 +298,21 @@ router.patch('/:id', async (req, res, next) => {
     // Send ticket-created confirmation email to visitor (non-blocking)
     if (convertingToTicket && rows[0].ticket_number) {
       const ticketNum = rows[0].ticket_number;
+      const convId    = req.params.id;
+      const tId       = tenantId(req);
       pool.query(
         `SELECT v.email FROM visitors v WHERE v.id = $1`,
         [oldVisitorId]
-      ).then(({ rows: vr }) => {
-        if (vr[0]?.email) {
-          sendTicketCreatedEmail(tenantId(req), req.params.id, ticketNum, vr[0].email, convSubject).catch(() => {});
-        }
+      ).then(async ({ rows: vr }) => {
+        if (!vr[0]?.email) return;
+        // Generate a customer-facing conversation summary to include in the
+        // ticket email (optional — falls back to no summary if AI is down).
+        let summary = '';
+        try {
+          const ai = require('../services/ai.service');
+          summary = await ai.summarizeForVisitor(convId);
+        } catch { /* summary is optional */ }
+        sendTicketCreatedEmail(tId, convId, ticketNum, vr[0].email, convSubject, summary).catch(() => {});
       }).catch(() => {});
 
       // Close the live widget conversation so the visitor cannot keep chatting
