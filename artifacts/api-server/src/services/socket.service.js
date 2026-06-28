@@ -326,8 +326,15 @@ function attachSocketServer(httpServer) {
                   [conversationId]
                 );
                 if (!aiRows[0] || !aiRows[0].ai_auto_reply_enabled || !aiRows[0].ai_feature_enabled) return;
-                const { handleInboundMessage } = require('./ai.service');
-                await handleInboundMessage({ conversationId, tenantId, brandId: aiRows[0].brand_id, userMessage: msgBody, io });
+                const { handleInboundMessage, triggerHandover } = require('./ai.service');
+                try {
+                  await handleInboundMessage({ conversationId, tenantId, brandId: aiRows[0].brand_id, userMessage: msgBody, io });
+                } catch (genErr) {
+                  // Bot failed (e.g. model error) — never leave the chat stranded in
+                  // ai_handling. Hand it over to a human agent so it surfaces in the inbox.
+                  console.error('[socket] ai_auto_reply_failed_handover', genErr.message);
+                  await triggerHandover({ conversationId, tenantId, brandId: aiRows[0].brand_id, io, reason: 'bot_error' }).catch(() => {});
+                }
               } catch (aiErr) {
                 console.error('[socket] ai_auto_reply_error', aiErr.message);
               }

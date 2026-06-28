@@ -40,6 +40,21 @@ router.use((req, res, next) => {
   next();
 });
 
+// Determine the initial status for a new widget conversation. When the tenant
+// has the AI bot enabled (feature + auto-reply), conversations start as
+// 'ai_handling' so the bot answers first; otherwise they enter the human queue
+// as 'open'. The socket auto-reply only fires for 'ai_handling' conversations.
+async function pickInitialStatus(tenantId) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT ai_feature_enabled, ai_auto_reply_enabled FROM tenants WHERE id = $1',
+      [tenantId]
+    );
+    if (rows[0] && rows[0].ai_feature_enabled && rows[0].ai_auto_reply_enabled) return 'ai_handling';
+  } catch { /* fall back to open */ }
+  return 'open';
+}
+
 // ── GET /api/widget/health ────────────────────────────────────────────────────
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -78,16 +93,17 @@ router.post('/session', async (req, res, next) => {
 
         // ── force_new: always create a fresh conversation, preserve visitor identity ──
         if (forceNew) {
+          const convStatus = await pickInitialStatus(tenantId);
           const { rows: nc } = await pool.query(
             `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
-             VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
-            [tenantId, brandId, visitorId, referrerUrl || null]
+             VALUES ($1, $2, $3, $5, 'widget', $4) RETURNING id`,
+            [tenantId, brandId, visitorId, referrerUrl || null, convStatus]
           );
           const newConvId = nc[0].id;
           try {
             broadcastToTenant(tenantId, 'conversation:created', {
               id: newConvId,
-              status: 'open', channel: 'widget', priority: 'normal', subject: null,
+              status: convStatus, channel: 'widget', priority: 'normal', subject: null,
               visitor_name: visData[0]?.display_name || visitorName || 'Visitor',
               visitor_email: visitorEmail || null,
               agent_name: null, brand_name: brandName,
@@ -130,16 +146,17 @@ router.post('/session', async (req, res, next) => {
           });
         }
         if (!convId || cRows[0]?.status === 'closed') {
+          const convStatus = await pickInitialStatus(tenantId);
           const { rows: nc } = await pool.query(
             `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
-             VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
-            [tenantId, brandId, visitorId, referrerUrl || null]
+             VALUES ($1, $2, $3, $5, 'widget', $4) RETURNING id`,
+            [tenantId, brandId, visitorId, referrerUrl || null, convStatus]
           );
           convId = nc[0].id;
           try {
             broadcastToTenant(tenantId, 'conversation:created', {
               id: convId,
-              status: 'open', channel: 'widget', priority: 'normal', subject: null,
+              status: convStatus, channel: 'widget', priority: 'normal', subject: null,
               visitor_name: visData[0]?.display_name || visitorName || 'Visitor',
               visitor_email: visitorEmail || null,
               agent_name: null, brand_name: brandName,
@@ -200,16 +217,17 @@ router.post('/session', async (req, res, next) => {
           `UPDATE visitors SET ${updates.join(', ')} WHERE id = $${vals.length+1}`,
           [...vals, existingId]
         );
-        // Create a new open conversation for the returning visitor
+        // Create a new conversation for the returning visitor
+        const convStatus = await pickInitialStatus(tenant_id);
         const { rows: nc } = await pool.query(
           `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
-           VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
-          [tenant_id, brandId, existingId, referrerUrl || null]
+           VALUES ($1, $2, $3, $5, 'widget', $4) RETURNING id`,
+          [tenant_id, brandId, existingId, referrerUrl || null, convStatus]
         );
         try {
           broadcastToTenant(tenant_id, 'conversation:created', {
             id: nc[0].id,
-            status: 'open', channel: 'widget', priority: 'normal', subject: null,
+            status: convStatus, channel: 'widget', priority: 'normal', subject: null,
             visitor_name: visitorName || visitorEmail, visitor_email: visitorEmail,
             agent_name: null, brand_name,
             created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -235,16 +253,17 @@ router.post('/session', async (req, res, next) => {
       [tenant_id, brandId, newToken, visitorName || null, visitorEmail || null, timezone || null]
     );
 
+    const convStatus = await pickInitialStatus(tenant_id);
     const { rows: cNew } = await pool.query(
       `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, referrer_url)
-       VALUES ($1, $2, $3, 'open', 'widget', $4) RETURNING id`,
-      [tenant_id, brandId, vNew[0].id, referrerUrl || null]
+       VALUES ($1, $2, $3, $5, 'widget', $4) RETURNING id`,
+      [tenant_id, brandId, vNew[0].id, referrerUrl || null, convStatus]
     );
 
     try {
       broadcastToTenant(tenant_id, 'conversation:created', {
         id: cNew[0].id,
-        status: 'open', channel: 'widget', priority: 'normal', subject: null,
+        status: convStatus, channel: 'widget', priority: 'normal', subject: null,
         visitor_name: visitorName || 'Visitor', visitor_email: visitorEmail || null,
         agent_name: null, brand_name,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),

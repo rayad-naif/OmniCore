@@ -104,3 +104,11 @@ Self-serve billing uses Stripe via the `stripe-replit-sync` package, which syncs
 
 # Convert-to-ticket closes the widget conversation
 PATCH /conversations/:id with `is_ticket:true` (when not already a ticket) also sets `channel='email'` and `status='submitted'` (unless status explicitly provided), assigns ticket_number, and emits `conversation:closed` (converted_to_ticket:true) to the visitor + conv room so the widget bubble closes. Widget session lookup excludes `is_ticket=true` rows (tickets never reload into the widget) and the widget message endpoint rejects is_ticket conversations (409). Tickets are email conversations, not widget-accessible.
+
+# Widget bot auto-reply requires ai_handling status
+The socket auto-reply only fires when a conversation's status is `ai_handling` (see socket.service.js gate). New widget conversations must be created with status `ai_handling` (not `open`) when the tenant has BOTH `ai_feature_enabled` AND `ai_auto_reply_enabled` — otherwise the bot never responds. widget.controller.js uses `pickInitialStatus(tenantId)` at every conversation INSERT to decide this.
+**Why:** Conversations defaulting to `open` silently bypassed the bot.
+**How to apply:** Any new conversation-creation path that should be bot-eligible must set status via the AI-flag check, and the socket auto-reply must trigger handover (set to `open`) if `handleInboundMessage` throws, so chats never stay stuck in `ai_handling`.
+
+# Bot settings storage
+Per-brand bot settings live in `brands.widget_config_json` JSONB: `bot_max_messages`, `auto_assign_strategy` ('round_robin'|'least_load'|'manual'), `auto_close_enabled`, `auto_close_idle_minutes`. The AI system prompt is a real column `brands.ai_system_prompt`. AI retrieval uses Postgres FTS on `knowledge_articles.content` (no pgvector).
