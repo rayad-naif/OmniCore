@@ -59,6 +59,18 @@ async function pickInitialStatus(tenantId) {
 // ── GET /api/widget/health ────────────────────────────────────────────────────
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
+// ── GET /api/widget/brand-logo ────────────────────────────────────────────────
+router.get('/brand-logo', (_req, res) => {
+  const logoPath = path.resolve(__dirname, 'brand-logo.jpg');
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  const stream = fs.createReadStream(logoPath);
+  stream.on('error', () => res.status(404).end());
+  stream.pipe(res);
+});
+
 // ── POST /api/widget/session ──────────────────────────────────────────────────
 router.post('/session', async (req, res, next) => {
   try {
@@ -1204,7 +1216,7 @@ function submitTicket(){
 }
 
 function chatIcon(){
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  return '<img src="'+API_ORIGIN+'/api/widget/brand-logo" alt="Chat" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;pointer-events:none;" />';
 }
 function closeIcon(){
   return '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
