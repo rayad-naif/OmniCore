@@ -11,7 +11,7 @@ export default function Help() {
           <motion.h1 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-4xl md:text-5xl font-bold tracking-tight mb-6"
+            className="text-4xl md:text-5xl font-bold tracking-tight mb-6 font-serif"
           >
             Documentation & Help
           </motion.h1>
@@ -48,7 +48,7 @@ export default function Help() {
             <TabsList className="grid w-full grid-cols-1 md:grid-cols-3 h-auto gap-2 bg-transparent p-0 mb-12">
               <TabsTrigger 
                 value="getting-started" 
-                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
+                className="data-[state=active]:bg-[#C9A450] data-[state=active]:text-white data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
               >
                 <Settings className="w-6 h-6 mb-1" />
                 <span className="font-semibold text-base">Getting Started</span>
@@ -56,7 +56,7 @@ export default function Help() {
               </TabsTrigger>
               <TabsTrigger 
                 value="email-setup" 
-                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
+                className="data-[state=active]:bg-[#C9A450] data-[state=active]:text-white data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
               >
                 <Mail className="w-6 h-6 mb-1" />
                 <span className="font-semibold text-base">Email Setup</span>
@@ -64,7 +64,7 @@ export default function Help() {
               </TabsTrigger>
               <TabsTrigger 
                 value="bot-ai" 
-                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
+                className="data-[state=active]:bg-[#C9A450] data-[state=active]:text-white data-[state=active]:shadow-md rounded-xl py-4 flex flex-col gap-2 border border-transparent data-[state=inactive]:border-border/50 data-[state=inactive]:bg-card hover:bg-muted/50 transition-all"
               >
                 <Bot className="w-6 h-6 mb-1" />
                 <span className="font-semibold text-base">Bot & AI</span>
@@ -87,12 +87,12 @@ export default function Help() {
                       { title: "3. Invite your agents", desc: "Add team members and assign roles (Admin, Agent, Viewer)." },
                       { title: "4. Embed the widget", desc: "Copy the script tag to your website's <head>." }
                     ].map((step, i) => (
-                      <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/50 hover:border-primary/30 hover:bg-muted/30 transition-colors cursor-pointer group">
+                      <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/50 hover:border-[#C9A450]/30 hover:bg-[#F5EDE0]/50 transition-colors cursor-pointer group">
                         <div>
                           <h4 className="font-semibold">{step.title}</h4>
                           <p className="text-sm text-muted-foreground mt-1">{step.desc}</p>
                         </div>
-                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-[#C9A450] transition-colors" />
                       </div>
                     ))}
                   </div>
@@ -117,7 +117,7 @@ export default function Help() {
                     
                     <h3>Setup guides by provider</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 not-prose">
-                      <Card className="shadow-none border-border/50 hover:border-primary/30 transition-colors cursor-pointer">
+                      <Card className="shadow-none border-border/50 hover:border-[#C9A450]/30 transition-colors cursor-pointer">
                         <CardHeader className="p-4 pb-2">
                           <CardTitle className="text-base">Google Workspace (G Suite)</CardTitle>
                         </CardHeader>
@@ -125,7 +125,7 @@ export default function Help() {
                           <CardDescription>Configure forwarding in Gmail settings</CardDescription>
                         </CardContent>
                       </Card>
-                      <Card className="shadow-none border-border/50 hover:border-primary/30 transition-colors cursor-pointer">
+                      <Card className="shadow-none border-border/50 hover:border-[#C9A450]/30 transition-colors cursor-pointer">
                         <CardHeader className="p-4 pb-2">
                           <CardTitle className="text-base">Microsoft 365</CardTitle>
                         </CardHeader>
@@ -146,8 +146,8 @@ export default function Help() {
                   </div>
                   
                   <div className="grid gap-6">
-                    <div className="p-6 rounded-2xl bg-gradient-to-br from-purple-500/10 to-transparent border border-purple-500/20">
-                      <h3 className="font-bold text-lg text-purple-700 dark:text-purple-400 mb-2">Knowledge Base Tips</h3>
+                    <div className="p-6 rounded-2xl bg-gradient-to-br from-[#C9A450]/10 to-transparent border border-[#C9A450]/20">
+                      <h3 className="font-bold text-lg text-[#8B6914] mb-2">Knowledge Base Tips</h3>
                       <p className="text-sm text-muted-foreground mb-4">
                         The AI Bot is only as good as the knowledge you feed it. Ensure your help articles are clear, up-to-date, and cover your most common support inquiries.
                       </p>
@@ -164,12 +164,12 @@ export default function Help() {
                         { title: "Set Handoff Rules", desc: "Determine when the bot should escalate to a human agent." },
                         { title: "Review Bot Performance", desc: "Analyze deflection rates and improve knowledge gaps." },
                       ].map((step, i) => (
-                        <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/50 hover:border-primary/30 hover:bg-muted/30 transition-colors cursor-pointer group">
+                        <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/50 hover:border-[#C9A450]/30 hover:bg-[#F5EDE0]/50 transition-colors cursor-pointer group">
                           <div>
                             <h4 className="font-semibold">{step.title}</h4>
                             <p className="text-sm text-muted-foreground mt-1">{step.desc}</p>
                           </div>
-                          <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                          <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-[#C9A450] transition-colors" />
                         </div>
                       ))}
                     </div>

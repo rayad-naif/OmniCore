@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
-import logoUrl from "../../../dashboard/public/icon-512.png";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -18,12 +17,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background selection:bg-primary selection:text-primary-foreground font-sans">
-      <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-[#F5EDE0]/95 backdrop-blur supports-[backdrop-filter]:bg-[#F5EDE0]/60">
         <div className="container mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-90">
-              <img src={logoUrl} alt="OmniCore Logo" className="w-8 h-8 object-contain rounded-md" />
-              <span className="font-bold text-lg tracking-tight">Atelier OmniCore</span>
+              <span className="font-bold text-xl tracking-tight font-serif"><span className="text-foreground">Omni</span><span style={{color:'#C9A450'}}>Core</span></span>
             </Link>
           </div>
           
@@ -32,8 +30,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Link 
                 key={link.href} 
                 href={link.href}
-                className={`text-sm font-medium transition-colors hover:text-primary ${
-                  location === link.href ? "text-primary" : "text-muted-foreground"
+                className={`text-sm font-medium transition-colors hover:text-[#C9A450] ${
+                  location === link.href ? "text-[#C9A450]" : "text-foreground/70"
                 }`}
               >
                 {link.label}
@@ -43,7 +41,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           
           <div className="hidden md:flex items-center gap-4">
             <a href="/dashboard/">
-              <Button className="font-medium shadow-sm hover:shadow-md transition-all">Login to Dashboard</Button>
+              <Button className="bg-[#C9A450] hover:bg-[#B8963E] text-white font-semibold border-none shadow-sm hover:shadow-md transition-all">Login to Dashboard</Button>
             </a>
           </div>
 
@@ -62,8 +60,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       key={link.href}
                       href={link.href}
                       onClick={() => setIsOpen(false)}
-                      className={`text-lg font-medium transition-colors hover:text-primary ${
-                        location === link.href ? "text-primary" : "text-muted-foreground"
+                      className={`text-lg font-medium transition-colors hover:text-[#C9A450] ${
+                        location === link.href ? "text-[#C9A450]" : "text-foreground/70"
                       }`}
                     >
                       {link.label}
@@ -71,7 +69,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   ))}
                   <div className="mt-4 pt-4 border-t">
                     <a href="/dashboard/" onClick={() => setIsOpen(false)}>
-                      <Button className="w-full font-medium">Login to Dashboard</Button>
+                      <Button className="w-full bg-[#C9A450] hover:bg-[#B8963E] text-white font-semibold border-none">Login to Dashboard</Button>
                     </a>
                   </div>
                 </nav>
@@ -85,14 +83,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <footer className="border-t bg-muted/30 py-12 md:py-16">
+      <footer className="border-t bg-[#EDE0C8]/50 py-12 md:py-16">
         <div className="container mx-auto px-4 md:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="md:col-span-2 flex flex-col gap-4">
-            <div className="flex items-center gap-2">
-              <img src={logoUrl} alt="OmniCore Logo" className="w-6 h-6 object-contain rounded opacity-80 grayscale" />
-              <span className="font-semibold text-lg">Atelier OmniCore</span>
+            <div className="flex flex-col gap-1">
+              <span className="font-bold text-2xl tracking-tight font-serif"><span className="text-foreground">Omni</span><span style={{color:'#C9A450'}}>Core</span></span>
+              <span className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">Support Desk Software</span>
             </div>
-            <p className="text-muted-foreground text-sm max-w-sm text-balance">
+            <p className="text-muted-foreground text-sm max-w-sm text-balance mt-2">
               The premium multi-tenant SaaS platform giving businesses an AI-powered omnichannel helpdesk they actually want to use.
             </p>
           </div>

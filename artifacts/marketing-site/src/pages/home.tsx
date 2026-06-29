@@ -6,16 +6,17 @@ import feature1Img from "@/assets/feature-1.png";
 import feature2Img from "@/assets/feature-2.png";
 import abstractImg1 from "@assets/Gemini_Generated_Image_xqx9m7xqx9m7xqx9_1782734752504.png";
 import abstractImg2 from "@assets/Gemini_Generated_Image_ljfznyljfznyljfz_1782734752504.png";
+import coreBenefitsImg from "@assets/Gemini_Generated_Image_o33hxo33hxo33hxo_1782739956431.png";
+import coreFeaturesImg from "@assets/Gemini_Generated_Image_a3fmgsa3fmgsa3fm_1782739956432.png";
 
 export default function Home() {
   return (
     <div className="flex flex-col w-full overflow-hidden">
       {/* Hero Section */}
-      <section className="relative pt-24 pb-32 md:pt-32 md:pb-40 overflow-hidden bg-[#0A0F1C] text-white">
+      <section className="relative pt-24 pb-32 md:pt-32 md:pb-40 overflow-hidden bg-[#F5EDE0] text-foreground">
         {/* Abstract Background Elements */}
-        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
-          <div className="absolute top-[-10%] right-[-5%] w-[50%] h-[50%] bg-primary/20 blur-[120px] rounded-full mix-blend-screen" />
-          <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[60%] bg-blue-500/20 blur-[120px] rounded-full mix-blend-screen" />
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 flex items-center justify-center pointer-events-none">
+          <div className="absolute w-96 h-96 bg-[#C9A450]/15 blur-[150px] rounded-full mix-blend-multiply" />
         </div>
         
         <div className="container mx-auto px-4 md:px-8 relative z-10">
@@ -24,26 +25,25 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 border border-white/20 text-sm font-medium mb-8"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#C9A450]/30 text-[#C9A450] text-xs uppercase tracking-widest font-semibold mb-8"
             >
-              <Zap className="w-4 h-4 text-blue-400" />
-              <span>Omnichannel routing is now live</span>
+              <span>SUPPORT DESK SOFTWARE</span>
             </motion.div>
             
             <motion.h1
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
-              className="text-5xl md:text-7xl font-bold tracking-tight text-balance leading-tight mb-6"
+              className="font-serif text-5xl md:text-7xl font-bold tracking-tight text-balance leading-tight mb-6"
             >
-              Support software your team <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-primary">actually wants to use</span>.
+              Support software your team <span className="text-[#C9A450]">actually wants to use</span>.
             </motion.h1>
             
             <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
-              className="text-lg md:text-xl text-gray-400 max-w-2xl mb-10 text-balance"
+              className="text-lg md:text-xl text-muted-foreground max-w-2xl mb-10 text-balance"
             >
               Atelier OmniCore is a premium multi-tenant SaaS platform that unifies all your conversations with an AI-powered helpdesk. Precision engineered for modern businesses.
             </motion.p>
@@ -55,11 +55,11 @@ export default function Home() {
               className="flex flex-col sm:flex-row gap-4"
             >
               <a href="/dashboard/">
-                <Button size="lg" className="h-12 px-8 text-base font-medium rounded-full w-full sm:w-auto shadow-[0_0_40px_-10px_rgba(59,130,246,0.5)]">
+                <Button size="lg" className="h-12 px-8 text-base font-medium rounded-full w-full sm:w-auto bg-[#C9A450] hover:bg-[#B8963E] text-white shadow-lg shadow-[#C9A450]/20">
                   Start for free <ArrowRight className="ml-2 w-4 h-4" />
                 </Button>
               </a>
-              <Button size="lg" variant="outline" className="h-12 px-8 text-base font-medium rounded-full bg-transparent border-white/20 text-white hover:bg-white/10 w-full sm:w-auto">
+              <Button size="lg" variant="outline" className="h-12 px-8 text-base font-medium rounded-full bg-transparent border-[#C9A450]/50 text-foreground hover:bg-[#C9A450]/10 w-full sm:w-auto">
                 Book a Demo
               </Button>
             </motion.div>
@@ -85,10 +85,10 @@ export default function Home() {
       </section>
 
       {/* Value Props / Logos Grid */}
-      <section className="py-16 md:py-24 bg-background">
+      <section className="py-16 md:py-24 bg-[#F5EDE0]">
         <div className="container mx-auto px-4 md:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Precision-engineered for scale</h2>
+            <h2 className="font-serif text-3xl md:text-4xl font-bold tracking-tight mb-4">Precision-engineered for scale</h2>
             <p className="text-muted-foreground text-lg max-w-2xl mx-auto">Everything you need to deliver exceptional support experiences, without the bloated legacy interfaces.</p>
           </div>
 
@@ -97,10 +97,10 @@ export default function Home() {
               whileHover={{ y: -5 }}
               className="p-8 rounded-2xl bg-card border border-border/50 shadow-sm transition-all duration-300 hover:shadow-md"
             >
-              <div className="w-12 h-12 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-6 text-primary">
+              <div className="w-12 h-12 rounded-lg bg-[#C9A450]/15 flex items-center justify-center mb-6 text-[#C9A450]">
                 <Bot className="w-6 h-6" />
               </div>
-              <h3 className="text-xl font-semibold mb-3">AI-Powered Routing</h3>
+              <h3 className="font-serif text-xl font-semibold mb-3">AI-Powered Routing</h3>
               <p className="text-muted-foreground leading-relaxed">
                 Our intelligent agent automatically categorizes, tags, and routes incoming conversations to the right human instantly.
               </p>
@@ -110,10 +110,10 @@ export default function Home() {
               whileHover={{ y: -5 }}
               className="p-8 rounded-2xl bg-card border border-border/50 shadow-sm transition-all duration-300 hover:shadow-md"
             >
-              <div className="w-12 h-12 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mb-6 text-purple-600 dark:text-purple-400">
+              <div className="w-12 h-12 rounded-lg bg-[#C9A450]/15 flex items-center justify-center mb-6 text-[#C9A450]">
                 <Inbox className="w-6 h-6" />
               </div>
-              <h3 className="text-xl font-semibold mb-3">Omnichannel Inbox</h3>
+              <h3 className="font-serif text-xl font-semibold mb-3">Omnichannel Inbox</h3>
               <p className="text-muted-foreground leading-relaxed">
                 Email, chat, and social channels unified in one beautiful, lightning-fast interface that agents love.
               </p>
@@ -123,10 +123,10 @@ export default function Home() {
               whileHover={{ y: -5 }}
               className="p-8 rounded-2xl bg-card border border-border/50 shadow-sm transition-all duration-300 hover:shadow-md"
             >
-              <div className="w-12 h-12 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-6 text-emerald-600 dark:text-emerald-400">
+              <div className="w-12 h-12 rounded-lg bg-[#C9A450]/15 flex items-center justify-center mb-6 text-[#C9A450]">
                 <Users className="w-6 h-6" />
               </div>
-              <h3 className="text-xl font-semibold mb-3">Multi-Tenant Core</h3>
+              <h3 className="font-serif text-xl font-semibold mb-3">Multi-Tenant Core</h3>
               <p className="text-muted-foreground leading-relaxed">
                 Built from the ground up for agencies and enterprises managing multiple brands from a single login.
               </p>
@@ -136,7 +136,7 @@ export default function Home() {
       </section>
 
       {/* Feature 1: Omnichannel */}
-      <section className="py-24 bg-muted/30 overflow-hidden">
+      <section className="py-24 bg-[#EDE0C8]/40 overflow-hidden">
         <div className="container mx-auto px-4 md:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <motion.div
@@ -145,11 +145,11 @@ export default function Home() {
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
             >
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#C9A450]/15 text-[#C9A450] text-sm font-medium mb-6">
                 <MessageSquare className="w-4 h-4" />
                 <span>Unified Communications</span>
               </div>
-              <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
+              <h2 className="font-serif text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
                 One view.<br />Every conversation.
               </h2>
               <p className="text-lg text-muted-foreground mb-8 text-balance">
@@ -159,7 +159,7 @@ export default function Home() {
               <ul className="space-y-4 mb-8">
                 {['Real-time chat widget synchronization', 'Automated email threading and parsing', 'Collision detection to prevent duplicate replies'].map((item, i) => (
                   <li key={i} className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C9A450]/20 flex items-center justify-center text-[#C9A450]">
                       <ShieldCheck className="w-3 h-3" />
                     </div>
                     <span className="text-foreground">{item}</span>
@@ -194,8 +194,26 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Brand Image Showcase */}
+      <section className="py-24 bg-[#F5EDE0]">
+        <div className="container mx-auto px-4 md:px-8">
+          <div className="text-center mb-12">
+            <h2 className="font-serif text-3xl font-bold text-[#C9A450]">Core Benefits — Unlock Operational Excellence</h2>
+          </div>
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="rounded-3xl overflow-hidden shadow-2xl border border-border/50 max-w-5xl mx-auto"
+          >
+            <img src={coreBenefitsImg} alt="Core Benefits" className="w-full h-auto" />
+          </motion.div>
+        </div>
+      </section>
+
       {/* Feature 2: AI */}
-      <section className="py-24 bg-background">
+      <section className="py-24 bg-[#F5EDE0]">
         <div className="container mx-auto px-4 md:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <motion.div
@@ -217,11 +235,11 @@ export default function Home() {
               transition={{ duration: 0.6 }}
               className="order-1 lg:order-2"
             >
-               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 text-sm font-medium mb-6">
+               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#C9A450]/15 text-[#C9A450] text-sm font-medium mb-6">
                 <Bot className="w-4 h-4" />
                 <span>AI-Native Architecture</span>
               </div>
-              <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
+              <h2 className="font-serif text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
                 Your sharpest agent<br />never sleeps.
               </h2>
               <p className="text-lg text-muted-foreground mb-8 text-balance">
@@ -231,7 +249,7 @@ export default function Home() {
               <ul className="space-y-4">
                 {['Automatic intent classification', 'Drafts suggested replies for human agents', 'Learns continuously from past resolutions'].map((item, i) => (
                   <li key={i} className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C9A450]/20 flex items-center justify-center text-[#C9A450]">
                       <ShieldCheck className="w-3 h-3" />
                     </div>
                     <span className="text-foreground">{item}</span>
@@ -243,12 +261,27 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Dark Core Features Card Showcase */}
+      <section className="py-24 bg-[#EDE0C8]/30">
+        <div className="container mx-auto px-4 md:px-8">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="rounded-3xl overflow-hidden shadow-2xl p-4 md:p-8 bg-card border border-border/50 max-w-4xl mx-auto"
+          >
+            <img src={coreFeaturesImg} alt="Core Features" className="w-full h-auto rounded-xl" />
+          </motion.div>
+        </div>
+      </section>
+
       {/* Abstract Divider / Quote */}
-      <section className="relative py-32 overflow-hidden bg-[#0A0F1C] text-white">
-        <div className="absolute inset-0 opacity-40 mix-blend-overlay">
+      <section className="relative py-32 overflow-hidden bg-gradient-to-br from-[#8B6914] to-[#C9A450] text-white">
+        <div className="absolute inset-0 opacity-15 mix-blend-overlay">
           <img src={abstractImg1} alt="Abstract Background" className="w-full h-full object-cover" />
         </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0F1C] to-transparent opacity-80" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#8B6914] to-transparent opacity-40" />
         
         <div className="container mx-auto px-4 relative z-10 text-center max-w-4xl">
           <motion.div
@@ -264,35 +297,35 @@ export default function Home() {
                 <img src={abstractImg2} alt="Avatar" className="w-full h-full object-cover" />
               </div>
               <div className="font-medium text-lg">Sarah Jenkins</div>
-              <div className="text-white/60 text-sm">VP of Customer Success, TechFlow</div>
+              <div className="text-white/80 text-sm">VP of Customer Success, TechFlow</div>
             </div>
           </motion.div>
         </div>
       </section>
 
       {/* Final CTA */}
-      <section className="py-24 md:py-32 bg-background">
+      <section className="py-24 md:py-32 bg-[#F5EDE0]">
         <div className="container mx-auto px-4 md:px-8">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="max-w-4xl mx-auto bg-primary text-primary-foreground rounded-3xl p-10 md:p-16 text-center relative overflow-hidden shadow-2xl"
+            className="max-w-4xl mx-auto bg-[#C9A450] text-white rounded-3xl p-10 md:p-16 text-center relative overflow-hidden shadow-2xl"
           >
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-[80px]" />
+            <div className="absolute top-0 right-0 w-64 h-64 bg-white/20 rounded-full blur-[80px]" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-black/10 rounded-full blur-[80px]" />
             
-            <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-6 relative z-10">Ready to elevate your support?</h2>
-            <p className="text-lg md:text-xl text-primary-foreground/80 mb-10 max-w-2xl mx-auto relative z-10 text-balance">
+            <h2 className="font-serif text-4xl md:text-5xl font-bold tracking-tight mb-6 relative z-10">Ready to elevate your support?</h2>
+            <p className="text-lg md:text-xl text-white/90 mb-10 max-w-2xl mx-auto relative z-10 text-balance">
               Join thousands of modern teams delivering exceptional customer experiences with Atelier OmniCore.
             </p>
             <div className="flex flex-col sm:flex-row justify-center gap-4 relative z-10">
               <a href="/dashboard/">
-                <Button size="lg" variant="secondary" className="h-14 px-8 text-base font-semibold rounded-full w-full sm:w-auto text-primary hover:bg-white/90">
+                <Button size="lg" className="h-14 px-8 text-base font-semibold rounded-full w-full sm:w-auto bg-white text-[#1A1001] hover:bg-white/90">
                   Start your free trial
                 </Button>
               </a>
-              <Button size="lg" variant="outline" className="h-14 px-8 text-base font-semibold rounded-full bg-transparent border-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/10 w-full sm:w-auto">
+              <Button size="lg" variant="outline" className="h-14 px-8 text-base font-semibold rounded-full bg-transparent border-white/30 text-white hover:bg-white/10 w-full sm:w-auto">
                 Contact Sales
               </Button>
             </div>

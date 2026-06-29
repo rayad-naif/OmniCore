@@ -74,7 +74,7 @@ export default function Pricing() {
             <motion.h1 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="text-4xl md:text-6xl font-bold tracking-tight mb-6"
+              className="text-4xl md:text-6xl font-bold tracking-tight mb-6 font-serif"
             >
               Simple, transparent pricing.
             </motion.h1>
@@ -96,24 +96,24 @@ export default function Pricing() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 + (i * 0.1) }}
                 className={`relative p-8 rounded-3xl border bg-card flex flex-col h-full ${
-                  plan.popular ? 'border-primary shadow-xl scale-100 md:scale-105 z-10' : 'border-border/50 shadow-sm'
+                  plan.popular ? 'border-[#C9A450] shadow-xl scale-100 md:scale-105 z-10' : 'border-border/50 shadow-sm'
                 }`}
               >
                 {plan.popular && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#C9A450] text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
                     Most Popular
                   </div>
                 )}
                 
                 <div className="mb-6">
-                  <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
+                  <h3 className="text-2xl font-bold mb-2 font-serif">{plan.name}</h3>
                   <p className="text-muted-foreground text-sm h-10">{plan.description}</p>
                 </div>
                 
                 <div className="mb-8">
-                  <div className="flex items-baseline gap-1">
+                  <div className="flex items-baseline gap-1 text-[#C9A450]">
                     <span className="text-4xl font-extrabold">{plan.price}</span>
-                    {plan.price !== "Custom" && <span className="text-muted-foreground">/mo</span>}
+                    {plan.price !== "Custom" && <span className="text-[#C9A450]/80">/mo</span>}
                   </div>
                   <div className="text-sm text-muted-foreground mt-1">{plan.billing}</div>
                 </div>
@@ -122,7 +122,7 @@ export default function Pricing() {
                   <ul className="space-y-4 mb-8">
                     {plan.features.map((feature) => (
                       <li key={feature} className="flex items-start gap-3">
-                        <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center text-primary mt-0.5">
+                        <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] mt-0.5">
                           <Check className="w-3 h-3" />
                         </div>
                         <span className="text-sm">{feature}</span>
@@ -141,8 +141,7 @@ export default function Pricing() {
                 
                 <Button 
                   size="lg" 
-                  variant={plan.popular ? "default" : "outline"}
-                  className={`w-full rounded-full ${plan.popular ? 'shadow-md shadow-primary/20' : ''}`}
+                  className={`w-full rounded-full ${plan.popular ? 'bg-[#C9A450] hover:bg-[#B8963E] text-white shadow-md shadow-[#C9A450]/20' : 'bg-transparent border-[#C9A450]/50 text-[#C9A450] hover:bg-[#C9A450]/10 border'}`}
                 >
                   {plan.cta}
                 </Button>

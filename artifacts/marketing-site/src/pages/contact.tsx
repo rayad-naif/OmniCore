@@ -27,14 +27,14 @@ export default function Contact() {
   return (
     <div className="flex flex-col w-full min-h-screen bg-background pt-16">
       <section className="py-20 md:py-32 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-[50%] h-[50%] bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
+        <div className="absolute top-0 right-0 w-[50%] h-[50%] bg-[#C9A450]/5 blur-[100px] rounded-full pointer-events-none" />
         
         <div className="container mx-auto px-4 md:px-8 relative z-10">
           <div className="text-center max-w-2xl mx-auto mb-16">
             <motion.h1 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="text-4xl md:text-6xl font-bold tracking-tight mb-6"
+              className="text-4xl md:text-6xl font-bold tracking-tight mb-6 font-serif"
             >
               Get in touch
             </motion.h1>
@@ -61,7 +61,7 @@ export default function Contact() {
                 
                 <div className="flex flex-col gap-6">
                   <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
+                    <div className="w-10 h-10 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] flex-shrink-0">
                       <Mail className="w-5 h-5" />
                     </div>
                     <div>
@@ -71,7 +71,7 @@ export default function Contact() {
                   </div>
                   
                   <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
+                    <div className="w-10 h-10 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] flex-shrink-0">
                       <MapPin className="w-5 h-5" />
                     </div>
                     <div>
@@ -82,10 +82,10 @@ export default function Contact() {
                 </div>
               </div>
 
-              <div className="bg-primary text-primary-foreground p-8 rounded-3xl shadow-lg relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-[40px]" />
-                <h3 className="font-bold text-xl mb-3 relative z-10">Enterprise Support</h3>
-                <p className="text-primary-foreground/80 mb-6 relative z-10 text-sm">
+              <div className="bg-[#C9A450] text-white p-8 rounded-3xl shadow-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white/20 rounded-full blur-[40px]" />
+                <h3 className="font-bold text-xl mb-3 relative z-10 font-serif">Enterprise Support</h3>
+                <p className="text-white/90 mb-6 relative z-10 text-sm">
                   Existing enterprise customers have access to priority 24/7 phone support and a dedicated Slack channel.
                 </p>
                 <a href="/dashboard/" className="text-sm font-semibold underline underline-offset-4 hover:text-white relative z-10">
@@ -128,7 +128,7 @@ export default function Contact() {
                   <Textarea 
                     id="message" 
                     placeholder="Tell us about your support setup and what you're looking for..." 
-                    className="min-h-[150px] bg-background resize-none" 
+                    className="min-h-[150px] bg-background resize-none focus-visible:ring-[#C9A450]" 
                     required 
                   />
                 </div>
@@ -136,7 +136,7 @@ export default function Contact() {
                 <Button 
                   type="submit" 
                   size="lg" 
-                  className="w-full sm:w-auto self-start mt-2 rounded-full px-8"
+                  className="w-full sm:w-auto self-start mt-2 rounded-full px-8 bg-[#C9A450] hover:bg-[#B8963E] text-white"
                   disabled={isSubmitting}
                 >
                   {isSubmitting ? "Sending..." : "Send Message"}
