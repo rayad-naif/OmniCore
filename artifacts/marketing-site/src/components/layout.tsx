@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
+import irAtelierLogo from "@assets/WhatsApp_Image_2026-06-29_at_2.10.14_AM_1782740652894.jpeg";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -111,9 +112,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </ul>
           </div>
         </div>
-        <div className="container mx-auto px-4 md:px-8 mt-12 pt-8 border-t text-sm text-muted-foreground text-center md:text-left flex flex-col md:flex-row justify-between items-center">
+        <div className="container mx-auto px-4 md:px-8 mt-12 pt-8 border-t text-sm text-muted-foreground text-center md:text-left flex flex-col md:flex-row justify-between items-center gap-4">
           <p>© {new Date().getFullYear()} Atelier OmniCore. All rights reserved.</p>
-          <p className="mt-2 md:mt-0">Crafted with intention.</p>
+          <div className="flex items-center gap-3">
+            <span className="text-xs uppercase tracking-widest">A Production of</span>
+            <img
+              src={irAtelierLogo}
+              alt="IR Atelier — Idylle Radieuse"
+              className="h-10 w-10 object-contain rounded-sm"
+            />
+            <span className="font-serif text-sm" style={{ color: '#C9A450' }}>IR Atelier</span>
+          </div>
         </div>
       </footer>
     </div>
