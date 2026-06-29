@@ -209,6 +209,40 @@ function normalisePayload(body) {
 }
 
 // ---------------------------------------------------------------------------
+// File attachment extractor
+// Pulls actual file attachments (not threading metadata) out of the raw
+// webhook payload. Returns an array of { url, name, type } objects.
+// Currently supports Resend (JSON format with base64 content).
+// SendGrid and Mailgun send attachments as multipart form-data parts which
+// require a multipart parser (multer/busboy) — not yet supported here.
+// ---------------------------------------------------------------------------
+function extractFileAttachments(body) {
+  const results = [];
+
+  // Resend: body.attachments = [{ filename, content (base64), content_type }]
+  if (Array.isArray(body.attachments)) {
+    for (const att of body.attachments) {
+      if (!att || !att.filename) continue;
+      const mimeType = att.content_type || att.type || 'application/octet-stream';
+      // Resend provides base64 content; store as a data URI so it's self-contained
+      if (att.content) {
+        const base64 = typeof att.content === 'string' ? att.content : Buffer.from(att.content).toString('base64');
+        results.push({
+          url:  `data:${mimeType};base64,${base64}`,
+          name: att.filename,
+          type: mimeType,
+        });
+      } else if (att.url) {
+        // Some providers include a direct URL
+        results.push({ url: att.url, name: att.filename, type: mimeType });
+      }
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/webhooks/inbound-mail  (legacy)
 // POST /api/webhooks/email/inbound (canonical — shown in Settings UI)
 // ---------------------------------------------------------------------------
@@ -261,11 +295,13 @@ async function handleInboundEmail(req, res) {
         return;
       }
 
-      const attachmentsJson = JSON.stringify([{ email_message_id: parseMessageId(messageId) }]);
+      const fileAttachments = extractFileAttachments(req.body);
+      const threadMeta = { email_message_id: parseMessageId(messageId) };
+      const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
       const { rows: newMsg } = await pool.query(
         `INSERT INTO messages (conversation_id, sender_type, message_body, attachments_json)
          VALUES ($1, 'visitor', $2, $3::jsonb)
-         RETURNING id, conversation_id, sender_type, message_body, created_at`,
+         RETURNING id, conversation_id, sender_type, message_body, attachments_json, created_at`,
         [conversationId, cleanBody, attachmentsJson]
       );
       await pool.query(
@@ -274,7 +310,11 @@ async function handleInboundEmail(req, res) {
          WHERE id = $1`,
         [conversationId]
       );
-      if (_io) _io.to(`conv:${conversationId}`).emit('server:new_message', newMsg[0]);
+      if (_io) {
+        const msg = newMsg[0];
+        _io.to(`conv:${conversationId}`).emit('server:new_message', msg);
+        _io.to(`tenant:${tenant_id}`).emit('conversation:visitor_message', { conversationId, message: msg });
+      }
       logger.info({ conversationId, from }, 'email_webhook_reply_conv_appended');
       return;
     }
@@ -363,14 +403,16 @@ async function handleInboundEmail(req, res) {
       return;
     }
 
-    // 5. Persist the message (store the email Message-ID for thread linking)
-    const attachmentsJson = JSON.stringify([{ email_message_id: parseMessageId(messageId) }]);
+    // 5. Persist the message (store the email Message-ID for thread linking + any file attachments)
+    const fileAttachments = extractFileAttachments(req.body);
+    const threadMeta = { email_message_id: parseMessageId(messageId) };
+    const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
 
     const { rows: newMsg } = await pool.query(
       `INSERT INTO messages
          (conversation_id, sender_type, message_body, attachments_json)
        VALUES ($1, 'visitor', $2, $3::jsonb)
-       RETURNING id, conversation_id, sender_type, message_body, created_at`,
+       RETURNING id, conversation_id, sender_type, message_body, attachments_json, created_at`,
       [conversationId, cleanBody, attachmentsJson]
     );
 
@@ -381,9 +423,11 @@ async function handleInboundEmail(req, res) {
       [conversationId]
     );
 
-    // 6. Push to Socket.io room if available
+    // 6. Push to Socket.io: conv room (agents viewing the thread) + tenant room (all agents)
     if (_io) {
-      _io.to(`conv:${conversationId}`).emit('server:new_message', newMsg[0]);
+      const msg = newMsg[0];
+      _io.to(`conv:${conversationId}`).emit('server:new_message', msg);
+      _io.to(`tenant:${tenant_id}`).emit('conversation:visitor_message', { conversationId, message: msg });
     }
 
     logger.info({ conversationId, from }, 'email_webhook_message_appended');

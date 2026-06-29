@@ -1021,12 +1021,13 @@ function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, rea
     finally { setSaving(false) }
   }
 
-  // Parse attachments — handle both JSON string (REST) and already-parsed array (socket)
+  // Parse attachments — handle both JSON string (REST) and already-parsed array (socket).
+  // Filter out threading-metadata entries ({email_message_id}) that have no renderable URL.
   let attachments: Attachment[] = []
   try {
     if (msg.attachments_json) {
       const raw = typeof msg.attachments_json === 'string' ? JSON.parse(msg.attachments_json) : msg.attachments_json
-      if (Array.isArray(raw)) attachments = raw
+      if (Array.isArray(raw)) attachments = (raw as Attachment[]).filter((a) => a && a.url)
     }
   } catch { /* ignore malformed */ }
 
