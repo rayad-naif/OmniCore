@@ -1,0 +1,20 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "BD0j8bM0e94OHkZc0lF6s"
+uri = "file://artifacts/marketing-site/src/assets/hero.png"
+type = "image"
+title = "Modern SaaS Dashboard UI"
+
+[[generated]]
+id = "C-l1S5kD9CzY1xoA8kRkN"
+uri = "file://artifacts/marketing-site/src/assets/feature-1.png"
+type = "image"
+title = "Omnichannel routing flow"
+
+[[generated]]
+id = "2R99JcGe8MUexvoVx5u5J"
+uri = "file://artifacts/marketing-site/src/assets/feature-2.png"
+type = "image"
+title = "AI Bot analyzing data"

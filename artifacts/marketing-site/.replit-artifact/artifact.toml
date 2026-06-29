@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Atelier OmniCore — Marketing Site"
+version = "1.0.0"
+id = "artifacts/marketing-site"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21209
+
+[services.development]
+run = "pnpm --filter @workspace/marketing-site run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/marketing-site", "run", "build" ]
+publicDir = "artifacts/marketing-site/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21209"
+BASE_PATH = "/"
