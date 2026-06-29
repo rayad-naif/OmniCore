@@ -13,15 +13,29 @@ export default function Contact() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
-    // Simulate network request
+
+    const form = e.target as HTMLFormElement;
+    const firstName = (form.elements.namedItem("firstName") as HTMLInputElement).value;
+    const lastName = (form.elements.namedItem("lastName") as HTMLInputElement).value;
+    const email = (form.elements.namedItem("email") as HTMLInputElement).value;
+    const company = (form.elements.namedItem("company") as HTMLInputElement).value;
+    const message = (form.elements.namedItem("message") as HTMLTextAreaElement).value;
+
+    const subject = encodeURIComponent(`OmniCore Enquiry from ${firstName} ${lastName}${company ? ` (${company})` : ""}`);
+    const body = encodeURIComponent(
+      `Name: ${firstName} ${lastName}\nEmail: ${email}${company ? `\nCompany: ${company}` : ""}\n\n${message}`
+    );
+    const mailto = `mailto:atelier@irofficial.com,idylle_radieuse@outlook.com?subject=${subject}&body=${body}`;
+
+    window.location.href = mailto;
+
     setTimeout(() => {
       setIsSubmitting(false);
-      toast.success("Message sent successfully", {
-        description: "We'll get back to you within 24 hours.",
+      toast.success("Opening your email client…", {
+        description: "Your message is pre-filled and ready to send.",
       });
-      (e.target as HTMLFormElement).reset();
-    }, 1000);
+      form.reset();
+    }, 600);
   };
 
   return (
@@ -65,8 +79,9 @@ export default function Contact() {
                       <Mail className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-medium text-sm mb-1">Sales & Support</h4>
-                      <p className="text-muted-foreground">hello@atelieromnicore.com</p>
+                      <h4 className="font-medium text-sm mb-1">General Enquiries</h4>
+                      <a href="mailto:atelier@irofficial.com" className="text-muted-foreground hover:text-[#C9A450] transition-colors block">atelier@irofficial.com</a>
+                      <a href="mailto:idylle_radieuse@outlook.com" className="text-muted-foreground hover:text-[#C9A450] transition-colors block mt-1">idylle_radieuse@outlook.com</a>
                     </div>
                   </div>
                   
