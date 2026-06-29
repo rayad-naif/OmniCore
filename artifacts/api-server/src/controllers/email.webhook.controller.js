@@ -165,10 +165,46 @@ function normaliseResend(body) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Mailgun payload normaliser
+// Mailgun inbound (parsed) posts application/x-www-form-urlencoded with:
+//   recipient, sender, Subject, body-plain, body-html, stripped-text,
+//   stripped-html, Message-Id, In-Reply-To, References, message-headers
+// message-headers is a JSON array: [["Header-Name", "value"], ...]
+// ---------------------------------------------------------------------------
+function normaliseMailgun(body) {
+  // Parse the JSON header array that Mailgun includes
+  let hdrs = {};
+  try {
+    const arr = JSON.parse(body['message-headers'] || '[]');
+    if (Array.isArray(arr)) {
+      for (const [k, v] of arr) {
+        if (typeof k === 'string') hdrs[k.toLowerCase()] = v;
+      }
+    }
+  } catch { /* ignore parse errors */ }
+
+  return {
+    to:         body.recipient || body.To || body.to || '',
+    from:       body.sender   || body.From || body.from || '',
+    subject:    body.Subject  || body.subject || '',
+    // Prefer stripped-text (Mailgun already strips the reply chain); fall back to body-plain
+    text:       body['stripped-text'] || body['body-plain'] || body.text || '',
+    html:       body['stripped-html'] || body['body-html']  || body.html || '',
+    messageId:  body['Message-Id'] || body['message-id'] || hdrs['message-id'] || null,
+    inReplyTo:  body['In-Reply-To'] || body['in-reply-to'] || hdrs['in-reply-to'] || null,
+    references: body['References'] || body['references']   || hdrs['references']  || null,
+  };
+}
+
 function normalisePayload(body) {
   // Detect provider heuristically
   if (body.envelope !== undefined) return normaliseSendgrid(body);   // SendGrid
   if (body.from?.email !== undefined || body.type === 'email.received') return normaliseResend(body);
+  // Mailgun: uses 'recipient' and 'sender' instead of 'to'/'from'
+  if (body.recipient !== undefined || body.sender !== undefined || body['body-plain'] !== undefined) {
+    return normaliseMailgun(body);
+  }
   return normaliseResend(body); // safe default
 }
 
