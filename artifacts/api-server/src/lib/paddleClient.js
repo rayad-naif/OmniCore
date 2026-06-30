@@ -2,18 +2,44 @@
 
 /**
  * paddleClient.js
- * Thin fetch-based wrapper around the Paddle Billing REST API.
- * Uses PADDLE_API_KEY + PADDLE_ENVIRONMENT env vars — no SDK dependency.
+ * Thin wrapper around the Paddle Billing REST API.
  *
- * PADDLE_ENVIRONMENT: 'sandbox' (default) | 'production'
- * PADDLE_API_KEY: found in Paddle dashboard → Developer → Authentication
- * PADDLE_WEBHOOK_SECRET: found in Paddle dashboard → Developer → Notifications
- * PADDLE_STARTER_PRICE_ID: set after running `pnpm --filter @workspace/scripts run seed-paddle`
- * PADDLE_GROWTH_PRICE_ID:  set after running seed-paddle
+ * Auth priority:
+ *   1. Replit Connectors SDK  — when running inside Replit (no env var needed;
+ *      the integration handles key injection automatically).
+ *   2. PADDLE_API_KEY env var — fallback for self-hosted / CI environments.
+ *
+ * Other env vars still required:
+ *   PADDLE_ENVIRONMENT      : 'sandbox' (default) | 'production'
+ *   PADDLE_WEBHOOK_SECRET   : Paddle dashboard → Developer → Notifications
+ *   PADDLE_STARTER_PRICE_ID : set after running seed-paddle
+ *   PADDLE_GROWTH_PRICE_ID  : set after running seed-paddle
  */
 
 const crypto = require('crypto');
 
+// ---------------------------------------------------------------------------
+// Replit Connectors — lazy-load the ESM module into CJS context.
+// A new ReplitConnectors() is created per request (tokens expire).
+// ---------------------------------------------------------------------------
+let _ReplitConnectorsClass = null;
+
+async function getConnectorClient() {
+  if (!_ReplitConnectorsClass) {
+    try {
+      const mod = await import('@replit/connectors-sdk');
+      _ReplitConnectorsClass = mod.ReplitConnectors;
+    } catch {
+      // SDK not available — will fall back to direct API key
+      _ReplitConnectorsClass = null;
+    }
+  }
+  return _ReplitConnectorsClass ? new _ReplitConnectorsClass() : null;
+}
+
+// ---------------------------------------------------------------------------
+// Base URLs
+// ---------------------------------------------------------------------------
 function paddleBaseUrl() {
   return process.env.PADDLE_ENVIRONMENT === 'production'
     ? 'https://api.paddle.com'
@@ -26,33 +52,43 @@ function paddleCheckoutBaseUrl() {
     : 'https://sandbox-checkout.paddle.com';
 }
 
-function getApiKey() {
-  const key = process.env.PADDLE_API_KEY;
-  if (!key) {
-    const err = new Error(
-      'PADDLE_API_KEY is not set. Add it as an environment secret from the Paddle dashboard → Developer → Authentication.',
-    );
-    err.status = 503;
-    throw err;
-  }
-  return key;
-}
-
-/**
- * Makes an authenticated Paddle Billing API request.
- * Throws a descriptive Error on non-2xx responses.
- */
+// ---------------------------------------------------------------------------
+// Core request — tries connector first, falls back to direct fetch with API key
+// ---------------------------------------------------------------------------
 async function paddleRequest(method, path, body) {
-  const base = paddleBaseUrl();
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${getApiKey()}`,
-      'Content-Type': 'application/json',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15_000),
-  });
+  const connectors = await getConnectorClient();
+
+  let res;
+
+  if (connectors) {
+    // ── Replit Connectors path (API key injected automatically) ──────────
+    res = await connectors.proxy('paddle', path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+  } else {
+    // ── Direct fetch fallback (requires PADDLE_API_KEY env var) ──────────
+    const key = process.env.PADDLE_API_KEY;
+    if (!key) {
+      const err = new Error(
+        'Paddle is not configured. Either connect the Paddle integration in Replit, ' +
+        'or set the PADDLE_API_KEY environment secret.',
+      );
+      err.status = 503;
+      throw err;
+    }
+
+    res = await fetch(`${paddleBaseUrl()}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(15_000),
+    });
+  }
 
   const json = await res.json().catch(() => ({}));
 
@@ -70,29 +106,22 @@ async function paddleRequest(method, path, body) {
   return json;
 }
 
+// ---------------------------------------------------------------------------
+// Public helpers
+// ---------------------------------------------------------------------------
+
 /**
  * Creates a Paddle Billing transaction and returns the hosted checkout URL.
- * Trial periods must already be baked into the Price object (via seed-paddle).
- *
- * @param {object} opts
- * @param {string} opts.priceId   — Paddle Price ID (pri_xxx)
- * @param {string} opts.email     — Customer email (for prefill + custom_data)
- * @param {string} opts.plan      — Plan slug for custom_data
- * @param {string} opts.successUrl — Where Paddle redirects after checkout
- * @param {string} [opts.cancelUrl] — Not officially in Paddle tx, but stored in custom_data
- * @returns {Promise<{url: string, transactionId: string}>}
+ * Trial periods must be baked into the Price object (via seed-paddle).
  */
 async function createCheckoutTransaction({ priceId, email, plan, successUrl, cancelUrl }) {
   const resp = await paddleRequest('POST', '/transactions', {
     items: [{ price_id: priceId, quantity: 1 }],
     custom_data: { plan, email, cancel_url: cancelUrl || null },
-    checkout: {
-      url: successUrl,
-    },
+    checkout: { url: successUrl },
   });
 
   const txId = resp.data?.id;
-  // Prefer the URL Paddle returns; fall back to the standard hosted-checkout pattern.
   const url =
     resp.data?.checkout?.url ||
     `${paddleCheckoutBaseUrl()}/checkout/custom/${txId}`;
@@ -101,8 +130,7 @@ async function createCheckoutTransaction({ priceId, email, plan, successUrl, can
 }
 
 /**
- * Returns the Paddle Price ID for a given plan slug.
- * Reads PADDLE_<PLAN>_PRICE_ID from env.
+ * Returns the Paddle Price ID for a given plan slug from env vars.
  */
 function getPaddlePriceId(plan) {
   return process.env[`PADDLE_${plan.toUpperCase()}_PRICE_ID`] || null;
@@ -110,8 +138,7 @@ function getPaddlePriceId(plan) {
 
 /**
  * Verifies an incoming Paddle webhook signature.
- * Paddle format: `Paddle-Signature: ts=<unix>;h1=<hex-sha256>`
- *
+ * Header format: `Paddle-Signature: ts=<unix>;h1=<hex-sha256>`
  * Returns the parsed event object on success, or null on failure.
  */
 function verifyPaddleWebhook(rawBody, secret, signatureHeader) {
