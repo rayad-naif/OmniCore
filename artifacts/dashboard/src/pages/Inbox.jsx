@@ -794,12 +794,8 @@ function ChatPanel({
           <div className="flex justify-end px-3 pb-2.5">
             <button
               onClick={send}
-              disabled={(!draft.trim() && !pendingFile) || sending}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold
-                transition-all
-                ${(draft.trim() || pendingFile) && !sending
-                  ? 'bg-violet-600 text-white hover:bg-violet-700 active:scale-[.97]'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+              disabled={sending}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all bg-violet-600 text-white hover:bg-violet-700 active:scale-[.97] disabled:opacity-60 disabled:cursor-not-allowed">
               {sending ? <Spinner size="sm" /> : (
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
                   <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>

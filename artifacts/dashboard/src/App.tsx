@@ -167,10 +167,14 @@ interface CannedResponse {
 const API = '/api'
 
 function useApi() {
-  const { authFetch, agent } = useAuth() as {
+  const { authFetch, agent, workspaceOverride } = useAuth() as {
     authFetch: (url: string, opts?: RequestInit) => Promise<Response>
     agent: { id: string; name: string; email: string; tenantId: string; role: string; isSuperAdmin?: boolean } | null
+    workspaceOverride: { tenantId: string; name: string } | null
   }
+  // When a super-admin is viewing a workspace, use that workspace's tenant id
+  // for routes that embed the tenant id in the URL path.
+  const effectiveTenantId = workspaceOverride?.tenantId ?? agent?.tenantId ?? ''
   return useCallback(() => ({
     listConversations: async (params?: Record<string, string>): Promise<Conversation[]> => {
       const qs = params ? '?' + new URLSearchParams(params).toString() : ''
@@ -225,15 +229,15 @@ function useApi() {
       return d.downloadUrl ?? d.url ?? ''
     },
     listBrands: async (): Promise<Brand[]> => {
-      if (!agent?.tenantId) return []
-      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands`)
+      if (!effectiveTenantId) return []
+      const r = await authFetch(`${API}/tenants/${effectiveTenantId}/brands`)
       if (!r.ok) return []
       const d = await r.json() as Brand[] | { brands: Brand[] }
       return Array.isArray(d) ? d : (d.brands ?? [])
     },
     createBrand: async (name: string, websiteUrl: string, supportEmail: string): Promise<Brand> => {
-      if (!agent?.tenantId) throw new Error('Not authenticated')
-      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands`, {
+      if (!effectiveTenantId) throw new Error('Not authenticated')
+      const r = await authFetch(`${API}/tenants/${effectiveTenantId}/brands`, {
         method: 'POST',
         body: JSON.stringify({ brand_name: name, widget_config_json: { website_url: websiteUrl || undefined, support_email: supportEmail || undefined } }),
       })
@@ -241,7 +245,7 @@ function useApi() {
       return r.json() as Promise<Brand>
     },
     editBrand: async (brandId: string, patch: { brand_name?: string; website_url?: string; support_email?: string; color?: string }): Promise<Brand> => {
-      if (!agent?.tenantId) throw new Error('Not authenticated')
+      if (!effectiveTenantId) throw new Error('Not authenticated')
       const widget_config_json: Record<string, string> = {}
       if (patch.website_url !== undefined) widget_config_json.website_url = patch.website_url
       if (patch.support_email !== undefined) widget_config_json.support_email = patch.support_email
@@ -249,13 +253,13 @@ function useApi() {
       const body: Record<string, unknown> = {}
       if (patch.brand_name) body.brand_name = patch.brand_name
       if (Object.keys(widget_config_json).length) body.widget_config_json = widget_config_json
-      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands/${brandId}`, { method: 'PATCH', body: JSON.stringify(body) })
+      const r = await authFetch(`${API}/tenants/${effectiveTenantId}/brands/${brandId}`, { method: 'PATCH', body: JSON.stringify(body) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update brand') }
       return r.json() as Promise<Brand>
     },
     deleteBrand: async (brandId: string): Promise<void> => {
-      if (!agent?.tenantId) throw new Error('Not authenticated')
-      const r = await authFetch(`${API}/tenants/${agent.tenantId}/brands/${brandId}`, { method: 'DELETE' })
+      if (!effectiveTenantId) throw new Error('Not authenticated')
+      const r = await authFetch(`${API}/tenants/${effectiveTenantId}/brands/${brandId}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('Failed to delete brand')
     },
     rephraseText: async (draft: string, tone = 'professional'): Promise<string> => {
@@ -537,7 +541,7 @@ function useApi() {
       const r = await authFetch(`${API}/canned-responses/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error(`${r.status}`)
     },
-  }), [authFetch, agent?.tenantId])()
+  }), [authFetch, effectiveTenantId])()
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
