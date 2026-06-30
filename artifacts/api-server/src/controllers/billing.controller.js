@@ -29,15 +29,7 @@
 const { pool }            = require('../lib/db');
 const logger              = require('../utils/logger');
 const billingProvider     = require('../lib/billingProvider');
-// stripeClient is still required by loadPlansFromSchema via pool queries against the
-// synced `stripe` schema. It is not used directly here (checkout routes delegate to
-// billingProvider), but it must stay importable for esbuild bundling.
-const { getUncachableStripeClient } = require('../lib/stripeClient'); // eslint-disable-line no-unused-vars
-
-// Self-serve plans are driven by Stripe product metadata: any active product
-// whose metadata.self_serve === 'true' is purchasable via checkout.
-// Legacy plan slugs (without the flag) remain self-serve too.
-const LEGACY_SELF_SERVE_PLANS = ['starter', 'pro', 'growth'];
+const plansRepo           = require('../lib/plansRepo');
 
 // ─── Idempotent migration: ensure billing linkage columns exist ──────────────
 (async () => {
@@ -67,64 +59,22 @@ function appBaseUrl(req) {
   return `${proto}://${req.get('host')}`;
 }
 
-/**
- * Reads the active self-serve plans from the synced `stripe` schema.
- * Returns one entry per plan with its cheapest active monthly price.
- */
-async function loadPlansFromSchema() {
-  const { rows } = await pool.query(
-    `SELECT
-       p.id                       AS product_id,
-       p.name                     AS name,
-       p.description              AS description,
-       p.metadata                 AS metadata,
-       p.metadata ->> 'plan'      AS plan,
-       pr.id                      AS price_id,
-       pr.unit_amount             AS unit_amount,
-       pr.currency                AS currency,
-       pr.recurring ->> 'interval' AS interval
-     FROM stripe.products p
-     JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
-     WHERE p.active = true
-       AND p.metadata ->> 'plan' IS NOT NULL
-       AND (p.metadata ->> 'self_serve' = 'true' OR p.metadata ->> 'plan' = ANY($1))
-       AND pr.recurring ->> 'interval' = 'month'
-     ORDER BY pr.unit_amount ASC`,
-    [LEGACY_SELF_SERVE_PLANS]
-  );
-
-  // Keep the first (cheapest) active monthly price per plan, with its features.
-  const byPlan = new Map();
-  for (const r of rows) {
-    if (!byPlan.has(r.plan)) {
-      const m = r.metadata || {};
-      byPlan.set(r.plan, {
-        plan:        r.plan,
-        name:        r.name,
-        description: r.description,
-        priceId:     r.price_id,
-        amount:      r.unit_amount,
-        currency:    r.currency,
-        interval:    r.interval,
-        features: {
-          ai_feature_enabled:   m.ai_feature_enabled   === 'true',
-          smtp_feature_enabled: m.smtp_feature_enabled === 'true',
-        },
-        limits: {
-          max_brands_allowed: m.max_brands_allowed ? parseInt(m.max_brands_allowed, 10) : null,
-          max_agents_allowed: m.max_agents_allowed ? parseInt(m.max_agents_allowed, 10) : null,
-          conversation_limit: m.conversation_limit ? parseInt(m.conversation_limit, 10) : null,
-        },
-      });
-    }
-  }
-  // Cheapest first.
-  return [...byPlan.values()].sort((a, b) => (a.amount || 0) - (b.amount || 0));
-}
-
 // ─── GET /api/billing/plans ──────────────────────────────────────────────────
+// Self-serve, purchasable plans (excludes the Free plan), read from the
+// `billing_plans` source-of-truth table. Shapes each with a `priceId` so the
+// tenant billing grid and checkout can reuse the same payload.
 async function getPlans(req, res) {
-  const plans = await loadPlansFromSchema();
+  const plans = (await plansRepo.listSelfServePlans()).map((p) => ({
+    plan:        p.slug,
+    name:        p.name,
+    description: p.description,
+    priceId:     p.paddle_price_id || p.slug,
+    amount:      p.amount,
+    currency:    p.currency,
+    interval:    p.interval,
+    features:    p.features,
+    limits:      p.limits,
+  }));
   return res.json({ plans });
 }
 
@@ -143,11 +93,13 @@ async function createCheckout(req, res) {
   const plan = String(req.body?.plan || '').trim().toLowerCase();
   if (!plan) return res.status(400).json({ error: 'plan is required' });
 
-  const plans  = await loadPlansFromSchema();
-  const target = plans.find((p) => p.plan === plan);
-  if (!target?.priceId) {
+  const target = await plansRepo.getPlanBySlug(plan);
+  if (!target || !target.active || !target.self_serve || target.is_free) {
     return res.status(400).json({ error: 'This plan is not available for self-serve checkout.' });
   }
+
+  // Ensure the plan is mirrored in Paddle (lazily syncs if needed).
+  const paddlePriceId = await plansRepo.ensurePaddlePriceId(plan);
 
   const { rows } = await pool.query(
     'SELECT id, company_name, stripe_customer_id, paddle_customer_id FROM tenants WHERE id = $1',
@@ -161,7 +113,8 @@ async function createCheckout(req, res) {
     tenant,
     agentEmail:    req.agent?.email,
     plan,
-    stripepriceId: target.priceId,
+    stripepriceId: target.paddle_price_id || null,
+    paddlePriceId,
     baseUrl:       base,
   });
 
@@ -288,23 +241,22 @@ async function createPublicCheckout(req, res) {
   if (!email) return res.status(400).json({ error: 'email is required' });
   if (!plan)  return res.status(400).json({ error: 'plan is required' });
 
-  // Always load Stripe plans for the priceId (needed when provider=stripe).
-  // For Paddle, the price ID comes from env vars inside billingProvider.
-  const plans  = await loadPlansFromSchema().catch(() => []);
-  const target = plans.find((p) => p.plan === plan);
-
-  const provider = billingProvider.getActiveProvider();
-  if (provider === 'stripe' && !target?.priceId) {
+  const target = await plansRepo.getPlanBySlug(plan);
+  if (!target || !target.active || !target.self_serve || target.is_free) {
     return res.status(400).json({
       error: 'This plan is not available for checkout. Please contact sales.',
     });
   }
 
+  // Ensure the plan is mirrored in Paddle (lazily syncs if needed).
+  const paddlePriceId = await plansRepo.ensurePaddlePriceId(plan);
+
   const base   = appBaseUrl(req);
   const result = await billingProvider.createPublicCheckoutUrl({
     email,
     plan,
-    stripepriceId: target?.priceId,
+    stripepriceId: target.paddle_price_id || null,
+    paddlePriceId,
     baseUrl:       base,
   });
 

@@ -437,218 +437,84 @@ router.delete('/tenants/:id/purge', async (req, res, next) => {
   }
 });
 
-// ─── GET /api/super-admin/stripe-status ──────────────────────────────────────
-// Reports Stripe connection state + the synced self-serve plans (plan→price).
-router.get('/stripe-status', async (req, res, next) => {
-  try {
-    let connected = false;
-    let account = null;
-    try {
-      // eslint-disable-next-line global-require
-      const { getUncachableStripeClient } = require('../lib/stripeClient');
-      const stripe = await getUncachableStripeClient();
-      const acct = await stripe.accounts.retrieve();
-      connected = true;
-      account = { id: acct.id, email: acct.email || null, country: acct.country || null };
-    } catch (err) {
-      logger.warn({ err: err.message }, 'stripe_status_not_connected');
-    }
+// ─── BILLING (Paddle) ─────────────────────────────────────────────────────────
+// Plan management lives here: the `billing_plans` table is the source of truth
+// and paid plans are mirrored into Paddle's catalog. The Free plan is managed
+// here too (features/limits only — no Paddle product).
+const plansRepo = require('../lib/plansRepo');
+const { getPaddleConnectionStatus } = require('../lib/paddleClient');
 
-    // Synced plan→price mapping from the `stripe` schema (if it exists yet).
-    let plans = [];
+// GET /api/super-admin/billing/status — Paddle connection + plan/subscription counts.
+router.get('/billing/status', async (req, res, next) => {
+  try {
+    const paddle = await getPaddleConnectionStatus();
+    const plans = await plansRepo.listPlans({ includeInactive: true });
+
     let subscriptions = 0;
     try {
-      const { rows } = await pool.query(
-        `SELECT
-           p.name                      AS name,
-           p.metadata ->> 'plan'       AS plan,
-           pr.id                       AS price_id,
-           pr.unit_amount              AS amount,
-           pr.currency                 AS currency,
-           pr.recurring ->> 'interval' AS interval
-         FROM stripe.products p
-         JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
-         WHERE p.active = true
-           AND p.metadata ->> 'plan' IN ('starter','pro')
-           AND pr.recurring ->> 'interval' = 'month'
-         ORDER BY pr.unit_amount ASC`
+      const r = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM tenants
+         WHERE paddle_subscription_id IS NOT NULL
+            OR subscription_status IN ('active','trialing','past_due','paused')`
       );
-      const seen = new Set();
-      for (const r of rows) {
-        if (seen.has(r.plan)) continue;
-        seen.add(r.plan);
-        plans.push({ plan: r.plan, name: r.name, priceId: r.price_id, amount: r.amount, currency: r.currency, interval: r.interval });
-      }
-      const subCount = await pool.query('SELECT COUNT(*)::int AS n FROM stripe.subscriptions');
-      subscriptions = subCount.rows[0]?.n || 0;
-    } catch {
-      // stripe schema not migrated yet — leave defaults.
-    }
+      subscriptions = r.rows[0]?.n || 0;
+    } catch { /* tenants table always exists; ignore transient errors */ }
 
-    return res.json({ connected, account, schemaReady: plans.length > 0 || subscriptions > 0, plans, subscriptions });
+    return res.json({
+      provider: (process.env.BILLING_PROVIDER || 'stripe').toLowerCase(),
+      connected: paddle.connected,
+      environment: paddle.environment,
+      error: paddle.error || null,
+      subscriptions,
+      planCount: plans.length,
+    });
   } catch (err) { next(err); }
 });
 
-// ─── STRIPE PLAN BUILDER ─────────────────────────────────────────────────────
-// Manage subscription plans (products + monthly prices) directly from the
-// dashboard. Feature flags & limits are stored on the Stripe product metadata
-// and applied to a tenant when the matching plan's subscription becomes active.
-
-// Canonical capability flags/limits configurable per plan.
-const PLAN_FEATURE_KEYS = ['ai_feature_enabled', 'smtp_feature_enabled'];
-const PLAN_LIMIT_KEYS   = ['max_brands_allowed', 'max_agents_allowed', 'conversation_limit'];
-
-function buildPlanMetadata(body) {
-  const meta = {};
-  const plan = String(body.plan || '').trim().toLowerCase();
-  if (plan) meta.plan = plan;
-  meta.self_serve = body.self_serve ? 'true' : 'false';
-  for (const k of PLAN_FEATURE_KEYS) {
-    if (body[k] !== undefined) meta[k] = body[k] ? 'true' : 'false';
-  }
-  for (const k of PLAN_LIMIT_KEYS) {
-    if (body[k] !== undefined) {
-      const n = parseInt(body[k], 10);
-      if (!Number.isNaN(n) && n > 0) meta[k] = String(n);
-    }
-  }
-  return meta;
-}
-
-function shapePlan(product, price) {
-  const m = product.metadata || {};
-  return {
-    productId:   product.id,
-    name:        product.name,
-    description: product.description || '',
-    plan:        m.plan || null,
-    self_serve:  m.self_serve === 'true',
-    active:      product.active,
-    priceId:     price ? price.id : null,
-    amount:      price ? price.unit_amount : null,
-    currency:    price ? price.currency : 'usd',
-    interval:    price && price.recurring ? price.recurring.interval : 'month',
-    features: {
-      ai_feature_enabled:   m.ai_feature_enabled   === 'true',
-      smtp_feature_enabled: m.smtp_feature_enabled === 'true',
-    },
-    limits: {
-      max_brands_allowed: m.max_brands_allowed ? parseInt(m.max_brands_allowed, 10) : null,
-      max_agents_allowed: m.max_agents_allowed ? parseInt(m.max_agents_allowed, 10) : null,
-      conversation_limit: m.conversation_limit ? parseInt(m.conversation_limit, 10) : null,
-    },
-  };
-}
-
-/** GET /api/super-admin/stripe/plans — live list from Stripe (products + default price). */
-router.get('/stripe/plans', async (req, res, next) => {
+// GET /api/super-admin/billing/plans — all plans (incl. inactive + Free).
+router.get('/billing/plans', async (req, res, next) => {
   try {
-    // eslint-disable-next-line global-require
-    const { getUncachableStripeClient } = require('../lib/stripeClient');
-    const stripe = await getUncachableStripeClient();
-    const products = await stripe.products.list({ active: true, limit: 100, expand: ['data.default_price'] });
-    const plans = products.data.map((p) => {
-      const price = p.default_price && typeof p.default_price === 'object' ? p.default_price : null;
-      return shapePlan(p, price);
-    });
+    const plans = await plansRepo.listPlans({ includeInactive: true });
     return res.json({ plans });
+  } catch (err) { next(err); }
+});
+
+// POST /api/super-admin/billing/plans — create a plan (syncs paid plans to Paddle).
+router.post('/billing/plans', async (req, res, next) => {
+  try {
+    const { plan, warning } = await plansRepo.createPlan(req.body || {});
+    logger.info({ slug: plan.slug }, 'admin_plan_created');
+    return res.status(201).json({ plan, warning });
   } catch (err) {
-    logger.warn({ err: err.message }, 'stripe_plans_list_failed');
-    return res.status(503).json({ error: 'Stripe is not connected or unavailable' });
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
+    logger.error({ err: err.message }, 'admin_plan_create_failed');
+    return res.status(500).json({ error: err.message || 'Failed to create plan' });
   }
 });
 
-/**
- * POST /api/super-admin/stripe/plans
- * Body: { name, description?, plan, self_serve?, amount (cents), currency?,
- *         ai_feature_enabled?, smtp_feature_enabled?,
- *         max_brands_allowed?, max_agents_allowed?, conversation_limit? }
- * Creates a product + recurring monthly price, sets it as the default price.
- */
-router.post('/stripe/plans', async (req, res, next) => {
+// PATCH /api/super-admin/billing/plans/:id — update a plan (re-syncs Paddle as needed).
+router.patch('/billing/plans/:id', async (req, res, next) => {
   try {
-    const { name, description, amount, currency = 'usd' } = req.body || {};
-    if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
-    const cents = parseInt(amount, 10);
-    if (Number.isNaN(cents) || cents < 0) return res.status(400).json({ error: 'amount (in cents) is required' });
-
-    // eslint-disable-next-line global-require
-    const { getUncachableStripeClient } = require('../lib/stripeClient');
-    const stripe = await getUncachableStripeClient();
-
-    const metadata = buildPlanMetadata(req.body);
-    const product = await stripe.products.create({
-      name: name.trim(),
-      description: description?.trim() || undefined,
-      metadata,
-    });
-    const price = await stripe.prices.create({
-      product: product.id,
-      unit_amount: cents,
-      currency: String(currency).toLowerCase(),
-      recurring: { interval: 'month' },
-    });
-    await stripe.products.update(product.id, { default_price: price.id });
-
-    logger.info({ productId: product.id, priceId: price.id, plan: metadata.plan }, 'stripe_plan_created');
-    return res.status(201).json(shapePlan({ ...product, metadata }, price));
+    const { plan, warning } = await plansRepo.updatePlan(req.params.id, req.body || {});
+    logger.info({ id: req.params.id, slug: plan.slug }, 'admin_plan_updated');
+    return res.json({ plan, warning });
   } catch (err) {
-    logger.error({ err: err.message }, 'stripe_plan_create_failed');
-    return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to create plan' });
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
+    logger.error({ err: err.message }, 'admin_plan_update_failed');
+    return res.status(500).json({ error: err.message || 'Failed to update plan' });
   }
 });
 
-/**
- * PATCH /api/super-admin/stripe/plans/:productId
- * Updates name/description/metadata. If `amount` is supplied and differs, a new
- * price is created (Stripe prices are immutable), set as default, and the old
- * one archived. Set `active:false` to archive the plan.
- */
-router.patch('/stripe/plans/:productId', async (req, res, next) => {
+// DELETE /api/super-admin/billing/plans/:id — remove a plan (Free plan protected).
+router.delete('/billing/plans/:id', async (req, res, next) => {
   try {
-    const { productId } = req.params;
-    const { name, description, amount, currency, active } = req.body || {};
-
-    // eslint-disable-next-line global-require
-    const { getUncachableStripeClient } = require('../lib/stripeClient');
-    const stripe = await getUncachableStripeClient();
-
-    const existing = await stripe.products.retrieve(productId, { expand: ['default_price'] });
-    const mergedMeta = { ...(existing.metadata || {}), ...buildPlanMetadata(req.body) };
-
-    const productUpdate = { metadata: mergedMeta };
-    if (name?.trim()) productUpdate.name = name.trim();
-    if (description !== undefined) productUpdate.description = description?.trim() || null;
-    if (active !== undefined) productUpdate.active = !!active;
-
-    let price = existing.default_price && typeof existing.default_price === 'object' ? existing.default_price : null;
-
-    if (amount !== undefined) {
-      const cents = parseInt(amount, 10);
-      if (Number.isNaN(cents) || cents < 0) return res.status(400).json({ error: 'amount must be a non-negative integer (cents)' });
-      const changed = !price || price.unit_amount !== cents;
-      if (changed) {
-        const newPrice = await stripe.prices.create({
-          product: productId,
-          unit_amount: cents,
-          currency: String(currency || price?.currency || 'usd').toLowerCase(),
-          recurring: { interval: 'month' },
-        });
-        productUpdate.default_price = newPrice.id;
-        // Archive the previous price so it no longer shows as purchasable.
-        if (price?.id) {
-          try { await stripe.prices.update(price.id, { active: false }); } catch { /* non-fatal */ }
-        }
-        price = newPrice;
-      }
-    }
-
-    const updated = await stripe.products.update(productId, productUpdate);
-    logger.info({ productId, plan: mergedMeta.plan }, 'stripe_plan_updated');
-    return res.json(shapePlan(updated, price));
+    await plansRepo.deletePlan(req.params.id);
+    logger.info({ id: req.params.id }, 'admin_plan_deleted');
+    return res.json({ ok: true });
   } catch (err) {
-    logger.error({ err: err.message }, 'stripe_plan_update_failed');
-    return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to update plan' });
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
+    logger.error({ err: err.message }, 'admin_plan_delete_failed');
+    return res.status(500).json({ error: err.message || 'Failed to delete plan' });
   }
 });
 

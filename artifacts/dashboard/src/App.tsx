@@ -101,10 +101,12 @@ interface BillingPlan {
   priceId: string; amount: number; currency: string; interval: string
   features?: PlanFeatures; limits?: PlanLimits
 }
-interface StripePlan {
-  productId: string; name: string; description: string; plan: string | null
-  self_serve: boolean; active: boolean; priceId: string | null
-  amount: number | null; currency: string; interval: string
+interface BillingAdminPlan {
+  id: string; slug: string; plan: string; name: string; description: string
+  amount: number; currency: string; interval: string
+  is_free: boolean; self_serve: boolean; active: boolean
+  sort_order: number; trial_days: number
+  paddle_product_id: string | null; paddle_price_id: string | null; paddle_synced: boolean
   features: PlanFeatures; limits: PlanLimits
 }
 interface SubscriptionInfo {
@@ -112,12 +114,13 @@ interface SubscriptionInfo {
   plan: string; status: string
   gracePeriodEndsAt: string | null; currentPeriodEnd: string | null
 }
-interface StripeStatus {
+interface BillingStatus {
+  provider: string
   connected: boolean
-  account: { id: string; email: string | null; country: string | null } | null
-  schemaReady: boolean
-  plans: { plan: string; name: string; priceId: string; amount: number; currency: string; interval: string }[]
+  environment: string
+  error: string | null
   subscriptions: number
+  planCount: number
 }
 interface PlatformSmtpInput {
   host: string; port: number; secure: boolean; user: string
@@ -322,26 +325,30 @@ function useApi() {
       const d = await r.json() as { url: string }
       return d.url
     },
-    getStripeStatus: async (): Promise<StripeStatus> => {
-      const r = await authFetch(`${API}/super-admin/stripe-status`)
+    getBillingStatus: async (): Promise<BillingStatus> => {
+      const r = await authFetch(`${API}/super-admin/billing/status`)
       if (!r.ok) throw new Error(`${r.status}`)
-      return r.json() as Promise<StripeStatus>
+      return r.json() as Promise<BillingStatus>
     },
-    listStripePlans: async (): Promise<StripePlan[]> => {
-      const r = await authFetch(`${API}/super-admin/stripe/plans`)
+    listAdminPlans: async (): Promise<BillingAdminPlan[]> => {
+      const r = await authFetch(`${API}/super-admin/billing/plans`)
       if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to load plans') }
-      const d = await r.json() as { plans: StripePlan[] }
+      const d = await r.json() as { plans: BillingAdminPlan[] }
       return d.plans
     },
-    createStripePlan: async (body: Record<string, unknown>): Promise<StripePlan> => {
-      const r = await authFetch(`${API}/super-admin/stripe/plans`, { method: 'POST', body: JSON.stringify(body) })
+    createAdminPlan: async (body: Record<string, unknown>): Promise<{ plan: BillingAdminPlan; warning: string | null }> => {
+      const r = await authFetch(`${API}/super-admin/billing/plans`, { method: 'POST', body: JSON.stringify(body) })
       if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to create plan') }
-      return r.json() as Promise<StripePlan>
+      return r.json() as Promise<{ plan: BillingAdminPlan; warning: string | null }>
     },
-    updateStripePlan: async (productId: string, body: Record<string, unknown>): Promise<StripePlan> => {
-      const r = await authFetch(`${API}/super-admin/stripe/plans/${productId}`, { method: 'PATCH', body: JSON.stringify(body) })
+    updateAdminPlan: async (id: string, body: Record<string, unknown>): Promise<{ plan: BillingAdminPlan; warning: string | null }> => {
+      const r = await authFetch(`${API}/super-admin/billing/plans/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
       if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to update plan') }
-      return r.json() as Promise<StripePlan>
+      return r.json() as Promise<{ plan: BillingAdminPlan; warning: string | null }>
+    },
+    deleteAdminPlan: async (id: string): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/billing/plans/${id}`, { method: 'DELETE' })
+      if (!r.ok) { const err = await r.json().catch(() => ({})) as { error?: string }; throw new Error(err.error ?? 'Failed to delete plan') }
     },
     listSANTenants: async (): Promise<SANTenant[]> => {
       const r = await authFetch(`${API}/super-admin/tenants`)
@@ -2767,7 +2774,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'stripe'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2962,7 +2969,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('super_admins')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'super_admins' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Super Admins</button>
             <button onClick={() => setTab('user_accounts')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'user_accounts' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>User Accounts</button>
             <button onClick={() => setTab('platform_smtp')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'platform_smtp' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Platform Email</button>
-            <button onClick={() => setTab('stripe')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'stripe' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Stripe</button>
+            <button onClick={() => setTab('billing')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'billing' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Billing</button>
           </div>
 
           {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
@@ -3033,8 +3040,8 @@ function SuperAdminSection() {
             <SuperAdminsPanel api={api} />
           ) : tab === 'user_accounts' ? (
             <UserAccountsPanel api={api} />
-          ) : tab === 'stripe' ? (
-            <StripePanel api={api} />
+          ) : tab === 'billing' ? (
+            <BillingPanel api={api} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
@@ -3044,28 +3051,34 @@ function SuperAdminSection() {
   )
 }
 
-// ─── Stripe Panel (super-admin: connection state + plan→price mapping) ────────
+// ─── Billing Panel (super-admin: Paddle connection + plan management) ─────────
 type PlanFormState = {
   name: string; description: string; plan: string; amount: string
-  self_serve: boolean; ai_feature_enabled: boolean; smtp_feature_enabled: boolean
+  is_free: boolean; self_serve: boolean
+  ai_feature_enabled: boolean; smtp_feature_enabled: boolean
+  trial_days: string
   max_brands_allowed: string; max_agents_allowed: string; conversation_limit: string
 }
 
 const emptyPlanForm: PlanFormState = {
   name: '', description: '', plan: '', amount: '',
-  self_serve: true, ai_feature_enabled: false, smtp_feature_enabled: false,
+  is_free: false, self_serve: true,
+  ai_feature_enabled: false, smtp_feature_enabled: false,
+  trial_days: '14',
   max_brands_allowed: '', max_agents_allowed: '', conversation_limit: '',
 }
 
-function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
-  const [status, setStatus]   = useState<StripeStatus | null>(null)
-  const [plans, setPlans]     = useState<StripePlan[]>([])
+function BillingPanel({ api }: { api: ReturnType<typeof useApi> }) {
+  const [status, setStatus]   = useState<BillingStatus | null>(null)
+  const [plans, setPlans]     = useState<BillingAdminPlan[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
+  const [notice, setNotice]   = useState<string | null>(null)
 
   // Plan builder modal.
   const [showForm, setShowForm] = useState(false)
-  const [editId, setEditId]     = useState<string | null>(null)   // productId when editing
+  const [editId, setEditId]     = useState<string | null>(null)   // plan id when editing
+  const [editIsFree, setEditIsFree] = useState(false)
   const [form, setForm]         = useState<PlanFormState>(emptyPlanForm)
   const [saving, setSaving]     = useState(false)
   const [formErr, setFormErr]   = useState<string | null>(null)
@@ -3074,8 +3087,8 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
     setLoading(true); setError(null)
     try {
       const [st, pl] = await Promise.all([
-        api.getStripeStatus(),
-        api.listStripePlans().catch(() => [] as StripePlan[]),
+        api.getBillingStatus(),
+        api.listAdminPlans().catch(() => [] as BillingAdminPlan[]),
       ])
       setStatus(st); setPlans(pl)
     }
@@ -3084,15 +3097,17 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
   }, []) // eslint-disable-line
   useEffect(() => { load() }, [load])
 
-  const openCreate = () => { setEditId(null); setForm(emptyPlanForm); setFormErr(null); setShowForm(true) }
-  const openEdit = (p: StripePlan) => {
-    setEditId(p.productId)
+  const openCreate = () => { setEditId(null); setEditIsFree(false); setForm(emptyPlanForm); setFormErr(null); setShowForm(true) }
+  const openEdit = (p: BillingAdminPlan) => {
+    setEditId(p.id)
+    setEditIsFree(p.is_free)
     setForm({
-      name: p.name, description: p.description, plan: p.plan ?? '',
-      amount: p.amount != null ? (p.amount / 100).toString() : '',
-      self_serve: p.self_serve,
+      name: p.name, description: p.description ?? '', plan: p.plan ?? '',
+      amount: p.is_free ? '0' : (p.amount / 100).toString(),
+      is_free: p.is_free, self_serve: p.self_serve,
       ai_feature_enabled: p.features.ai_feature_enabled,
       smtp_feature_enabled: p.features.smtp_feature_enabled,
+      trial_days: p.trial_days?.toString() ?? '0',
       max_brands_allowed: p.limits.max_brands_allowed?.toString() ?? '',
       max_agents_allowed: p.limits.max_agents_allowed?.toString() ?? '',
       conversation_limit: p.limits.conversation_limit?.toString() ?? '',
@@ -3104,53 +3119,79 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setFormErr(null)
     if (!form.name.trim()) { setFormErr('Plan name is required'); return }
-    const dollars = parseFloat(form.amount)
-    if (Number.isNaN(dollars) || dollars < 0) { setFormErr('Enter a valid monthly price'); return }
+    const isFree = editId ? editIsFree : form.is_free
+    let dollars = 0
+    if (!isFree) {
+      dollars = parseFloat(form.amount)
+      if (Number.isNaN(dollars) || dollars < 0) { setFormErr('Enter a valid monthly price'); return }
+    }
     setSaving(true)
     const body: Record<string, unknown> = {
       name: form.name.trim(),
       description: form.description.trim(),
-      plan: form.plan.trim() || form.name.trim().toLowerCase().replace(/\s+/g, '_'),
-      amount: Math.round(dollars * 100),
-      self_serve: form.self_serve,
       ai_feature_enabled: form.ai_feature_enabled,
       smtp_feature_enabled: form.smtp_feature_enabled,
     }
-    if (form.max_brands_allowed) body.max_brands_allowed = parseInt(form.max_brands_allowed, 10)
-    if (form.max_agents_allowed) body.max_agents_allowed = parseInt(form.max_agents_allowed, 10)
-    if (form.conversation_limit) body.conversation_limit = parseInt(form.conversation_limit, 10)
+    if (!editId) {
+      body.is_free = form.is_free
+      body.plan = form.plan.trim() || form.name.trim().toLowerCase().replace(/\s+/g, '_')
+    }
+    if (!isFree) {
+      body.amount = Math.round(dollars * 100)
+      body.self_serve = form.self_serve
+      const trial = parseInt(form.trial_days, 10)
+      if (Number.isFinite(trial) && trial >= 0) body.trial_days = trial
+    }
+    body.max_brands_allowed = form.max_brands_allowed ? parseInt(form.max_brands_allowed, 10) : null
+    body.max_agents_allowed = form.max_agents_allowed ? parseInt(form.max_agents_allowed, 10) : null
+    body.conversation_limit = form.conversation_limit ? parseInt(form.conversation_limit, 10) : null
     try {
-      if (editId) await api.updateStripePlan(editId, body)
-      else await api.createStripePlan(body)
+      const res = editId ? await api.updateAdminPlan(editId, body) : await api.createAdminPlan(body)
+      setNotice(res.warning ? `Saved — ${res.warning}` : null)
       closeForm(); await load()
     } catch (err) { setFormErr((err as Error).message) }
     finally { setSaving(false) }
   }
 
-  const archive = async (p: StripePlan) => {
+  const archive = async (p: BillingAdminPlan) => {
     if (!window.confirm(`Archive "${p.name}"? It will no longer be purchasable.`)) return
-    try { await api.updateStripePlan(p.productId, { active: false }); await load() }
+    try { await api.updateAdminPlan(p.id, { active: false }); await load() }
+    catch (err) { setError((err as Error).message) }
+  }
+  const reactivate = async (p: BillingAdminPlan) => {
+    try { await api.updateAdminPlan(p.id, { active: true }); await load() }
+    catch (err) { setError((err as Error).message) }
+  }
+  const remove = async (p: BillingAdminPlan) => {
+    if (!window.confirm(`Permanently delete "${p.name}"? This cannot be undone.`)) return
+    try { await api.deleteAdminPlan(p.id); await load() }
     catch (err) { setError((err as Error).message) }
   }
 
-  if (loading) return <div className="flex items-center gap-2 text-xs text-slate-400 py-8"><RefreshCw size={12} className="animate-spin" /> Loading Stripe status…</div>
+  if (loading) return <div className="flex items-center gap-2 text-xs text-slate-400 py-8"><RefreshCw size={12} className="animate-spin" /> Loading billing status…</div>
   if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error} <button onClick={load} className="underline ml-1">Retry</button></div>
   if (!status) return null
 
+  const providerLabel = status.provider.charAt(0).toUpperCase() + status.provider.slice(1)
+
   return (
     <div className="space-y-4">
+      {notice && <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center justify-between"><span>{notice}</span><button onClick={() => setNotice(null)} className="text-amber-500 hover:text-amber-700"><X size={13} /></button></div>}
+
       {/* Connection state */}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-900">Connection</h3>
+          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2"><CreditCard size={15} className="text-sky-600" /> {providerLabel} Connection</h3>
           <button onClick={load} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Refresh"><RefreshCw size={12} /></button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${status.connected ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>{status.connected ? 'Connected' : 'Not connected'}</span>
-          {status.account && <span className="text-xs text-slate-500">{status.account.id}{status.account.country ? ` · ${status.account.country.toUpperCase()}` : ''}{status.account.email ? ` · ${status.account.email}` : ''}</span>}
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 capitalize">{status.environment || 'unknown'}</span>
+          <span className="text-xs text-slate-500">Provider: <strong className="text-slate-700">{providerLabel}</strong></span>
         </div>
+        {status.error && <p className="mt-2 text-xs text-red-600">{status.error}</p>}
         <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
-          <span>Schema synced: <strong className={status.schemaReady ? 'text-emerald-700' : 'text-amber-600'}>{status.schemaReady ? 'Yes' : 'Pending'}</strong></span>
+          <span>Plans: <strong className="text-slate-700">{status.planCount}</strong></span>
           <span>Active subscriptions: <strong className="text-slate-700">{status.subscriptions}</strong></span>
         </div>
       </div>
@@ -3158,23 +3199,25 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
       {/* Plan builder */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div><h3 className="text-sm font-semibold text-slate-900">Plans</h3><p className="text-[11px] text-slate-400 mt-0.5">Create plans with the features they unlock. Activating a plan grants those features to the client.</p></div>
-          <button onClick={openCreate} disabled={!status.connected} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700 disabled:opacity-50"><Plus size={13} /> New Plan</button>
+          <div><h3 className="text-sm font-semibold text-slate-900">Plans</h3><p className="text-[11px] text-slate-400 mt-0.5">Create plans with the features they unlock. Paid plans sync to {providerLabel}. Activating a plan grants those features to the tenant.</p></div>
+          <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-medium rounded-md hover:bg-sky-700"><Plus size={13} /> New Plan</button>
         </div>
         {plans.length === 0 ? (
           <div className="text-center py-10 text-slate-400"><CreditCard size={24} className="mx-auto mb-2 text-slate-300" /><p className="text-sm">No plans yet. Click “New Plan” to create one.</p></div>
         ) : (
           <div className="divide-y divide-slate-100">
             {plans.map(p => (
-              <div key={p.productId} className="px-5 py-3 flex items-start justify-between gap-4">
+              <div key={p.id} className="px-5 py-3 flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-slate-800">{p.name}</span>
-                    {p.plan && <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded capitalize">{p.plan}</span>}
-                    {p.self_serve && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Self-serve</span>}
+                    <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded capitalize">{p.plan}</span>
+                    {p.is_free && <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">Free</span>}
+                    {p.self_serve && !p.is_free && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Self-serve</span>}
+                    {!p.is_free && (p.paddle_synced ? <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Paddle synced</span> : <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Not synced</span>)}
                     {!p.active && <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">Archived</span>}
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">{p.amount != null ? `${fmtMoney(p.amount, p.currency)}/${p.interval}` : 'No price'}</p>
+                  <p className="text-xs text-slate-500 mt-1">{p.is_free ? 'Free' : `${fmtMoney(p.amount, p.currency)}/${p.interval}`}{!p.is_free && p.trial_days > 0 ? ` · ${p.trial_days}-day trial` : ''}</p>
                   <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                     {p.features.ai_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">AI replies</span>}
                     {p.features.smtp_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">Custom SMTP</span>}
@@ -3185,7 +3228,9 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => openEdit(p)} className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded" title="Edit plan"><Pencil size={13} /></button>
-                  {p.active && <button onClick={() => archive(p)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded" title="Archive plan"><Trash2 size={13} /></button>}
+                  {!p.is_free && p.active && <button onClick={() => archive(p)} className="p-1.5 text-amber-400 hover:text-amber-600 hover:bg-amber-50 rounded" title="Archive plan"><Trash2 size={13} /></button>}
+                  {!p.is_free && !p.active && <button onClick={() => reactivate(p)} className="p-1.5 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded" title="Reactivate plan"><RefreshCw size={13} /></button>}
+                  {!p.is_free && !p.active && <button onClick={() => remove(p)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded" title="Delete plan"><X size={13} /></button>}
                 </div>
               </div>
             ))}
@@ -3196,27 +3241,39 @@ function StripePanel({ api }: { api: ReturnType<typeof useApi> }) {
       {/* Plan builder modal */}
       {showForm && (
         <Modal onClose={closeForm}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">{editId ? 'Edit Plan' : 'New Plan'}</h2><button onClick={closeForm} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">{editId ? `Edit Plan${editIsFree ? ' (Free)' : ''}` : 'New Plan'}</h2><button onClick={closeForm} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
           {formErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{formErr}</div>}
           <form onSubmit={submit} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan name *</label><input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Growth" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan key</label><input type="text" value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} placeholder="auto from name" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan key</label><input type="text" value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))} disabled={!!editId} placeholder="auto from name" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30 disabled:opacity-60" /></div>
             </div>
             <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Description</label><input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
-            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Monthly price (USD) *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="49.00" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" />{editId && <p className="text-[10px] text-slate-400 mt-1">Changing the price creates a new Stripe price and archives the old one.</p>}</div>
+
+            {!editId && (
+              <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.is_free} onChange={e => setForm(f => ({ ...f, is_free: e.target.checked }))} className="rounded" /> This is the free plan (no price, not synced to {providerLabel})</label>
+            )}
+
+            {!(editId ? editIsFree : form.is_free) && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Monthly price (USD) *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="49.00" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" />{editId && <p className="text-[10px] text-slate-400 mt-1">Changing the price creates a new {providerLabel} price.</p>}</div>
+                  <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Trial days</label><input type="number" min="0" value={form.trial_days} onChange={e => setForm(f => ({ ...f, trial_days: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.self_serve} onChange={e => setForm(f => ({ ...f, self_serve: e.target.checked }))} className="rounded" /> Available for self-serve checkout</label>
+              </>
+            )}
 
             <div className="pt-1">
               <p className="text-xs font-medium text-slate-600 mb-1.5">Features unlocked</p>
               <div className="space-y-1.5">
-                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.self_serve} onChange={e => setForm(f => ({ ...f, self_serve: e.target.checked }))} className="rounded" /> Available for self-serve checkout</label>
                 <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.ai_feature_enabled} onChange={e => setForm(f => ({ ...f, ai_feature_enabled: e.target.checked }))} className="rounded" /> AI auto-replies</label>
                 <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.smtp_feature_enabled} onChange={e => setForm(f => ({ ...f, smtp_feature_enabled: e.target.checked }))} className="rounded" /> Custom SMTP / email</label>
               </div>
             </div>
 
             <div className="pt-1">
-              <p className="text-xs font-medium text-slate-600 mb-1.5">Limits granted (optional)</p>
+              <p className="text-xs font-medium text-slate-600 mb-1.5">Limits granted (blank = unlimited)</p>
               <div className="grid grid-cols-3 gap-2">
                 <div><label className="block text-[10px] text-slate-400 mb-1">Brands</label><input type="number" min="1" value={form.max_brands_allowed} onChange={e => setForm(f => ({ ...f, max_brands_allowed: e.target.value }))} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
                 <div><label className="block text-[10px] text-slate-400 mb-1">Agents</label><input type="number" min="1" value={form.max_agents_allowed} onChange={e => setForm(f => ({ ...f, max_agents_allowed: e.target.value }))} className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>

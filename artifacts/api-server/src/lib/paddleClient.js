@@ -136,6 +136,84 @@ function getPaddlePriceId(plan) {
   return process.env[`PADDLE_${plan.toUpperCase()}_PRICE_ID`] || null;
 }
 
+// ---------------------------------------------------------------------------
+// Catalog write helpers — used by the plan manager to keep Paddle in sync with
+// the `billing_plans` table (source of truth).
+// ---------------------------------------------------------------------------
+
+/** Reports Paddle connection state by pinging the catalog. */
+async function getPaddleConnectionStatus() {
+  const environment =
+    process.env.PADDLE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
+  try {
+    await paddleRequest('GET', '/products?per_page=1');
+    return { connected: true, environment };
+  } catch (err) {
+    return { connected: false, environment, error: err.message };
+  }
+}
+
+/** Creates a Paddle product. Returns the created product object. */
+async function createPaddleProduct({ name, description, customData }) {
+  const resp = await paddleRequest('POST', '/products', {
+    name,
+    description: description || undefined,
+    tax_category: 'saas',
+    custom_data: customData || undefined,
+  });
+  return resp.data;
+}
+
+/** Updates a Paddle product's name/description/custom_data (best-effort fields). */
+async function updatePaddleProduct(productId, { name, description, customData }) {
+  const body = {};
+  if (name !== undefined) body.name = name;
+  if (description !== undefined) body.description = description || null;
+  if (customData !== undefined) body.custom_data = customData;
+  const resp = await paddleRequest('PATCH', `/products/${productId}`, body);
+  return resp.data;
+}
+
+/** Archives a Paddle product so it is no longer purchasable. */
+async function archivePaddleProduct(productId) {
+  const resp = await paddleRequest('PATCH', `/products/${productId}`, {
+    status: 'archived',
+  });
+  return resp.data;
+}
+
+/**
+ * Creates a recurring monthly Paddle price with an optional baked-in trial.
+ * Paddle prices are immutable — change price by creating a new one + archiving
+ * the old. Returns the created price object.
+ */
+async function createPaddlePrice({ productId, amountCents, currency, trialDays, plan }) {
+  const body = {
+    product_id: productId,
+    description: `${plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : 'Plan'} — Monthly`,
+    unit_price: {
+      amount: String(amountCents),
+      currency_code: String(currency || 'usd').toUpperCase(),
+    },
+    billing_cycle: { interval: 'month', frequency: 1 },
+    tax_mode: 'account_setting',
+    custom_data: plan ? { plan } : undefined,
+  };
+  if (trialDays && trialDays > 0) {
+    body.trial_period = { interval: 'day', frequency: trialDays };
+  }
+  const resp = await paddleRequest('POST', '/prices', body);
+  return resp.data;
+}
+
+/** Archives a Paddle price. */
+async function archivePaddlePrice(priceId) {
+  const resp = await paddleRequest('PATCH', `/prices/${priceId}`, {
+    status: 'archived',
+  });
+  return resp.data;
+}
+
 /**
  * Verifies an incoming Paddle webhook signature.
  * Header format: `Paddle-Signature: ts=<unix>;h1=<hex-sha256>`
@@ -180,4 +258,10 @@ module.exports = {
   createCheckoutTransaction,
   getPaddlePriceId,
   verifyPaddleWebhook,
+  getPaddleConnectionStatus,
+  createPaddleProduct,
+  updatePaddleProduct,
+  archivePaddleProduct,
+  createPaddlePrice,
+  archivePaddlePrice,
 };

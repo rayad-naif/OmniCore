@@ -139,15 +139,38 @@ async function notifyTenantAdmins(
   }
 }
 
-// Reads a plan's feature/limit set from the synced `stripe` product metadata and
-// applies it to the tenant's capability columns. Activating a plan therefore
-// grants exactly the features configured on that plan in the plan builder.
+// Reads a plan's feature/limit set from the `billing_plans` table (the source of
+// truth, including the Free plan) and applies it to the tenant's capability
+// columns. Activating a plan therefore grants exactly the features configured on
+// that plan in the Super Admin → Billing plan manager.
 async function applyPlanFeatures(
   tenantId: string,
   plan: string | null,
 ): Promise<void> {
-  // Free / no plan → reset to baseline free-tier limits.
-  if (!plan || plan === "free") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const plansRepo = require("./lib/plansRepo");
+
+  type PlanShape = {
+    is_free: boolean;
+    features: { ai_feature_enabled: boolean; smtp_feature_enabled: boolean };
+    limits: {
+      max_brands_allowed: number | null;
+      max_agents_allowed: number | null;
+      conversation_limit: number | null;
+    };
+  };
+
+  // Resolve the plan row, falling back to the Free plan for null/unknown plans.
+  let row: PlanShape | null = null;
+  try {
+    row = (await plansRepo.getPlanBySlug(plan || "free")) as PlanShape | null;
+    if (!row) row = (await plansRepo.getPlanBySlug("free")) as PlanShape | null;
+  } catch {
+    row = null;
+  }
+
+  // No table/plan available yet → reset to baseline free-tier limits.
+  if (!row) {
     await pool.query(
       `UPDATE tenants SET
          max_brands_allowed   = 1,
@@ -162,27 +185,6 @@ async function applyPlanFeatures(
     return;
   }
 
-  let meta: Record<string, string> | null = null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT metadata FROM stripe.products
-       WHERE active = true AND metadata ->> 'plan' = $1
-       ORDER BY created DESC LIMIT 1`,
-      [plan],
-    );
-    meta = (rows[0]?.metadata as Record<string, string>) || null;
-  } catch {
-    meta = null; // stripe schema not migrated yet
-  }
-  if (!meta) return; // unknown plan — leave limits untouched
-
-  const num = (v: string | undefined, fallback: number): number => {
-    const n = parseInt(String(v ?? ""), 10);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
-  };
-  const bool = (v: string | undefined, fallback: boolean): boolean =>
-    v === undefined ? fallback : v === "true" || v === "1";
-
   await pool.query(
     `UPDATE tenants SET
        max_brands_allowed   = $1,
@@ -193,15 +195,15 @@ async function applyPlanFeatures(
        updated_at           = NOW()
      WHERE id = $6`,
     [
-      num(meta.max_brands_allowed, 3),
-      num(meta.max_agents_allowed, 10),
-      num(meta.conversation_limit, 1000),
-      bool(meta.ai_feature_enabled, true),
-      bool(meta.smtp_feature_enabled, false),
+      row.limits.max_brands_allowed ?? (row.is_free ? 1 : 3),
+      row.limits.max_agents_allowed ?? (row.is_free ? 2 : 10),
+      row.limits.conversation_limit ?? (row.is_free ? 100 : 1000),
+      row.features.ai_feature_enabled,
+      row.features.smtp_feature_enabled,
       tenantId,
     ],
   );
-  logger.info({ tenantId, plan }, "stripe_plan_features_applied");
+  logger.info({ tenantId, plan: plan || "free" }, "plan_features_applied");
 }
 
 // Resolve a tenant id from a Stripe customer id (used by invoice events).

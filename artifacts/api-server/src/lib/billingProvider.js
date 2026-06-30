@@ -114,14 +114,14 @@ async function _stripePortal({ tenant, baseUrl }) {
 
 // ─── Paddle helpers ───────────────────────────────────────────────────────────
 
-async function _paddlePublicCheckout({ email, plan, baseUrl }) {
+async function _paddlePublicCheckout({ email, plan, paddlePriceId, baseUrl }) {
   const { createCheckoutTransaction, getPaddlePriceId } = require('./paddleClient');
 
-  const priceId = getPaddlePriceId(plan);
+  const priceId = paddlePriceId || getPaddlePriceId(plan);
   if (!priceId) {
     const err = new Error(
-      `PADDLE_${plan.toUpperCase()}_PRICE_ID is not configured. ` +
-        `Run the Paddle seed script and add this environment secret.`,
+      `No Paddle price is available for the "${plan}" plan. ` +
+        `Open Super Admin → Billing and sync the plan to Paddle.`,
     );
     err.status = 503;
     throw err;
@@ -139,14 +139,15 @@ async function _paddlePublicCheckout({ email, plan, baseUrl }) {
   return { url, provider: 'paddle' };
 }
 
-async function _paddleTenantCheckout({ tenant, agentEmail, plan, baseUrl }) {
+async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, baseUrl }) {
   const { createCheckoutTransaction, getPaddlePriceId, paddleRequest } = require('./paddleClient');
   const { pool } = require('./db');
 
-  const priceId = getPaddlePriceId(plan);
+  const priceId = paddlePriceId || getPaddlePriceId(plan);
   if (!priceId) {
     const err = new Error(
-      `PADDLE_${plan.toUpperCase()}_PRICE_ID is not configured for Paddle checkout.`,
+      `No Paddle price is available for the "${plan}" plan. ` +
+        `Open Super Admin → Billing and sync the plan to Paddle.`,
     );
     err.status = 503;
     throw err;
@@ -206,10 +207,10 @@ async function _paddlePortal({ tenant }) {
  * @param {string} opts.baseUrl
  * @returns {Promise<{url: string, provider: string}>}
  */
-async function createPublicCheckoutUrl({ email, plan, stripepriceId, baseUrl }) {
+async function createPublicCheckoutUrl({ email, plan, stripepriceId, paddlePriceId, baseUrl }) {
   const provider = getActiveProvider();
   if (provider === 'paddle') {
-    return _paddlePublicCheckout({ email, plan, baseUrl });
+    return _paddlePublicCheckout({ email, plan, paddlePriceId, baseUrl });
   }
   return _stripePublicCheckout({ email, plan, stripepriceId, baseUrl });
 }
@@ -219,10 +220,10 @@ async function createPublicCheckoutUrl({ email, plan, stripepriceId, baseUrl }) 
  * Routes to the provider that already has a customer record for this tenant,
  * falling back to the active provider.
  */
-async function createTenantCheckoutUrl({ tenant, agentEmail, plan, stripepriceId, baseUrl }) {
+async function createTenantCheckoutUrl({ tenant, agentEmail, plan, stripepriceId, paddlePriceId, baseUrl }) {
   // Prefer the provider that already has a record for this tenant.
   if (tenant.paddle_customer_id || getActiveProvider() === 'paddle') {
-    return _paddleTenantCheckout({ tenant, agentEmail, plan, baseUrl });
+    return _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, baseUrl });
   }
   return _stripeTenantCheckout({ tenant, agentEmail, plan, stripepriceId, baseUrl });
 }
