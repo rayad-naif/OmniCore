@@ -27,6 +27,18 @@ from = "/pricing.html"
 to = "/pricing.html"
 
 [[services.production.rewrites]]
+from = "/terms.html"
+to = "/terms.html"
+
+[[services.production.rewrites]]
+from = "/privacy.html"
+to = "/privacy.html"
+
+[[services.production.rewrites]]
+from = "/refunds.html"
+to = "/refunds.html"
+
+[[services.production.rewrites]]
 from = "/*"
 to = "/index.html"
 
