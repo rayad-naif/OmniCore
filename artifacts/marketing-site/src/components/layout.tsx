@@ -107,8 +107,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div>
             <h3 className="font-medium mb-4">Legal</h3>
             <ul className="flex flex-col gap-3 text-sm text-muted-foreground">
-              <li><a href="#" className="hover:text-primary transition-colors">Privacy Policy</a></li>
-              <li><a href="#" className="hover:text-primary transition-colors">Terms of Service</a></li>
+              <li><Link href="/privacy" className="hover:text-primary transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="hover:text-primary transition-colors">Terms of Service</Link></li>
+              <li><Link href="/refunds" className="hover:text-primary transition-colors">Refund Policy</Link></li>
             </ul>
           </div>
         </div>
