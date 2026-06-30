@@ -1279,6 +1279,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
   const [isNote, setIsNote]         = useState(false)
   const [rephrasing, setRephrase]   = useState(false)
   const [pendingFile, setPending]   = useState<{ name: string; type: string; dataUrl: string } | null>(null)
+  const [editorHasContent, setEditorHasContent] = useState(false)
   const fileInputRef                = useRef<HTMLInputElement>(null)
   const api = useApi()
 
@@ -1319,7 +1320,12 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     editorProps: {
       handleKeyDown: (_view, event) => slashKeyRef.current(event),
     },
+    onCreate: ({ editor }) => {
+      setEditorHasContent(!editor.isEmpty)
+    },
     onUpdate: ({ editor }) => {
+      // Track emptiness in React state so canSend is always current on re-render
+      setEditorHasContent(!editor.isEmpty)
       const { from } = editor.state.selection
       const textBefore = editor.state.doc.textBetween(Math.max(0, from - 40), from, '\n', '\n')
       const m = /(?:^|\s)\/([a-zA-Z0-9_-]*)$/.exec(textBefore)
@@ -1362,7 +1368,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     return false
   }
 
-  const canSend = !isClosed && !sending && (pendingFile !== null || (editor !== null && !(editor?.isEmpty ?? true)))
+  const canSend = !isClosed && !sending && (pendingFile !== null || editorHasContent)
 
   const handleSend = async () => {
     if (isClosed || sending || (!pendingFile && (!editor || editor.isEmpty))) return
