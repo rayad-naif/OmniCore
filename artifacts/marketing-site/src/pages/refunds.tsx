@@ -5,7 +5,9 @@ import { RefreshCw } from "lucide-react";
 const LAST_UPDATED = "June 29, 2026";
 const COMPANY = "IR Atelier (Idylle Radieuse)";
 const PRODUCT = "OmniCore";
-const CONTACT_EMAIL = "billing@iratelier.com";
+const OWNER = "Rayad Haider Farooqi";
+const CONTACT_EMAIL = "atelier@irofficial.com";
+const CONTACT_PHONE = "+923294816780";
 
 export default function Refunds() {
   return (
@@ -201,11 +203,10 @@ export default function Refunds() {
                 For any billing or refund questions, our team is happy to help:
               </p>
               <div className="mt-3 p-4 bg-white/50 rounded-xl border border-[#C9A450]/20 space-y-1 text-sm">
-                <p><strong>{COMPANY} — Billing Support</strong></p>
-                <p>
-                  Email:{" "}
-                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a>
-                </p>
+                <p><strong>{OWNER}</strong></p>
+                <p>{COMPANY} — Billing Support</p>
+                <p>Email: <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a></p>
+                <p>Phone: <a href={`tel:${CONTACT_PHONE}`} className="text-[#C9A450] hover:underline">{CONTACT_PHONE}</a></p>
                 <p>Response time: Within 3 business days</p>
               </div>
             </section>

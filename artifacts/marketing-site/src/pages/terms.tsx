@@ -5,7 +5,9 @@ import { FileText } from "lucide-react";
 const LAST_UPDATED = "June 29, 2026";
 const COMPANY = "IR Atelier (Idylle Radieuse)";
 const PRODUCT = "OmniCore";
-const CONTACT_EMAIL = "legal@iratelier.com";
+const OWNER = "Rayad Haider Farooqi";
+const CONTACT_EMAIL = "atelier@irofficial.com";
+const CONTACT_PHONE = "+923294816780";
 
 export default function Terms() {
   return (
@@ -222,10 +224,12 @@ export default function Terms() {
 
             <section>
               <h2 className="font-serif text-2xl font-bold text-foreground mb-4">17. Contact</h2>
-              <p>
-                Questions about these Terms? Contact us at{" "}
-                <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a>.
-              </p>
+              <div className="mt-3 p-4 bg-white/50 rounded-xl border border-[#C9A450]/20 space-y-1 text-sm">
+                <p><strong>{OWNER}</strong></p>
+                <p>{COMPANY}</p>
+                <p>Email: <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a></p>
+                <p>Phone: <a href={`tel:${CONTACT_PHONE}`} className="text-[#C9A450] hover:underline">{CONTACT_PHONE}</a></p>
+              </div>
             </section>
 
           </div>

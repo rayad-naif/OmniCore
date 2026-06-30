@@ -5,8 +5,10 @@ import { ShieldCheck } from "lucide-react";
 const LAST_UPDATED = "June 29, 2026";
 const COMPANY = "IR Atelier (Idylle Radieuse)";
 const PRODUCT = "OmniCore";
-const CONTACT_EMAIL = "privacy@iratelier.com";
-const DPA_EMAIL = "dpa@iratelier.com";
+const OWNER = "Rayad Haider Farooqi";
+const CONTACT_EMAIL = "atelier@irofficial.com";
+const CONTACT_PHONE = "+923294816780";
+const DPA_EMAIL = "atelier@irofficial.com";
 
 export default function Privacy() {
   return (
@@ -233,16 +235,10 @@ export default function Privacy() {
                 For privacy-related enquiries, data subject requests, or to contact our Data Protection team:
               </p>
               <div className="mt-3 p-4 bg-white/50 rounded-xl border border-[#C9A450]/20 space-y-1 text-sm">
-                <p><strong>{COMPANY}</strong></p>
-                <p>Privacy &amp; Data Protection</p>
-                <p>
-                  Email:{" "}
-                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a>
-                </p>
-                <p>
-                  DPA enquiries:{" "}
-                  <a href={`mailto:${DPA_EMAIL}`} className="text-[#C9A450] hover:underline">{DPA_EMAIL}</a>
-                </p>
+                <p><strong>{OWNER}</strong></p>
+                <p>{COMPANY} — Privacy &amp; Data Protection</p>
+                <p>Email: <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a></p>
+                <p>Phone: <a href={`tel:${CONTACT_PHONE}`} className="text-[#C9A450] hover:underline">{CONTACT_PHONE}</a></p>
               </div>
             </section>
 
