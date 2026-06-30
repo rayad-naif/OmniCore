@@ -328,6 +328,151 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
   }
 }
 
+// ── Paddle webhook (raw body — MUST be before express.json()) ─────────────────
+// Paddle sends a Paddle-Signature header. We verify it with HMAC-SHA256 then
+// reconcile the tenant plan/status from the event payload.
+app.post(
+  "/api/paddle/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signatureHeader = req.headers["paddle-signature"];
+    const secret = process.env.PADDLE_WEBHOOK_SECRET;
+
+    if (!signatureHeader || !secret) {
+      logger.warn("paddle_webhook_missing_signature_or_secret");
+      return res.status(400).json({ error: "Webhook configuration error" });
+    }
+
+    if (!Buffer.isBuffer(req.body)) {
+      logger.error("paddle_webhook_body_not_buffer");
+      return res.status(500).json({ error: "Webhook processing error" });
+    }
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { verifyPaddleWebhook } = require("./lib/paddleClient");
+      const sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+      const event = verifyPaddleWebhook(req.body, secret, sig) as Record<string, unknown> | null;
+
+      if (!event) {
+        logger.warn("paddle_webhook_signature_invalid");
+        return res.status(400).json({ error: "Invalid signature" });
+      }
+
+      try {
+        await provisionTenantFromPaddleEvent(event);
+      } catch (err) {
+        logger.error({ err }, "paddle_tenant_provision_failed");
+      }
+
+      return res.status(200).json({ received: true });
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, "paddle_webhook_error");
+      return res.status(400).json({ error: "Webhook processing error" });
+    }
+  },
+);
+
+// Maps Paddle subscription status strings → tenants.subscription_status values.
+function mapPaddleStatus(status: string | undefined): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "trialing":
+      return "trialing";
+    case "past_due":
+      return "past_due";
+    case "paused":
+      return "paused";
+    case "canceled":
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "active";
+  }
+}
+
+// Reconcile tenant plan/status from a verified Paddle webhook event.
+async function provisionTenantFromPaddleEvent(
+  event: Record<string, unknown>,
+): Promise<void> {
+  const eventType = event.event_type as string | undefined;
+  const data = event.data as Record<string, unknown> | undefined;
+  if (!eventType || !data) return;
+
+  if (
+    eventType === "subscription.created" ||
+    eventType === "subscription.updated"
+  ) {
+    const customData =
+      (data.custom_data as Record<string, string>) ||
+      (data.transaction_details as Record<string, Record<string, string>>)?.custom_data ||
+      {};
+    const tenantId = customData.tenant_id;
+    if (!tenantId) return; // public checkout — no tenant yet
+
+    const subId = data.id as string;
+    const customerId = data.customer_id as string;
+    const status = mapPaddleStatus(data.status as string);
+    const items = (data.items as Array<{ price?: { custom_data?: { plan?: string } } }>) || [];
+    const plan = items[0]?.price?.custom_data?.plan || customData.plan || null;
+
+    await pool.query(
+      `UPDATE tenants SET
+         paddle_customer_id      = COALESCE($1, paddle_customer_id),
+         paddle_subscription_id  = $2,
+         plan                    = COALESCE($3, plan),
+         subscription_status     = $4,
+         grace_period_ends_at    = NULL,
+         updated_at              = NOW()
+       WHERE id = $5`,
+      [customerId || null, subId, plan, status, tenantId],
+    );
+    logger.info({ tenantId, plan, status }, "paddle_tenant_provisioned");
+
+    if (status === "active" || status === "trialing") {
+      await applyPlanFeatures(tenantId, plan);
+      await notifyTenantAdmins(
+        tenantId,
+        "Your plan is now active",
+        "Plan activated",
+        `Your ${plan || "subscription"} plan is now active. Thank you for subscribing!`,
+      );
+    } else if (status === "past_due") {
+      await notifyTenantAdmins(
+        tenantId,
+        "Payment issue on your subscription",
+        "Payment past due",
+        "We couldn't process your latest payment. Please update your payment method in Billing.",
+      );
+    }
+  } else if (eventType === "subscription.canceled") {
+    const customData = (data.custom_data as Record<string, string>) || {};
+    const tenantId = customData.tenant_id;
+    if (!tenantId) return;
+
+    const subId = data.id as string;
+    await pool.query(
+      `UPDATE tenants SET
+         paddle_subscription_id = NULL,
+         plan                   = 'free',
+         subscription_status    = 'cancelled',
+         grace_period_ends_at   = NULL,
+         updated_at             = NOW()
+       WHERE id = $1`,
+      [tenantId],
+    );
+    logger.info({ tenantId, subId }, "paddle_subscription_cancelled");
+    await applyPlanFeatures(tenantId, "free");
+    await notifyTenantAdmins(
+      tenantId,
+      "Your subscription has been cancelled",
+      "Subscription cancelled",
+      "Your subscription has ended and your workspace has been moved to the free tier.",
+    );
+  }
+}
+
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
@@ -381,7 +526,7 @@ function startAutoCloseScheduler(): void {
 
   const run = async () => {
     try {
-      const { rows } = await pool.query<{ id: string; tenant_id: string }>(`
+      const { rows } = await (pool.query as (sql: string) => Promise<{ rows: { id: string; tenant_id: string }[] }>)(`
         UPDATE conversations c
         SET status = 'closed', updated_at = NOW()
         FROM brands b

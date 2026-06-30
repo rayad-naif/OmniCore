@@ -1,46 +1,53 @@
 /**
  * billing.controller.js
- * Atelier OmniCore — Stripe self-serve billing controller
+ * Atelier OmniCore — multi-provider billing controller (Stripe + Paddle)
  *
  * Routes (registered in billing.router.js):
- *   GET  /api/billing/plans                 — self-serve plans (Starter, Pro) from synced Stripe data
- *   POST /api/checkout                      — create a Stripe Checkout session for a plan
- *   POST /api/billing/portal               — Stripe billing portal URL
+ *   GET  /api/billing/plans                 — self-serve plans from synced Stripe data
+ *   POST /api/billing/checkout/public       — public (pre-signup) checkout — no auth
+ *   POST /api/checkout                      — tenant checkout (logged-in agents)
+ *   POST /api/billing/portal               — billing management portal URL
  *   GET  /api/billing/subscription         — current tenant subscription
  *   GET  /api/billing/usage                — current period usage meters
  *
- * Stripe webhooks are handled directly in app.ts (raw body, before express.json()).
- * Stripe product/price/subscription data is synced into the `stripe` Postgres
- * schema by stripe-replit-sync — read paths query those tables, write paths use
- * the Stripe API via getUncachableStripeClient().
+ * Provider routing:
+ *   BILLING_PROVIDER=stripe (default) | paddle
+ *   Webhook handlers live in app.ts (Stripe) and the Paddle webhook route.
  *
  * Tenant columns consumed (tenants table):
  *   stripe_customer_id      TEXT
  *   stripe_subscription_id  TEXT
- *   plan                    TEXT   ('free'|'starter'|'pro'|'enterprise')
+ *   paddle_customer_id      TEXT   (added by migration below)
+ *   paddle_subscription_id  TEXT   (added by migration below)
+ *   plan                    TEXT   ('free'|'starter'|'growth'|'enterprise')
  *   subscription_status     TEXT   ('trialing'|'active'|'past_due'|'cancelled'|'paused')
  *   grace_period_ends_at    TIMESTAMPTZ
  */
 
 'use strict';
 
-const { pool } = require('../lib/db');
-const logger   = require('../utils/logger');   // pino singleton
-// stripeClient.ts is bundled by esbuild (CJS↔ESM interop via the build banner).
-const { getUncachableStripeClient } = require('../lib/stripeClient');
+const { pool }            = require('../lib/db');
+const logger              = require('../utils/logger');
+const billingProvider     = require('../lib/billingProvider');
+// stripeClient is still required by loadPlansFromSchema via pool queries against the
+// synced `stripe` schema. It is not used directly here (checkout routes delegate to
+// billingProvider), but it must stay importable for esbuild bundling.
+const { getUncachableStripeClient } = require('../lib/stripeClient'); // eslint-disable-line no-unused-vars
 
 // Self-serve plans are driven by Stripe product metadata: any active product
 // whose metadata.self_serve === 'true' is purchasable via checkout.
 // Legacy plan slugs (without the flag) remain self-serve too.
 const LEGACY_SELF_SERVE_PLANS = ['starter', 'pro', 'growth'];
 
-// ─── Idempotent migration: ensure Stripe linkage columns exist ───────────────
+// ─── Idempotent migration: ensure billing linkage columns exist ──────────────
 (async () => {
   try {
     await pool.query(`
       ALTER TABLE tenants
         ADD COLUMN IF NOT EXISTS stripe_customer_id     TEXT,
-        ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT
+        ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT,
+        ADD COLUMN IF NOT EXISTS paddle_customer_id     TEXT,
+        ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT
     `);
   } catch (err) {
     logger.error({ err: err.message }, 'billing_migration_failed');
@@ -123,18 +130,18 @@ async function getPlans(req, res) {
 
 // ─── POST /api/checkout ──────────────────────────────────────────────────────
 /**
- * Creates a Stripe Checkout session for the authenticated agent's tenant.
- * Body: { plan: 'starter' | 'pro' }
- * Returns: { url }
+ * Creates a checkout session for the authenticated agent's tenant.
+ * Routes to Stripe or Paddle depending on BILLING_PROVIDER and whether
+ * the tenant already has a provider record.
+ * Body: { plan: 'starter' | 'growth' }
+ * Returns: { url, provider }
  */
 async function createCheckout(req, res) {
   const tenantId = req.agent?.tenantId;
   if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
 
   const plan = String(req.body?.plan || '').trim().toLowerCase();
-  if (!plan) {
-    return res.status(400).json({ error: 'plan is required' });
-  }
+  if (!plan) return res.status(400).json({ error: 'plan is required' });
 
   const plans  = await loadPlansFromSchema();
   const target = plans.find((p) => p.plan === plan);
@@ -143,67 +150,43 @@ async function createCheckout(req, res) {
   }
 
   const { rows } = await pool.query(
-    'SELECT id, company_name, stripe_customer_id FROM tenants WHERE id = $1',
+    'SELECT id, company_name, stripe_customer_id, paddle_customer_id FROM tenants WHERE id = $1',
     [tenantId]
   );
   const tenant = rows[0];
   if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
-  const stripe = await getUncachableStripeClient();
-
-  // Reuse the tenant's Stripe customer, or create one keyed to the tenant.
-  let customerId = tenant.stripe_customer_id;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: req.agent?.email || undefined,
-      name:  tenant.company_name || undefined,
-      metadata: { tenant_id: String(tenantId) },
-    });
-    customerId = customer.id;
-    await pool.query(
-      'UPDATE tenants SET stripe_customer_id = $1, updated_at = NOW() WHERE id = $2',
-      [customerId, tenantId]
-    );
-  }
-
-  const base = appBaseUrl(req);
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    client_reference_id: String(tenantId),
-    line_items: [{ price: target.priceId, quantity: 1 }],
-    subscription_data: {
-      metadata: { tenant_id: String(tenantId), plan },
-    },
-    success_url: `${base}/dashboard/?checkout=success`,
-    cancel_url:  `${base}/dashboard/?checkout=cancelled`,
+  const base   = appBaseUrl(req);
+  const result = await billingProvider.createTenantCheckoutUrl({
+    tenant,
+    agentEmail:    req.agent?.email,
+    plan,
+    stripepriceId: target.priceId,
+    baseUrl:       base,
   });
 
-  req.log.info({ tenantId, plan, priceId: target.priceId }, 'stripe_checkout_created');
-  return res.json({ url: session.url });
+  req.log.info({ tenantId, plan, provider: result.provider }, 'tenant_checkout_created');
+  return res.json(result);
 }
 
 // ─── POST /api/billing/portal ────────────────────────────────────────────────
 /**
- * Generates a Stripe billing portal URL for the tenant's customer.
+ * Generates a billing portal / self-serve management URL for the tenant.
+ * Routes to Stripe or Paddle depending on which provider owns the subscription.
  * Returns: { url }
  */
 async function getPortalUrl(req, res) {
   const tenantId = req.agent?.tenantId;
   const { rows } = await pool.query(
-    'SELECT stripe_customer_id FROM tenants WHERE id = $1',
+    'SELECT stripe_customer_id, paddle_customer_id FROM tenants WHERE id = $1',
     [tenantId]
   );
-  const customerId = rows[0]?.stripe_customer_id;
-  if (!customerId) return res.status(404).json({ error: 'No billing customer found for this tenant' });
+  const tenant = rows[0];
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
-  const stripe = await getUncachableStripeClient();
-  const base   = appBaseUrl(req);
-  const session = await stripe.billingPortal.sessions.create({
-    customer:   customerId,
-    return_url: `${base}/dashboard/`,
-  });
-  return res.json({ url: session.url });
+  const base = appBaseUrl(req);
+  const result = await billingProvider.getPortalUrl({ tenant, baseUrl: base });
+  return res.json(result);
 }
 
 // ─── GET /api/billing/subscription ───────────────────────────────────────────
@@ -211,32 +194,54 @@ async function getSubscription(req, res) {
   const tenantId = req.agent?.tenantId;
   const { rows } = await pool.query(
     `SELECT
-       stripe_customer_id     AS "customerId",
-       stripe_subscription_id AS "subscriptionId",
+       stripe_customer_id      AS "stripeCustomerId",
+       stripe_subscription_id  AS "stripeSubscriptionId",
+       paddle_customer_id      AS "paddleCustomerId",
+       paddle_subscription_id  AS "paddleSubscriptionId",
        plan,
-       subscription_status    AS status,
-       grace_period_ends_at   AS "gracePeriodEndsAt"
+       subscription_status     AS status,
+       grace_period_ends_at    AS "gracePeriodEndsAt"
      FROM tenants WHERE id = $1`,
     [tenantId]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Tenant not found' });
 
-  const out = rows[0];
+  const t = rows[0];
 
-  // Enrich with the current period end from the synced subscription, if any.
-  if (out.subscriptionId) {
+  // Determine which provider owns the active subscription.
+  const isPaddle = !!t.paddleSubscriptionId;
+  const out = {
+    customerId:      isPaddle ? t.paddleCustomerId  : t.stripeCustomerId,
+    subscriptionId:  isPaddle ? t.paddleSubscriptionId : t.stripeSubscriptionId,
+    plan:            t.plan,
+    status:          t.status,
+    gracePeriodEndsAt: t.gracePeriodEndsAt,
+    provider:        isPaddle ? 'paddle' : 'stripe',
+    currentPeriodEnd: null,
+  };
+
+  if (!isPaddle && t.stripeSubscriptionId) {
+    // Enrich with current period end from the synced Stripe schema.
     try {
       const sub = await pool.query(
         `SELECT current_period_end FROM stripe.subscriptions WHERE id = $1`,
-        [out.subscriptionId]
+        [t.stripeSubscriptionId]
       );
       const cpe = sub.rows[0]?.current_period_end;
       out.currentPeriodEnd = cpe ? new Date(Number(cpe) * 1000).toISOString() : null;
     } catch {
       out.currentPeriodEnd = null;
     }
-  } else {
-    out.currentPeriodEnd = null;
+  } else if (isPaddle && t.paddleSubscriptionId) {
+    // For Paddle, fetch current period end from the Paddle API.
+    try {
+      const { paddleRequest } = require('../lib/paddleClient');
+      const resp = await paddleRequest('GET', `/subscriptions/${t.paddleSubscriptionId}`);
+      const nextBilledAt = resp?.data?.next_billed_at;
+      out.currentPeriodEnd = nextBilledAt || null;
+    } catch {
+      out.currentPeriodEnd = null;
+    }
   }
 
   return res.json(out);
@@ -270,10 +275,11 @@ async function getUsage(req, res) {
 
 // ─── POST /api/billing/checkout/public ───────────────────────────────────────
 /**
- * Public (no auth) checkout for marketing site visitors.
- * Creates a Stripe Checkout session with a 14-day trial for new customers.
+ * Public (pre-signup) checkout for marketing site visitors.
+ * Routes to Stripe (14-day trial baked into session) or Paddle (trial baked
+ * into the Price object via seed-paddle) based on BILLING_PROVIDER.
  * Body: { email, plan: 'starter' | 'growth' }
- * Returns: { url }
+ * Returns: { url, provider }
  */
 async function createPublicCheckout(req, res) {
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -282,42 +288,27 @@ async function createPublicCheckout(req, res) {
   if (!email) return res.status(400).json({ error: 'email is required' });
   if (!plan)  return res.status(400).json({ error: 'plan is required' });
 
-  const plans  = await loadPlansFromSchema();
+  // Always load Stripe plans for the priceId (needed when provider=stripe).
+  // For Paddle, the price ID comes from env vars inside billingProvider.
+  const plans  = await loadPlansFromSchema().catch(() => []);
   const target = plans.find((p) => p.plan === plan);
-  if (!target?.priceId) {
+
+  const provider = billingProvider.getActiveProvider();
+  if (provider === 'stripe' && !target?.priceId) {
     return res.status(400).json({
-      error: 'This plan is not available for self-serve checkout. Please contact sales.',
+      error: 'This plan is not available for checkout. Please contact sales.',
     });
   }
 
-  const stripe = await getUncachableStripeClient();
-
-  // Reuse existing Stripe customer for this email, or create a new one.
-  const existing = await stripe.customers.list({ email, limit: 1 });
-  let customer;
-  if (existing.data.length > 0) {
-    customer = existing.data[0];
-  } else {
-    customer = await stripe.customers.create({ email });
-  }
-
-  const base = appBaseUrl(req);
-  const session = await stripe.checkout.sessions.create({
-    mode:                'subscription',
-    customer:            customer.id,
-    line_items:          [{ price: target.priceId, quantity: 1 }],
-    subscription_data: {
-      trial_period_days: 14,
-      metadata:          { plan },
-    },
-    // Allow promotion codes so discount codes work at checkout.
-    allow_promotion_codes: true,
-    success_url: `${base}/checkout/success?plan=${plan}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url:  `${base}/pricing`,
+  const base   = appBaseUrl(req);
+  const result = await billingProvider.createPublicCheckoutUrl({
+    email,
+    plan,
+    stripepriceId: target?.priceId,
+    baseUrl:       base,
   });
 
-  logger.info({ plan, priceId: target.priceId }, 'public_checkout_created');
-  return res.json({ url: session.url });
+  return res.json(result);
 }
 
 // ─── Express error wrapper ────────────────────────────────────────────────────
