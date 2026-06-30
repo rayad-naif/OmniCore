@@ -22,12 +22,17 @@ const logger          = require('../utils/logger');
 const {
   getPlans,
   createCheckout,
+  createPublicCheckout,
   getPortalUrl,
   getSubscription,
   getUsage,
 } = require('../controllers/billing.controller');
 
 const router = Router();
+
+// ── Public checkout (no auth — for marketing site visitors) ──────────────────
+// Rate-limited implicitly by Stripe's own checkout session creation.
+router.post('/billing/checkout/public', createPublicCheckout);
 
 // ── Authenticated billing routes (gated by the 'billing' feature permission) ──
 router.get ('/billing/plans',          requireAuth, requirePermission('billing', 'read'), getPlans);

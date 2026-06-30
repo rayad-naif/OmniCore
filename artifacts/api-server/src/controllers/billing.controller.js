@@ -29,10 +29,10 @@ const logger   = require('../utils/logger');   // pino singleton
 // stripeClient.ts is bundled by esbuild (CJS↔ESM interop via the build banner).
 const { getUncachableStripeClient } = require('../lib/stripeClient');
 
-// Self-serve plans are now driven by Stripe product metadata: any active
-// product whose metadata.self_serve === 'true' is purchasable via checkout.
-// Legacy 'starter'/'pro' products (without the flag) remain self-serve too.
-const LEGACY_SELF_SERVE_PLANS = ['starter', 'pro'];
+// Self-serve plans are driven by Stripe product metadata: any active product
+// whose metadata.self_serve === 'true' is purchasable via checkout.
+// Legacy plan slugs (without the flag) remain self-serve too.
+const LEGACY_SELF_SERVE_PLANS = ['starter', 'pro', 'growth'];
 
 // ─── Idempotent migration: ensure Stripe linkage columns exist ───────────────
 (async () => {
@@ -268,6 +268,58 @@ async function getUsage(req, res) {
   });
 }
 
+// ─── POST /api/billing/checkout/public ───────────────────────────────────────
+/**
+ * Public (no auth) checkout for marketing site visitors.
+ * Creates a Stripe Checkout session with a 14-day trial for new customers.
+ * Body: { email, plan: 'starter' | 'growth' }
+ * Returns: { url }
+ */
+async function createPublicCheckout(req, res) {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const plan  = String(req.body?.plan  || '').trim().toLowerCase();
+
+  if (!email) return res.status(400).json({ error: 'email is required' });
+  if (!plan)  return res.status(400).json({ error: 'plan is required' });
+
+  const plans  = await loadPlansFromSchema();
+  const target = plans.find((p) => p.plan === plan);
+  if (!target?.priceId) {
+    return res.status(400).json({
+      error: 'This plan is not available for self-serve checkout. Please contact sales.',
+    });
+  }
+
+  const stripe = await getUncachableStripeClient();
+
+  // Reuse existing Stripe customer for this email, or create a new one.
+  const existing = await stripe.customers.list({ email, limit: 1 });
+  let customer;
+  if (existing.data.length > 0) {
+    customer = existing.data[0];
+  } else {
+    customer = await stripe.customers.create({ email });
+  }
+
+  const base = appBaseUrl(req);
+  const session = await stripe.checkout.sessions.create({
+    mode:                'subscription',
+    customer:            customer.id,
+    line_items:          [{ price: target.priceId, quantity: 1 }],
+    subscription_data: {
+      trial_period_days: 14,
+      metadata:          { plan },
+    },
+    // Allow promotion codes so discount codes work at checkout.
+    allow_promotion_codes: true,
+    success_url: `${base}/checkout/success?plan=${plan}&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url:  `${base}/pricing`,
+  });
+
+  logger.info({ plan, priceId: target.priceId }, 'public_checkout_created');
+  return res.json({ url: session.url });
+}
+
 // ─── Express error wrapper ────────────────────────────────────────────────────
 function wrap(fn) {
   return async (req, res, next) => {
@@ -283,9 +335,10 @@ function wrap(fn) {
 }
 
 module.exports = {
-  getPlans:         wrap(getPlans),
-  createCheckout:   wrap(createCheckout),
-  getPortalUrl:     wrap(getPortalUrl),
-  getSubscription:  wrap(getSubscription),
-  getUsage:         wrap(getUsage),
+  getPlans:             wrap(getPlans),
+  createCheckout:       wrap(createCheckout),
+  createPublicCheckout: wrap(createPublicCheckout),
+  getPortalUrl:         wrap(getPortalUrl),
+  getSubscription:      wrap(getSubscription),
+  getUsage:             wrap(getUsage),
 };

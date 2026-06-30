@@ -10,6 +10,8 @@ import Help from "@/pages/help";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
 import Refunds from "@/pages/refunds";
+import Checkout from "@/pages/checkout";
+import CheckoutSuccess from "@/pages/checkout-success";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -25,6 +27,8 @@ function Router() {
         <Route path="/terms" component={Terms} />
         <Route path="/privacy" component={Privacy} />
         <Route path="/refunds" component={Refunds} />
+        <Route path="/checkout" component={Checkout} />
+        <Route path="/checkout/success" component={CheckoutSuccess} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
