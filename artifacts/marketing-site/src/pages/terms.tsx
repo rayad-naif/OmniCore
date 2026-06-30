@@ -227,6 +227,7 @@ export default function Terms() {
               <div className="mt-3 p-4 bg-white/50 rounded-xl border border-[#C9A450]/20 space-y-1 text-sm">
                 <p><strong>{OWNER}</strong></p>
                 <p>{COMPANY}</p>
+                <p>Multan, Punjab, Pakistan</p>
                 <p>Email: <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#C9A450] hover:underline">{CONTACT_EMAIL}</a></p>
                 <p>Phone: <a href={`tel:${CONTACT_PHONE}`} className="text-[#C9A450] hover:underline">{CONTACT_PHONE}</a></p>
               </div>
