@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<!--
+  /pricing.html — Static, no-JavaScript pricing page for Atelier OmniCore.
+  Accessible at https://omnicore.irofficial.com/pricing.html
+  This file is served directly by the static file server and requires no JavaScript.
+  It satisfies Paddle's domain review requirements:
+    - Product name, what's included, exact price
+    - Tax transparency note
+    - Trial duration and full recurring price
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pricing — Atelier OmniCore | Starter $29/mo · Growth $79/mo</title>
+  <meta name="description" content="OmniCore Starter $29/month, Growth $79/month. 14-day free trial. Taxes may apply and will be calculated at checkout." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://omnicore.irofficial.com/pricing" />
+  <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "OmniCore Subscription Plans",
+    "url": "https://omnicore.irofficial.com/pricing.html",
+    "description": "Transparent subscription pricing for OmniCore omnichannel helpdesk. Taxes may apply and will be calculated at checkout.",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "item": {
+          "@type": "Product",
+          "name": "OmniCore Starter",
+          "description": "For small teams. Up to 3 agents, 1 brand inbox, live chat widget, email integration, basic reporting, 500 conversations/month. 14-day free trial, then $29/month.",
+          "brand": { "@type": "Brand", "name": "Atelier OmniCore" },
+          "offers": {
+            "@type": "Offer",
+            "price": "29.00",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+            "url": "https://omnicore.irofficial.com/checkout?plan=starter",
+            "description": "14-day free trial, then $29.00/month. Taxes may apply."
+          }
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "item": {
+          "@type": "Product",
+          "name": "OmniCore Growth",
+          "description": "For scaling teams. Unlimited agents, up to 10 brands, AI bot deflection (10k msgs/mo), advanced reporting, SMTP, 10,000 conversations/month. 14-day free trial, then $79/month.",
+          "brand": { "@type": "Brand", "name": "Atelier OmniCore" },
+          "offers": {
+            "@type": "Offer",
+            "price": "79.00",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+            "url": "https://omnicore.irofficial.com/checkout?plan=growth",
+            "description": "14-day free trial, then $79.00/month. Taxes may apply."
+          }
+        }
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, -apple-system, Arial, sans-serif; background: #F5EDE0; color: #1a1a1a; line-height: 1.6; }
+    .page { max-width: 960px; margin: 0 auto; padding: 48px 24px 80px; }
+    nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 0 40px; }
+    nav a { color: #1a1a1a; text-decoration: none; font-weight: 700; font-size: 18px; }
+    nav .nav-links a { font-weight: 500; font-size: 14px; margin-left: 24px; color: #555; }
+    nav .nav-links a:hover { color: #C9A450; }
+    .eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: #C9A450; margin-bottom: 12px; }
+    h1 { font-size: 42px; font-weight: 900; line-height: 1.1; margin-bottom: 16px; }
+    .subtitle { font-size: 18px; color: #555; margin-bottom: 12px; max-width: 600px; }
+    .tax-notice { font-size: 14px; color: #555; background: #C9A4500d; border: 1px solid #C9A45033; border-radius: 10px; padding: 12px 16px; margin-bottom: 40px; max-width: 520px; }
+    .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+    @media (max-width: 680px) { .plans { grid-template-columns: 1fr; } h1 { font-size: 28px; } }
+    .plan { background: #fff; border: 1px solid #e5ddd0; border-radius: 16px; padding: 32px; }
+    .plan.popular { border-color: #C9A450; border-width: 2px; }
+    .badge { display: inline-block; background: #C9A450; color: #fff; font-size: 11px; font-weight: 700; padding: 3px 12px; border-radius: 100px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .plan-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #C9A450; margin-bottom: 4px; }
+    .plan h2 { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+    .plan .tagline { font-size: 14px; color: #666; margin-bottom: 16px; }
+    .price { font-size: 40px; font-weight: 900; color: #C9A450; }
+    .price span { font-size: 16px; font-weight: 500; color: #999; }
+    .billing { font-size: 13px; color: #999; margin-bottom: 12px; }
+    .trial-box { background: #f9f5ee; border-radius: 8px; padding: 12px; font-size: 13px; color: #555; margin-bottom: 20px; line-height: 1.5; }
+    .trial-box strong { color: #1a1a1a; }
+    .features { list-style: none; margin-bottom: 24px; }
+    .features li { font-size: 14px; color: #333; padding: 5px 0 5px 22px; position: relative; }
+    .features li::before { content: "✓"; position: absolute; left: 0; color: #C9A450; font-weight: 700; }
+    .btn { display: block; text-align: center; background: #C9A450; color: #fff; font-weight: 700; font-size: 15px; padding: 14px 24px; border-radius: 100px; text-decoration: none; }
+    .btn:hover { background: #B8963E; }
+    .btn.outline { background: transparent; border: 2px solid #C9A450; color: #C9A450; }
+    .btn.outline:hover { background: #C9A45015; }
+    .enterprise { background: #fff; border: 1px solid #e5ddd0; border-radius: 16px; padding: 32px; margin-bottom: 40px; }
+    .enterprise-inner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; }
+    .compliance { font-size: 13px; color: #777; border-top: 1px solid #e5ddd0; padding-top: 24px; line-height: 1.8; }
+    .compliance a { color: #C9A450; }
+    footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid #e5ddd0; font-size: 13px; color: #999; }
+    footer a { color: #C9A450; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav>
+      <a href="/">OmniCore</a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/pricing.html">Pricing</a>
+        <a href="/help">Help</a>
+        <a href="/contact">Contact</a>
+        <a href="/dashboard" style="background:#C9A450;color:#fff;padding:8px 18px;border-radius:100px;margin-left:24px;">Login to Dashboard</a>
+      </div>
+    </nav>
+
+    <p class="eyebrow">Atelier OmniCore Pricing</p>
+    <h1>Simple, transparent pricing.</h1>
+    <p class="subtitle">
+      No hidden fees. No surprise charges. All prices are in USD.
+      Each plan includes a <strong>14-day free trial</strong> — your card is charged only after
+      the trial ends at the full monthly rate shown below.
+    </p>
+    <div class="tax-notice">
+      &#9432;&nbsp; <strong>Tax notice:</strong> Taxes may apply and will be calculated at checkout based on your billing address.
+    </div>
+
+    <div class="plans">
+
+      <!-- Starter Plan -->
+      <div class="plan">
+        <p class="plan-tag">OmniCore Starter</p>
+        <h2>Starter</h2>
+        <p class="tagline">Perfect for small teams getting started with modern support.</p>
+        <p class="price">$29<span>/mo</span></p>
+        <p class="billing">per workspace, billed monthly in USD</p>
+        <div class="trial-box">
+          <strong>14-day free trial included.</strong><br>
+          Your card will not be charged until day 15. After the trial, you will be billed
+          <strong>$29.00 per month</strong> automatically. Cancel any time before then at no cost.
+        </div>
+        <ul class="features">
+          <li>Up to <strong>3 agents</strong></li>
+          <li>1 brand / inbox</li>
+          <li>Live Chat Widget</li>
+          <li>Email Integration (1 inbox)</li>
+          <li>Basic Reporting</li>
+          <li>7-day conversation history</li>
+          <li>500 conversations per month</li>
+        </ul>
+        <a href="/checkout?plan=starter" class="btn">Start 14-Day Free Trial</a>
+      </div>
+
+      <!-- Growth Plan -->
+      <div class="plan popular">
+        <span class="badge">Most Popular</span>
+        <p class="plan-tag">OmniCore Growth</p>
+        <h2>Growth</h2>
+        <p class="tagline">For scaling teams that need AI and powerful automations.</p>
+        <p class="price">$79<span>/mo</span></p>
+        <p class="billing">per workspace, billed monthly in USD</p>
+        <div class="trial-box">
+          <strong>14-day free trial included.</strong><br>
+          Your card will not be charged until day 15. After the trial, you will be billed
+          <strong>$79.00 per month</strong> automatically. Cancel any time before then at no cost.
+        </div>
+        <ul class="features">
+          <li>Unlimited agents</li>
+          <li>Up to 10 brands</li>
+          <li>Live Chat Widget</li>
+          <li>Email Integration (unlimited)</li>
+          <li>AI Bot Deflection (10,000 msgs/month)</li>
+          <li>Advanced Reporting &amp; Analytics</li>
+          <li>Unlimited conversation history</li>
+          <li>10,000 conversations per month</li>
+          <li>Custom Branding</li>
+          <li>SMTP / Custom Email Domain</li>
+        </ul>
+        <a href="/checkout?plan=growth" class="btn">Start 14-Day Free Trial</a>
+      </div>
+
+    </div><!-- /plans -->
+
+    <!-- Enterprise -->
+    <div class="enterprise">
+      <div class="enterprise-inner">
+        <div>
+          <p class="plan-tag">OmniCore Enterprise</p>
+          <h2 style="font-size:22px;font-weight:800;margin-bottom:6px;">Enterprise</h2>
+          <p style="font-size:14px;color:#555;max-width:480px;">Multi-tenant architecture and robust controls for large organisations. Custom pricing, custom SLA, dedicated support.</p>
+          <ul class="features" style="margin-top:12px;margin-bottom:0;">
+            <li>Everything in Growth</li>
+            <li>Multi-tenant Workspace</li>
+            <li>Unlimited AI Bot limits</li>
+            <li>API Access &amp; Webhooks</li>
+            <li>SSO &amp; Advanced RBAC</li>
+            <li>Dedicated Success Manager</li>
+            <li>Custom Contract &amp; SLA</li>
+          </ul>
+        </div>
+        <div>
+          <p style="font-size:32px;font-weight:900;color:#C9A450;margin-bottom:4px;">Custom</p>
+          <p style="font-size:13px;color:#999;margin-bottom:16px;">custom contract, billed annually</p>
+          <a href="/contact" class="btn outline" style="min-width:160px;">Contact Sales</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Compliance footer -->
+    <div class="compliance">
+      <p>
+        All plans automatically renew monthly at the rate shown above until cancelled.
+        You may cancel at any time before the trial ends and will not be charged.
+        <strong>Taxes may apply and will be calculated at checkout based on your billing address.</strong>
+        By subscribing you agree to our
+        <a href="/terms">Terms of Service</a>,
+        <a href="/privacy">Privacy Policy</a>, and
+        <a href="/refunds">Refund Policy</a>.
+      </p>
+      <p style="margin-top:10px;">
+        <strong>How billing works:</strong>
+        Your 14-day free trial starts the moment you complete checkout. No charge is made during the trial.
+        On day 15, your card is charged the full monthly rate for your selected plan ($29.00 or $79.00/month).
+        Subsequent charges occur monthly on the same date. You may cancel at any time from your billing portal
+        to stop future charges.
+      </p>
+    </div>
+
+    <footer>
+      <p>
+        &copy; 2025 Atelier OmniCore &mdash;
+        <a href="mailto:atelier@irofficial.com">atelier@irofficial.com</a> &mdash;
+        Multan, Punjab, Pakistan &mdash;
+        <a href="/terms">Terms</a> &bull;
+        <a href="/privacy">Privacy</a> &bull;
+        <a href="/refunds">Refunds</a>
+      </p>
+    </footer>
+  </div>
+</body>
+</html>
