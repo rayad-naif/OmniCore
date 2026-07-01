@@ -1,5 +1,5 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { verifyEnv } = require("./lib/env");
+const { verifyEnv, publicAppUrl } = require("./lib/env");
 verifyEnv();
 
 import { createAppServer } from "./app";
@@ -22,17 +22,19 @@ async function initStripe(): Promise<void> {
     await runMigrations({ databaseUrl });
 
     const sync = await getStripeSync();
-    const domain = (process.env["REPLIT_DOMAINS"] || "").split(",")[0]?.trim();
-    if (domain) {
+    const base = publicAppUrl();
+    if (base) {
       const webhook = await sync.findOrCreateManagedWebhook(
-        `https://${domain}/api/stripe/webhook`,
+        `${base}/api/stripe/webhook`,
       );
       logger.info(
         { webhook: webhook?.url ?? "configured" },
         "stripe_webhook_ready",
       );
     } else {
-      logger.warn("REPLIT_DOMAINS missing — skipping managed webhook setup");
+      logger.warn(
+        "PUBLIC_APP_URL/REPLIT_DOMAINS missing — skipping managed webhook setup",
+      );
     }
 
     sync

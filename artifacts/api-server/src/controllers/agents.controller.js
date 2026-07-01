@@ -100,10 +100,9 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
       [agent.id, rawToken, expiresAt]
     );
 
-    // Build the invite link (set-password flow reuses the reset_token route).
-    const appOrigin = process.env.REPLIT_DOMAINS
-      ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-      : (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.headers.host}` : `http://${req.headers.host}`);
+    // Build the invite link on the public domain (PUBLIC_APP_URL, then REPLIT_DOMAINS).
+    const { publicAppUrl } = require('../lib/env');
+    const appOrigin = publicAppUrl(req);
     const inviteLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
 
     // Resolve the tenant's company name for a friendlier email.

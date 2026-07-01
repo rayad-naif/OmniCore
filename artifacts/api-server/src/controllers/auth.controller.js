@@ -198,10 +198,9 @@ router.post('/forgot-password', async (req, res) => {
       [agent.id, rawToken, expiresAt]
     );
 
-    // Build reset link
-    const appOrigin = process.env.REPLIT_DOMAINS
-      ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-      : (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.headers.host}` : `http://${req.headers.host}`);
+    // Build reset link on the public domain (PUBLIC_APP_URL, then REPLIT_DOMAINS).
+    const { publicAppUrl } = require('../lib/env');
+    const appOrigin = publicAppUrl(req);
     const resetLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
 
     // Send reset email via platform SMTP (falling back to tenant SMTP).
