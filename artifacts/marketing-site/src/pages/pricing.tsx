@@ -45,7 +45,7 @@ const plans = [
       "Unlimited agents",
       "Up to 10 brands",
       "Live Chat Widget",
-      "Email Integration (Unlimited)",
+      { label: "Email Integration (multiple inboxes per brand)", soon: true },
       "AI Bot Deflection (10k msgs/mo)",
       "Advanced Reporting",
       "Unlimited conversation history",
@@ -70,7 +70,7 @@ const plans = [
     trialNote: null,
     features: [
       "Everything in Growth",
-      "Multi-tenant Workspace",
+      { label: "Multi-tenant Workspace", soon: true },
       "Unlimited AI Bot limits",
       "API Access & Webhooks",
       "SSO & Advanced RBAC",
@@ -182,14 +182,25 @@ export default function Pricing() {
 
                 <div className="flex-1">
                   <ul className="space-y-3 mb-8">
-                    {plan.features.map((feature) => (
-                      <li key={feature} className="flex items-start gap-3">
-                        <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] mt-0.5">
-                          <Check className="w-3 h-3" />
-                        </div>
-                        <span className="text-sm">{feature}</span>
-                      </li>
-                    ))}
+                    {plan.features.map((feature) => {
+                      const label = typeof feature === "string" ? feature : feature.label;
+                      const soon = typeof feature !== "string" && feature.soon;
+                      return (
+                        <li key={label} className="flex items-start gap-3">
+                          <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] mt-0.5">
+                            <Check className="w-3 h-3" />
+                          </div>
+                          <span className="text-sm">
+                            {label}
+                            {soon && (
+                              <span className="ml-2 inline-block align-middle text-[10px] font-semibold uppercase tracking-wider text-[#C9A450] bg-[#C9A450]/10 rounded-full px-2 py-0.5">
+                                Soon
+                              </span>
+                            )}
+                          </span>
+                        </li>
+                      );
+                    })}
                     {plan.missing.map((feature) => (
                       <li key={feature} className="flex items-start gap-3 opacity-40">
                         <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center mt-0.5">

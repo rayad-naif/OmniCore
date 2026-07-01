@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { BookingCalendar } from "@/components/booking-calendar";
 
 export default function Contact() {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -158,6 +159,22 @@ export default function Contact() {
                 </Button>
               </form>
             </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Book a setup call */}
+      <section className="pb-20 md:pb-32">
+        <div className="container mx-auto px-4 md:px-8">
+          <div className="max-w-3xl mx-auto text-center mb-10">
+            <h2 className="text-3xl md:text-4xl font-bold font-serif mb-4">Book a setup call</h2>
+            <p className="text-muted-foreground text-balance">
+              Prefer to talk it through first? Schedule a call and we'll help you get your
+              account configured and your brands connected.
+            </p>
+          </div>
+          <div className="max-w-3xl mx-auto bg-card border border-border/50 rounded-3xl shadow-sm p-2 md:p-4 overflow-hidden">
+            <BookingCalendar />
           </div>
         </div>
       </section>
