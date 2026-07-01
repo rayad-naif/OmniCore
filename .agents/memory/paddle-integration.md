@@ -73,3 +73,13 @@ ALTER TABLE tenants
 `pnpm --filter @workspace/scripts run seed-paddle` — creates Starter ($29) and Growth ($79) products with 14-day trial baked into Price objects. Prints the price IDs to paste into env secrets.
 
 **Why fetch-based (no @paddle/paddle-node-sdk):** Avoids CJS/ESM compatibility issues with esbuild bundler. Native fetch works cleanly in Node 24.
+
+## Post-checkout tenant provisioning must not rely on webhooks alone
+
+`provisionTenantFromPaddlePublicCheckout` (in `app.ts`) creates tenant + admin agent + 7-day setup token and sends the invite email. It is triggered from TWO paths: the Paddle webhook AND a webhook-independent `POST /api/billing/checkout/confirm` (unauthenticated) that the marketing `/checkout/success` page calls with the transaction id Paddle appends as `?_ptxn=`. The success page retries a few times because the transaction may not be finalized the instant Paddle redirects.
+**Why:** relying only on the webhook means onboarding silently breaks if the webhook is delayed/misconfigured. The confirm endpoint is safe unauthenticated because it re-fetches the real transaction from Paddle before doing anything.
+**How to apply:** provisioning must stay idempotent — it's guarded by a per-customer `pg_advisory_xact_lock(hashtext(paddleCustomerId))` inside a transaction so the webhook + confirm race can't create duplicate tenants; email/`applyPlanFeatures` run post-commit, outside the lock. There is no unique constraint on `tenants.paddle_customer_id` — the advisory lock is what enforces single creation.
+
+## Email template expiry text is hardcoded per-function
+
+`sendPasswordResetEmail` template says "expires in 1 hour"; `sendAgentInviteEmail` says "7 days". When sending a link, pick the function whose copy matches the token TTL — e.g. the super-admin manual send-setup route mints a 7-day token, so it uses `sendAgentInviteEmail`, not `sendPasswordResetEmail`.

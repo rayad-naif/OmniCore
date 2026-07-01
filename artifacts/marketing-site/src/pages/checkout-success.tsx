@@ -1,9 +1,57 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+type ConfirmState = "idle" | "confirming" | "done" | "pending";
+
 export default function CheckoutSuccess() {
+  const [state, setState] = useState<ConfirmState>("idle");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // Paddle appends the transaction id as ?_ptxn=… on the return URL.
+    const txnId = params.get("_ptxn") || params.get("transaction_id");
+    if (!txnId) return;
+
+    let cancelled = false;
+    setState("confirming");
+
+    // The transaction may not be fully finalized the instant Paddle redirects,
+    // so retry a few times before falling back to "the webhook will handle it".
+    const confirm = async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const r = await fetch("/api/billing/checkout/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transactionId: txnId }),
+          });
+          if (cancelled) return;
+          if (r.ok) {
+            const data = (await r.json()) as { provisioned?: boolean };
+            if (data.provisioned) {
+              setState("done");
+              return;
+            }
+          }
+        } catch {
+          /* transient — retry */
+        }
+        if (cancelled) return;
+        await new Promise((res) => setTimeout(res, 2500));
+        if (cancelled) return;
+      }
+      if (!cancelled) setState("pending");
+    };
+
+    confirm();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#F5EDE0] flex items-center justify-center pt-16 pb-24 px-4">
       <motion.div
@@ -22,6 +70,18 @@ export default function CheckoutSuccess() {
           Your 14-day free trial of OmniCore is now active. Check your inbox — you'll receive
           a confirmation from Paddle and a setup email from us shortly.
         </p>
+
+        {state === "confirming" && (
+          <div className="flex items-center justify-center gap-2 text-sm text-[#C9A450] mb-6">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Setting up your workspace…
+          </div>
+        )}
+        {state === "done" && (
+          <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2 mb-6">
+            Your workspace is ready. Check your email for the setup link.
+          </div>
+        )}
 
         <div className="bg-[#C9A450]/8 border border-[#C9A450]/20 rounded-2xl p-4 text-sm text-left space-y-2 mb-8">
           <p className="font-semibold text-foreground">What's next?</p>

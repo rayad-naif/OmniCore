@@ -14,10 +14,12 @@
 
 const { Router }   = require('express');
 const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const { pool }     = require('../lib/db');
 const { requireAuth } = require('../middleware/auth');
 const logger       = require('../utils/logger');
-const { sendPlatformSmtpTestEmail, sendAccountUpdateEmail } = require('../services/email.service');
+const { publicAppUrl } = require('../lib/env');
+const { sendPlatformSmtpTestEmail, sendAccountUpdateEmail, sendAgentInviteEmail } = require('../services/email.service');
 
 const router = Router();
 router.use(requireAuth);
@@ -341,6 +343,59 @@ router.patch('/users/:id/password', async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ error: 'User not found' });
     logger.info({ targetId: req.params.id, by: req.agent.email }, 'user_password_set_by_super_admin');
     return res.json({ ...rows[0], password_set: true });
+  } catch (err) { next(err); }
+});
+
+// ─── POST /api/super-admin/users/:id/send-reset ──────────────────────────────
+// Emails a password setup / reset link to any account (7-day expiry). Uses
+// platform SMTP with a per-tenant SMTP fallback. Handy for onboarding a user
+// whose invite never arrived, or resetting access without setting a password.
+router.post('/users/:id/send-reset', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.tenant_id, a.name, a.email, t.company_name
+       FROM agents a
+       LEFT JOIN tenants t ON t.id = a.tenant_id
+       WHERE a.id = $1 LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    const agent = rows[0];
+
+    // Invalidate any outstanding unused tokens, then mint a fresh one.
+    await pool.query(
+      `UPDATE password_reset_tokens SET used_at = NOW()
+       WHERE agent_id = $1 AND used_at IS NULL`,
+      [agent.id]
+    );
+    const rawToken  = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await pool.query(
+      `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [agent.id, rawToken, expiresAt]
+    );
+
+    // Use the invite email — its "Set Your Password" copy and 7-day expiry text
+    // match the token lifetime (the reset-email template says "1 hour").
+    const resetLink = `${publicAppUrl(req)}/dashboard/?reset_token=${rawToken}`;
+    const sent = await sendAgentInviteEmail({
+      to: agent.email,
+      name: agent.name,
+      inviteLink: resetLink,
+      companyName: agent.company_name,
+    });
+
+    logger.info({ targetId: agent.id, by: req.agent.email, sent }, 'user_reset_email_sent_by_super_admin');
+    return res.json({
+      ok: true,
+      sent,
+      message: sent
+        ? `Password setup link emailed to ${agent.email}.`
+        : 'No working SMTP is configured, so the email could not be sent. Set the password manually instead.',
+      // Dev convenience only — never leak reset links in production.
+      ...(process.env.NODE_ENV !== 'production' && { reset_link: resetLink }),
+    });
   } catch (err) { next(err); }
 });
 

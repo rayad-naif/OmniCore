@@ -447,70 +447,93 @@ async function provisionTenantFromPaddlePublicCheckout({
   businessName?: string | null;
   userName?: string | null;
 }): Promise<string> {
-  // Check if tenant already exists for this Paddle customer.
-  const { rows: existing } = await pool.query(
-    `SELECT id FROM tenants WHERE paddle_customer_id = $1 LIMIT 1`,
-    [paddleCustomerId],
-  );
-  if (existing[0]?.id) {
-    await pool.query(
-      `UPDATE tenants SET
-         plan = COALESCE($1, plan),
-         subscription_status = 'trialing',
-         paddle_subscription_id = COALESCE($2, paddle_subscription_id),
-         updated_at = NOW()
-       WHERE id = $3`,
-      [plan, paddleSubscriptionId || null, existing[0].id],
+  // The webhook and the /checkout/confirm success-page call can both fire for
+  // the same purchase. A per-customer advisory lock serializes them so exactly
+  // one call creates the tenant + admin + setup token (no duplicate workspaces).
+  const client = await pool.connect();
+  let tenantId = "";
+  let created = false;
+  let displayName = "";
+  let companyName = "";
+  let rawToken = "";
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      paddleCustomerId,
+    ]);
+
+    const { rows: existing } = await client.query(
+      `SELECT id FROM tenants WHERE paddle_customer_id = $1 LIMIT 1`,
+      [paddleCustomerId],
     );
-    return existing[0].id as string;
+    if (existing[0]?.id) {
+      await client.query(
+        `UPDATE tenants SET
+           plan = COALESCE($1, plan),
+           subscription_status = 'trialing',
+           paddle_subscription_id = COALESCE($2, paddle_subscription_id),
+           updated_at = NOW()
+         WHERE id = $3`,
+        [plan, paddleSubscriptionId || null, existing[0].id],
+      );
+      await client.query("COMMIT");
+      return existing[0].id as string;
+    }
+
+    displayName = userName || email.split("@")[0];
+    companyName = businessName || `${displayName}'s workspace`;
+
+    const { rows: tenantRows } = await client.query(
+      `INSERT INTO tenants
+         (company_name, plan, subscription_status,
+          paddle_customer_id, paddle_subscription_id)
+       VALUES ($1, $2, 'trialing', $3, $4)
+       RETURNING id`,
+      [companyName, plan, paddleCustomerId, paddleSubscriptionId || null],
+    );
+    tenantId = tenantRows[0].id as string;
+
+    const tempPassword = crypto.randomBytes(16).toString("hex");
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const { rows: agentRows } = await client.query(
+      `INSERT INTO agents
+         (tenant_id, name, email, role, password_hash, is_active)
+       VALUES ($1, $2, $3, 'admin', $4, true)
+       RETURNING id`,
+      [tenantId, displayName, email, passwordHash],
+    );
+    const agentId = agentRows[0].id as string;
+
+    rawToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await client.query(
+      `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
+       VALUES ($1, $2, $3)`,
+      [agentId, rawToken, expiresAt],
+    );
+
+    await client.query("COMMIT");
+    created = true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 
-  const displayName = userName || email.split("@")[0];
-  const companyName = businessName || `${displayName}'s workspace`;
-
-  const { rows: tenantRows } = await pool.query(
-    `INSERT INTO tenants
-       (company_name, plan, subscription_status,
-        paddle_customer_id, paddle_subscription_id)
-     VALUES ($1, $2, 'trialing', $3, $4)
-     RETURNING id`,
-    [companyName, plan, paddleCustomerId, paddleSubscriptionId || null],
-  );
-  const tenantId = tenantRows[0].id as string;
-
-  const tempPassword = crypto.randomBytes(16).toString("hex");
-  const passwordHash = await bcrypt.hash(tempPassword, 10);
-  const { rows: agentRows } = await pool.query(
-    `INSERT INTO agents
-       (tenant_id, name, email, role, password_hash, is_active)
-     VALUES ($1, $2, $3, 'admin', $4, true)
-     RETURNING id`,
-    [tenantId, displayName, email, passwordHash],
-  );
-  const agentId = agentRows[0].id as string;
-
-  const rawToken = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  await pool.query(
-    `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
-     VALUES ($1, $2, $3)`,
-    [agentId, rawToken, expiresAt],
-  );
-
-  const base = publicAppUrl();
-  const setupLink = `${base}/dashboard/?reset_token=${rawToken}`;
-  await sendAgentInviteEmail({
-    to: email,
-    name: displayName,
-    inviteLink: setupLink,
-    companyName,
-  });
-
-  await applyPlanFeatures(tenantId, plan);
-  logger.info(
-    { tenantId, email, plan },
-    "paddle_public_tenant_provisioned",
-  );
+  // Side effects run only for the winning call, and outside the lock/txn so we
+  // never hold the advisory lock during email/network I/O.
+  if (created) {
+    const setupLink = `${publicAppUrl()}/dashboard/?reset_token=${rawToken}`;
+    await sendAgentInviteEmail({
+      to: email,
+      name: displayName,
+      inviteLink: setupLink,
+      companyName,
+    });
+    await applyPlanFeatures(tenantId, plan);
+    logger.info({ tenantId, email, plan }, "paddle_public_tenant_provisioned");
+  }
 
   return tenantId;
 }
@@ -678,6 +701,67 @@ app.use(cookieParser());
 
 // ── Database pool injection (req.db) ──────────────────────────────────────────
 app.use(attachDb);
+
+// ── Public checkout confirmation (webhook-independent onboarding) ─────────────
+// The marketing /checkout/success page calls this with the Paddle transaction
+// id (Paddle appends ?_ptxn=… to the return URL). We fetch the transaction and
+// provision the workspace + admin and send the setup email immediately, so
+// onboarding never depends on webhook delivery timing. Idempotent: repeat calls
+// and the later webhook reuse the tenant keyed by paddle_customer_id.
+app.post(
+  "/api/billing/checkout/confirm",
+  async (req: express.Request, res: express.Response) => {
+    const transactionId = String(
+      (req.body as { transactionId?: string })?.transactionId || "",
+    ).trim();
+    if (!transactionId) {
+      return res.status(400).json({ error: "transactionId is required" });
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { paddleRequest } = require("./lib/paddleClient");
+      const resp = (await paddleRequest(
+        "GET",
+        `/transactions/${transactionId}`,
+      )) as { data?: Record<string, unknown> };
+      const data = resp?.data;
+      if (!data) return res.status(404).json({ error: "Transaction not found" });
+
+      const customData = (data.custom_data as Record<string, string>) || {};
+      const items =
+        (data.items as Array<{
+          price?: { custom_data?: { plan?: string } };
+        }>) || [];
+      const email = customData.email;
+      const plan =
+        items[0]?.price?.custom_data?.plan || customData.plan || "starter";
+      const customerId = data.customer_id as string | undefined;
+      const subId = (data.subscription_id as string | undefined) || null;
+
+      if (!email || !customerId) {
+        // Transaction not finalized yet — the webhook will complete provisioning.
+        return res.status(202).json({ provisioned: false, reason: "pending" });
+      }
+
+      const tenantId = await provisionTenantFromPaddlePublicCheckout({
+        email,
+        plan,
+        paddleCustomerId: customerId,
+        paddleSubscriptionId: subId,
+        businessName: customData.business_name || null,
+        userName: customData.user_name || null,
+      });
+      return res.json({ provisioned: true, tenantId });
+    } catch (err) {
+      logger.error(
+        { err: (err as Error).message },
+        "checkout_confirm_failed",
+      );
+      return res.status(500).json({ error: "Could not confirm checkout" });
+    }
+  },
+);
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 // Redirect root domain to the dashboard
 app.get("/", (req: express.Request, res: express.Response) => {
