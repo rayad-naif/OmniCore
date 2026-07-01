@@ -59,8 +59,8 @@ export default function Home() {
                   Start for free <ArrowRight className="ml-2 w-4 h-4" />
                 </Button>
               </a>
-              <Button size="lg" variant="outline" className="h-12 px-8 text-base font-medium rounded-full bg-transparent border-[#C9A450]/50 text-foreground hover:bg-[#C9A450]/10 w-full sm:w-auto">
-                Book a Demo
+              <Button asChild size="lg" variant="outline" className="h-12 px-8 text-base font-medium rounded-full bg-transparent border-[#C9A450]/50 text-foreground hover:bg-[#C9A450]/10 w-full sm:w-auto">
+                <a href="/contact">Book a Demo</a>
               </Button>
             </motion.div>
           </div>
@@ -325,8 +325,8 @@ export default function Home() {
                   Start your free trial
                 </Button>
               </a>
-              <Button size="lg" variant="outline" className="h-14 px-8 text-base font-semibold rounded-full bg-transparent border-white/30 text-white hover:bg-white/10 w-full sm:w-auto">
-                Contact Sales
+              <Button asChild size="lg" variant="outline" className="h-14 px-8 text-base font-semibold rounded-full bg-transparent border-white/30 text-white hover:bg-white/10 w-full sm:w-auto">
+                <a href="/contact">Contact Sales</a>
               </Button>
             </div>
           </motion.div>
