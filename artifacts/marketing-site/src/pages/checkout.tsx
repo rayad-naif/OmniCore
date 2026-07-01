@@ -156,7 +156,7 @@ export default function Checkout() {
           <div className="bg-white/60 backdrop-blur rounded-3xl border border-[#C9A450]/20 p-8 shadow-sm">
             <h3 className="text-xl font-bold font-serif mb-2">Start your free trial</h3>
             <p className="text-sm text-muted-foreground mb-6">
-              Enter your work email to continue to Stripe's secure checkout. Your card won't
+              Enter your work email to continue to our secure checkout. Your card won't
               be charged until after the {TRIAL_DAYS}-day trial.
             </p>
 
@@ -189,19 +189,19 @@ export default function Checkout() {
                 size="lg"
                 className="w-full rounded-full bg-[#C9A450] hover:bg-[#B8963E] text-white font-semibold disabled:opacity-60"
               >
-                {loading ? "Redirecting to Stripe…" : `Start ${TRIAL_DAYS}-Day Free Trial →`}
+                {loading ? "Redirecting to checkout…" : `Start ${TRIAL_DAYS}-Day Free Trial →`}
               </Button>
 
               <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-1">
                 <Lock className="w-3 h-3" />
-                Secure checkout powered by Stripe. We never store your card details.
+                Secure checkout. We never store your card details.
               </div>
             </form>
 
             <div className="mt-8 pt-6 border-t text-sm text-muted-foreground space-y-2">
               <p className="font-medium text-foreground">What happens next?</p>
               <ol className="list-decimal list-inside space-y-1 text-xs">
-                <li>Stripe's secure page collects your payment details.</li>
+                <li>Our secure checkout page collects your payment details.</li>
                 <li>Your {TRIAL_DAYS}-day trial starts immediately — no charge yet.</li>
                 <li>You'll receive an email to set up your OmniCore workspace.</li>
                 <li>On day {TRIAL_DAYS + 1}, ${plan.monthlyUsd} is charged unless you cancel.</li>

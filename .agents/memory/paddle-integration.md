@@ -11,6 +11,14 @@ Low-level Paddle API wrapper (fetch-based, no SDK) lives in `artifacts/api-serve
 `BILLING_PROVIDER=stripe` (default) | `paddle` env var controls which provider handles NEW public checkouts.
 Existing Stripe subscribers are never rerouted — the code checks for `paddle_customer_id` vs `stripe_customer_id` on the tenant row.
 
+**Important:** with no billing env vars set, provider defaults to Stripe, which throws `401 Unauthorized` fetching Stripe credentials on any checkout. Set `BILLING_PROVIDER=paddle` (Paddle auth works via the Replit connector even without `PADDLE_API_KEY`). Going live in Paddle also requires approving the checkout return-URL domain in the Paddle dashboard, else checkout returns `checkout.url ... domain has been approved` — this is account config, not a code bug.
+
+## Plan source of truth: `billing_plans` table
+
+`artifacts/api-server/src/lib/plansRepo.js` owns a `billing_plans` table — the single source of truth for plans (free/starter/growth seeded idempotently, gen_random_uuid ids). Paid plans mirror into Paddle's catalog lazily (`ensurePaddlePriceId`); a plan with no `paddle_price_id` shows as un-synced in the UI. Sync failures are best-effort and returned as a `warning` string, not thrown.
+**Why:** replaces the old approach of reading plan features from `stripe.products` metadata (dead once Stripe is gone). `applyPlanFeatures` in `app.ts` now reads limits/features from `billing_plans` (falling back to the free plan for null/unknown), so activating a plan grants exactly its configured features.
+The Free plan is managed here too (features/limits only, no Paddle product, not self_serve, excluded from tenant `/api/billing/plans`) and is protected from deletion. Super-admin plan CRUD is under `/api/super-admin/billing/*` (status + plans GET/POST/PATCH/DELETE); the dashboard Super Admin tab is "Billing" (`BillingPanel`), not "Stripe".
+
 ## Paddle env vars required
 
 - `PADDLE_API_KEY` — Paddle dashboard → Developer → Authentication
