@@ -46,7 +46,9 @@ const BOTTOM = doc.page.height - doc.page.margins.bottom;
 
 // ─── TOC tracking ───────────────────────────────────────────────────────────
 const toc = [];
-function tocAdd(title, level) { toc.push({ title, level, page: pageNumber() }); }
+// Footer labels use the 0-based buffered page index (cover skipped), so the
+// TOC must record the current page's index (count - 1), not the raw count.
+function tocAdd(title, level) { toc.push({ title, level, page: pageNumber() - 1 }); }
 function pageNumber() { return doc.bufferedPageRange().count; }
 
 // ─── Layout helpers ─────────────────────────────────────────────────────────

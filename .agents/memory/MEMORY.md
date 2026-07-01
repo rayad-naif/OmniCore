@@ -4,3 +4,4 @@
 - [Paddle billing integration](paddle-integration.md) — dual-provider (Stripe + Paddle) arch, env vars, webhook path, seed script, no SDK (fetch-based)
 - [Static SPA 404 & crawlability](static-spa-404-crawlability.md) — removing the /* rewrite is how you get real 404s (no status codes in rewrites); prerendered noindex 404 must be mirrored client-side or hydration overwrites it
 - [Vite image preload injection](vite-image-preload-injection.md) — Vite preloads every statically-imported image in the eager graph; can't lazy routes (sync SSR prerender); serve below-fold art from public/ to drop preloads
+- [Dashboard overlay layering](dashboard-overlay-layering.md) — TrialGateway lock overlay sits at zIndex 9999; new floating/fixed dashboard UI must use a lower z-index (z-50) or it covers the blocking overlay

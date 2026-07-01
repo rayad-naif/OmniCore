@@ -1,5 +1,4 @@
 uploads = []
-outputs = []
 
 [[generated]]
 id = "BD0j8bM0e94OHkZc0lF6s"
@@ -18,3 +17,9 @@ id = "2R99JcGe8MUexvoVx5u5J"
 uri = "file://artifacts/marketing-site/src/assets/feature-2.png"
 type = "image"
 title = "AI Bot analyzing data"
+
+[[outputs]]
+id = "g2DAYx-XQJfK3xiLg4DiS"
+uri = "file://docs/OmniCore-Developer-Guide.pdf"
+type = "pdf"
+title = "Atelier OmniCore — Developer Guide"
