@@ -8,7 +8,13 @@
 //      navigates between routes so Google's render pass and the browser tab match.
 
 export const SITE_URL = "https://omnicore.irofficial.com";
-export const OG_IMAGE = `${SITE_URL}/opengraph.png`;
+export const SITE_NAME = "Atelier OmniCore";
+export const SITE_LOCALE = "en_US";
+// Shared social-card image. Uses the lightweight 1280x720 JPEG (~55KB) instead of
+// the 6.7MB opengraph.png, which exceeded X/Twitter's summary card size limit.
+export const OG_IMAGE = `${SITE_URL}/opengraph.jpg`;
+export const OG_IMAGE_ALT =
+  "Atelier OmniCore — AI-powered omnichannel helpdesk software";
 
 export interface RouteMeta {
   /** Canonical path, always starting with "/". */
@@ -324,20 +330,28 @@ export function renderHead(meta: RouteMeta): string {
     `<meta name="description" content="${d}" />`,
     `<meta name="robots" content="${meta.noindex ? "noindex, follow" : "index, follow"}" />`,
     meta.noindex ? "" : `<link rel="canonical" href="${escapeHtml(canonical)}" />`,
+    `<meta property="og:site_name" content="${escapeHtml(SITE_NAME)}" />`,
+    `<meta property="og:locale" content="${escapeHtml(SITE_LOCALE)}" />`,
     `<meta property="og:title" content="${t}" />`,
     `<meta property="og:description" content="${d}" />`,
     `<meta property="og:type" content="${escapeHtml(meta.ogType)}" />`,
     `<meta property="og:url" content="${escapeHtml(canonical)}" />`,
     `<meta property="og:image" content="${escapeHtml(OG_IMAGE)}" />`,
+    `<meta property="og:image:alt" content="${escapeHtml(OG_IMAGE_ALT)}" />`,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${t}" />`,
     `<meta name="twitter:description" content="${d}" />`,
     `<meta name="twitter:image" content="${escapeHtml(OG_IMAGE)}" />`,
+    `<meta name="twitter:image:alt" content="${escapeHtml(OG_IMAGE_ALT)}" />`,
   ];
   if (meta.jsonLd) {
     // Escape "<" to avoid breaking out of the <script> element.
     const json = JSON.stringify(meta.jsonLd).replace(/</g, "\\u003c");
-    tags.push(`<script type="application/ld+json">${json}</script>`);
+    // Same id the client uses in applyMeta(), so hydration/navigation replaces
+    // this block instead of appending a duplicate, stale JSON-LD script.
+    tags.push(
+      `<script id="route-jsonld" type="application/ld+json">${json}</script>`,
+    );
   }
   return tags.filter(Boolean).join("\n    ");
 }
@@ -370,15 +384,19 @@ export function applyMeta(meta: RouteMeta): void {
 
   setMeta("name", "description", meta.description);
   setMeta("name", "robots", meta.noindex ? "noindex, follow" : "index, follow");
+  setMeta("property", "og:site_name", SITE_NAME);
+  setMeta("property", "og:locale", SITE_LOCALE);
   setMeta("property", "og:title", meta.title);
   setMeta("property", "og:description", meta.description);
   setMeta("property", "og:type", meta.ogType);
   setMeta("property", "og:url", canonical);
   setMeta("property", "og:image", OG_IMAGE);
+  setMeta("property", "og:image:alt", OG_IMAGE_ALT);
   setMeta("name", "twitter:card", "summary_large_image");
   setMeta("name", "twitter:title", meta.title);
   setMeta("name", "twitter:description", meta.description);
   setMeta("name", "twitter:image", OG_IMAGE);
+  setMeta("name", "twitter:image:alt", OG_IMAGE_ALT);
 
   let link = document.head.querySelector<HTMLLinkElement>(
     'link[rel="canonical"]',
