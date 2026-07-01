@@ -26,7 +26,7 @@ import { io, type Socket } from 'socket.io-client'
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Status      = 'open' | 'closed' | 'pending' | 'ai_handling' | 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved'
 type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved' | 'closed'
-type Channel     = 'email' | 'widget' | 'api'
+type Channel     = 'email' | 'widget' | 'api' | 'whatsapp'
 type Priority    = 'low' | 'normal' | 'high' | 'urgent'
 type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
 type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp' | 'contacts' | 'canned_responses'
@@ -815,9 +815,19 @@ function PriorityDot({ priority }: { priority: Priority }) {
   return <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${colors[priority]}`} />
 }
 
+function WhatsAppIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.978-1.398A9.948 9.948 0 0 0 12 22c5.523 0 10-4.477 10-10S17.523 2 12 2Z" fill="#25D366"/>
+      <path d="M17.04 14.72c-.28-.14-1.65-.81-1.9-.9-.26-.1-.44-.14-.63.14-.18.28-.72.9-.88 1.09-.16.18-.33.2-.61.07-.28-.14-1.19-.44-2.27-1.4-.84-.75-1.41-1.67-1.57-1.95-.17-.28-.02-.43.12-.57.13-.13.28-.33.42-.5.14-.17.18-.28.28-.47.1-.18.05-.35-.02-.49-.07-.14-.63-1.51-.86-2.07-.23-.54-.46-.47-.63-.48h-.54c-.18 0-.49.07-.75.35-.26.28-1 .98-1 2.39 0 1.41 1.02 2.77 1.16 2.96.14.2 2 3.05 4.85 4.28.68.29 1.21.47 1.62.6.68.22 1.3.19 1.79.11.55-.08 1.65-.67 1.88-1.33.23-.65.23-1.21.16-1.33-.07-.12-.26-.19-.54-.33Z" fill="white"/>
+    </svg>
+  )
+}
+
 function ChannelIcon({ channel }: { channel: Channel }) {
-  if (channel === 'email') return <Mail size={11} className="text-slate-400" />
-  if (channel === 'api')   return <Hash size={11} className="text-slate-400" />
+  if (channel === 'email')     return <Mail size={11} className="text-slate-400" />
+  if (channel === 'api')       return <Hash size={11} className="text-slate-400" />
+  if (channel === 'whatsapp')  return <WhatsAppIcon size={11} />
   return <Globe size={11} className="text-slate-400" />
 }
 
