@@ -65,8 +65,26 @@ still falls back to the Replit dev domain.
 ```sql
 ALTER TABLE tenants
   ADD COLUMN IF NOT EXISTS paddle_customer_id     TEXT,
-  ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
+  ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT,
+  ADD COLUMN IF NOT EXISTS trial_ends_at          TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS lock_notified_at       TIMESTAMPTZ;
 ```
+
+`trial_ends_at` is populated from Paddle's `data.trial_dates.ends_at` in the webhook handler. `lock_notified_at` is set once when a tenant is first detected as hard-locked (prevents duplicate admin emails).
+
+## Trial grace / hard-lock flow
+
+`GET /api/billing/subscription` computes `lockState` ('grace'|'locked'|null) and `graceDaysLeft` from subscription_status + trial_ends_at + grace_period_ends_at at request time (no background job). Rules:
+- `active` → null (no overlay)
+- `trialing` + trial ended + ≤7d ago → `grace`
+- `trialing` + trial ended + >7d ago → `locked`
+- `past_due` + within `grace_period_ends_at` → `grace` (set to NOW()+7d by webhook)
+- `past_due` + past grace → `locked`
+- `cancelled`/`paused` → `locked`
+
+When `lockState` first becomes `locked` (`lock_notified_at` IS NULL), the endpoint fires `notifyLockEmails()` — sends to all tenant admins + `PLATFORM_ADMIN_EMAIL` env var.
+
+Dashboard `TrialGateway.jsx` renders a fixed overlay (z-index 9999) showing grace popup (dismissible 24h via localStorage) or hard-lock screen (non-dismissible). Super-admins (`isSuperAdmin`) are exempt. CTA navigates to Billing tab.
 
 ## Seed script
 

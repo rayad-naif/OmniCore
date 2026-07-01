@@ -589,16 +589,25 @@ async function provisionTenantFromPaddleEvent(
       return;
     }
 
+    // Extract trial end date from Paddle's trial_dates field (present on trialing subs).
+    const trialDates = data.trial_dates as Record<string, string> | undefined;
+    const trialEndsAt = trialDates?.ends_at || null;
+
     await pool.query(
       `UPDATE tenants SET
          paddle_customer_id      = COALESCE($1, paddle_customer_id),
          paddle_subscription_id  = $2,
          plan                    = COALESCE($3, plan),
          subscription_status     = $4,
-         grace_period_ends_at    = NULL,
+         trial_ends_at           = COALESCE($6, trial_ends_at),
+         grace_period_ends_at    = CASE
+                                     WHEN $4 = 'past_due' THEN NOW() + INTERVAL '7 days'
+                                     WHEN $4 IN ('active','trialing','cancelled','paused') THEN NULL
+                                     ELSE grace_period_ends_at
+                                   END,
          updated_at              = NOW()
        WHERE id = $5`,
-      [customerId || null, subId, plan, status, tenantId],
+      [customerId || null, subId, plan, status, tenantId, trialEndsAt],
     );
     logger.info({ tenantId, plan, status }, "paddle_tenant_provisioned");
 

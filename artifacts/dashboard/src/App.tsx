@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
+import TrialGateway from './components/TrialGateway'
 import { io, type Socket } from 'socket.io-client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -4827,8 +4828,9 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
 
 // ─── Dashboard (authenticated) ────────────────────────────────────────────────
 function Dashboard() {
-  const { accessToken, agent, logout, can, isAdmin, workspaceOverride, setWorkspaceOverride } = useAuth() as {
+  const { accessToken, authFetch, agent, logout, can, isAdmin, workspaceOverride, setWorkspaceOverride } = useAuth() as {
     accessToken: string | null
+    authFetch: (url: string, opts?: RequestInit) => Promise<Response>
     agent: { id: string; name: string; email: string; tenantId: string; role: string; isSuperAdmin?: boolean } | null
     logout: () => Promise<void>
     can: (feature: string, level?: string) => boolean
@@ -5190,6 +5192,9 @@ function Dashboard() {
           {section === 'superadmin'  && <SuperAdminSection />}
         </div>
       </div>
+
+      {/* Trial / lock gateway overlay — renders above everything else */}
+      <TrialGateway authFetch={authFetch} agent={agent} onNavigate={setSection} />
     </div>
   )
 }

@@ -278,20 +278,23 @@ export default function Billing() {
       .finally(() => setLoading(false));
   }, [agent, authFetch]);
 
-  // ── Upgrade → Lemon Squeezy checkout ───────────────────────────────────────
+  // ── Upgrade / subscribe → Paddle or Stripe hosted checkout ─────────────────
   const handleUpgrade = useCallback(async (plan) => {
-    if (!plan.variantId) { alert('Variant ID not configured. Set VITE_LS_' + plan.id.toUpperCase() + '_VARIANT_ID.'); return; }
     setUpgrading(plan.id);
     setError('');
     try {
       const res  = await authFetch(`${API_URL}/checkout`, {
         method: 'POST',
-        body:   JSON.stringify({ variantId: plan.variantId, planId: plan.id }),
+        body:   JSON.stringify({ plan: plan.id }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
       const data = await res.json();
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
+      const url = data.url || data.checkoutUrl;
+      if (url) {
+        window.location.href = url;
       } else {
         throw new Error('No checkout URL returned');
       }

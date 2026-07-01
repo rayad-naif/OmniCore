@@ -31,6 +31,7 @@ const logger              = require('../utils/logger');
 const billingProvider     = require('../lib/billingProvider');
 const plansRepo           = require('../lib/plansRepo');
 const { publicAppUrl }    = require('../lib/env');
+const { sendAccountUpdateEmail } = require('../services/email.service');
 
 // ─── Idempotent migration: ensure billing linkage columns exist ──────────────
 (async () => {
@@ -40,12 +41,55 @@ const { publicAppUrl }    = require('../lib/env');
         ADD COLUMN IF NOT EXISTS stripe_customer_id     TEXT,
         ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT,
         ADD COLUMN IF NOT EXISTS paddle_customer_id     TEXT,
-        ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT
+        ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT,
+        ADD COLUMN IF NOT EXISTS trial_ends_at          TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS lock_notified_at       TIMESTAMPTZ
     `);
   } catch (err) {
     logger.error({ err: err.message }, 'billing_migration_failed');
   }
 })();
+
+// ─── Lock notification helper ─────────────────────────────────────────────────
+/**
+ * Fires a one-time email when a tenant's grace period expires and they are
+ * hard-locked. Sends to all tenant admins + PLATFORM_ADMIN_EMAIL if set.
+ */
+async function notifyLockEmails(tenantId, plan) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.email, t.company_name
+         FROM agents a
+         JOIN tenants t ON t.id = a.tenant_id
+        WHERE a.tenant_id = $1 AND a.role = 'admin' AND a.is_active = TRUE
+        LIMIT 5`,
+      [tenantId],
+    );
+    const companyName = rows[0]?.company_name || 'your workspace';
+    const subject  = 'Action required — OmniCore access locked';
+    const heading  = 'Workspace access locked';
+    const message  = `The free trial for ${companyName} has ended and the 7-day grace period has expired. `
+                   + `All agents in this workspace are now prevented from accessing the dashboard until a paid subscription is activated. `
+                   + `Please log in to the Billing section and add a payment method to restore access immediately.`;
+
+    const sends = rows.map(r => sendAccountUpdateEmail({ to: r.email, subject, heading, message }));
+
+    const platformEmail = process.env.PLATFORM_ADMIN_EMAIL;
+    if (platformEmail) {
+      sends.push(sendAccountUpdateEmail({
+        to:      platformEmail,
+        subject: `[Platform] Workspace locked — ${companyName}`,
+        heading: 'Workspace hard-locked',
+        message: `Tenant ID: ${tenantId}\nPlan: ${plan || 'unknown'}\nCompany: ${companyName}\n\nTheir trial + grace period have expired. No active paid subscription found.`,
+      }));
+    }
+
+    await Promise.allSettled(sends);
+    logger.info({ tenantId }, 'lock_notification_sent');
+  } catch (err) {
+    logger.warn({ err: err.message, tenantId }, 'lock_notification_failed');
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -151,7 +195,9 @@ async function getSubscription(req, res) {
        paddle_subscription_id  AS "paddleSubscriptionId",
        plan,
        subscription_status     AS status,
-       grace_period_ends_at    AS "gracePeriodEndsAt"
+       grace_period_ends_at    AS "gracePeriodEndsAt",
+       trial_ends_at           AS "trialEndsAt",
+       lock_notified_at        AS "lockNotifiedAt"
      FROM tenants WHERE id = $1`,
     [tenantId]
   );
@@ -159,16 +205,66 @@ async function getSubscription(req, res) {
 
   const t = rows[0];
 
+  // ── Compute lock / grace state ────────────────────────────────────────────
+  // Rules:
+  //   active               → no lock (paid)
+  //   trialing, within trial dates → no lock
+  //   trialing, trial ended, within 7-day grace → lockState: 'grace'
+  //   trialing, trial ended, grace expired       → lockState: 'locked'
+  //   past_due, within grace_period_ends_at      → lockState: 'grace'
+  //   past_due, past grace_period_ends_at        → lockState: 'locked'
+  //   cancelled / paused                         → lockState: 'locked'
+  const now = new Date();
+  let lockState = null;
+  let graceDaysLeft = 0;
+
+  const status = t.status;
+  if (status === 'active') {
+    lockState = null;
+  } else if (status === 'trialing') {
+    if (t.trialEndsAt && new Date(t.trialEndsAt) <= now) {
+      const graceEnd = new Date(new Date(t.trialEndsAt).getTime() + 7 * 24 * 60 * 60 * 1000);
+      if (now >= graceEnd) {
+        lockState = 'locked';
+      } else {
+        lockState = 'grace';
+        graceDaysLeft = Math.ceil((graceEnd - now) / (24 * 60 * 60 * 1000));
+      }
+    }
+    // else still within trial period — no lock
+  } else if (status === 'past_due') {
+    const graceEnd = t.gracePeriodEndsAt
+      ? new Date(t.gracePeriodEndsAt)
+      : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    if (now >= graceEnd) {
+      lockState = 'locked';
+    } else {
+      lockState = 'grace';
+      graceDaysLeft = Math.ceil((graceEnd - now) / (24 * 60 * 60 * 1000));
+    }
+  } else if (status === 'cancelled' || status === 'paused') {
+    lockState = 'locked';
+  }
+
+  // Fire one-time lock notification email (fire-and-forget, never blocks response)
+  if (lockState === 'locked' && !t.lockNotifiedAt) {
+    pool.query('UPDATE tenants SET lock_notified_at = NOW() WHERE id = $1', [tenantId]).catch(() => {});
+    notifyLockEmails(tenantId, t.plan).catch(() => {});
+  }
+
   // Determine which provider owns the active subscription.
   const isPaddle = !!t.paddleSubscriptionId;
   const out = {
-    customerId:      isPaddle ? t.paddleCustomerId  : t.stripeCustomerId,
-    subscriptionId:  isPaddle ? t.paddleSubscriptionId : t.stripeSubscriptionId,
-    plan:            t.plan,
-    status:          t.status,
+    customerId:        isPaddle ? t.paddleCustomerId  : t.stripeCustomerId,
+    subscriptionId:    isPaddle ? t.paddleSubscriptionId : t.stripeSubscriptionId,
+    plan:              t.plan,
+    status:            t.status,
     gracePeriodEndsAt: t.gracePeriodEndsAt,
-    provider:        isPaddle ? 'paddle' : 'stripe',
-    currentPeriodEnd: null,
+    trialEndsAt:       t.trialEndsAt,
+    lockState,
+    graceDaysLeft,
+    provider:          isPaddle ? 'paddle' : 'stripe',
+    currentPeriodEnd:  null,
   };
 
   if (!isPaddle && t.stripeSubscriptionId) {
