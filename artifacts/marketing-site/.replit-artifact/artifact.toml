@@ -22,22 +22,58 @@ build = [ "pnpm", "--filter", "@workspace/marketing-site", "run", "build" ]
 publicDir = "artifacts/marketing-site/dist/public"
 serve = "static"
 
+# Clean URLs -> prerendered static HTML files (crawlers get route-correct HTML).
+# Trailing-slash variants map to the same file so /pricing/ does not fall through
+# to the home shell and inherit the wrong metadata.
 [[services.production.rewrites]]
-from = "/pricing.html"
+from = "/pricing"
 to = "/pricing.html"
 
 [[services.production.rewrites]]
-from = "/terms.html"
+from = "/pricing/"
+to = "/pricing.html"
+
+[[services.production.rewrites]]
+from = "/contact"
+to = "/contact.html"
+
+[[services.production.rewrites]]
+from = "/contact/"
+to = "/contact.html"
+
+[[services.production.rewrites]]
+from = "/help"
+to = "/help.html"
+
+[[services.production.rewrites]]
+from = "/help/"
+to = "/help.html"
+
+[[services.production.rewrites]]
+from = "/terms"
 to = "/terms.html"
 
 [[services.production.rewrites]]
-from = "/privacy.html"
+from = "/terms/"
+to = "/terms.html"
+
+[[services.production.rewrites]]
+from = "/privacy"
 to = "/privacy.html"
 
 [[services.production.rewrites]]
-from = "/refunds.html"
+from = "/privacy/"
+to = "/privacy.html"
+
+[[services.production.rewrites]]
+from = "/refunds"
 to = "/refunds.html"
 
+[[services.production.rewrites]]
+from = "/refunds/"
+to = "/refunds.html"
+
+# SPA fallback for client-only routes (e.g. /checkout) and deep links.
 [[services.production.rewrites]]
 from = "/*"
 to = "/index.html"
