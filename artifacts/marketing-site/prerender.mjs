@@ -4,7 +4,7 @@
 //
 // Runs after `vite build` (client) and `vite build --ssr` (server bundle).
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -33,7 +33,9 @@ for (const meta of routeMeta) {
 
   const fileName =
     meta.path === "/" ? "index.html" : `${meta.path.replace(/^\//, "")}.html`;
-  writeFileSync(resolve(distPublic, fileName), html);
+  const outPath = resolve(distPublic, fileName);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, html);
   console.log(`prerendered ${meta.path} -> ${fileName}`);
 }
 

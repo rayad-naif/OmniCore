@@ -9,6 +9,9 @@ import Home from "@/pages/home";
 import Pricing from "@/pages/pricing";
 import Contact from "@/pages/contact";
 import Help from "@/pages/help";
+import HelpGoogleWorkspaceForwarding from "@/pages/help-google-workspace-forwarding";
+import HelpMicrosoft365EmailSetup from "@/pages/help-microsoft-365-email-setup";
+import HelpAiBotSetup from "@/pages/help-ai-bot-setup";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
 import Refunds from "@/pages/refunds";
@@ -35,6 +38,9 @@ function Router() {
         <Route path="/pricing" component={Pricing} />
         <Route path="/contact" component={Contact} />
         <Route path="/help" component={Help} />
+        <Route path="/help/google-workspace-forwarding" component={HelpGoogleWorkspaceForwarding} />
+        <Route path="/help/microsoft-365-email-setup" component={HelpMicrosoft365EmailSetup} />
+        <Route path="/help/ai-bot-setup" component={HelpAiBotSetup} />
         <Route path="/terms" component={Terms} />
         <Route path="/privacy" component={Privacy} />
         <Route path="/refunds" component={Refunds} />

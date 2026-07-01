@@ -197,6 +197,42 @@ export const routeMeta: RouteMeta[] = [
     ),
   },
   {
+    path: "/help/google-workspace-forwarding",
+    title: "Google Workspace Email Forwarding — Atelier OmniCore Help",
+    description:
+      "Step-by-step guide to forwarding email from your Google Workspace (G Suite) mailbox to Atelier OmniCore so inbound messages become support conversations automatically.",
+    ogType: "article",
+    jsonLd: webPage(
+      "Google Workspace Email Forwarding",
+      "/help/google-workspace-forwarding",
+      "Forward Google Workspace email to OmniCore to automatically create support conversations.",
+    ),
+  },
+  {
+    path: "/help/microsoft-365-email-setup",
+    title: "Microsoft 365 Email Setup — Atelier OmniCore Help",
+    description:
+      "Configure Microsoft 365 / Exchange Online mail flow rules to route your support mailbox into OmniCore. Covers per-mailbox forwarding and Exchange transport rules.",
+    ogType: "article",
+    jsonLd: webPage(
+      "Microsoft 365 Email Setup",
+      "/help/microsoft-365-email-setup",
+      "Route Microsoft 365 support email to OmniCore using mail flow rules.",
+    ),
+  },
+  {
+    path: "/help/ai-bot-setup",
+    title: "AI Bot Setup & Configuration — Atelier OmniCore Help",
+    description:
+      "Enable and configure the OmniCore AI bot: set bot persona, build your knowledge base, define handoff rules, and review deflection performance.",
+    ogType: "article",
+    jsonLd: webPage(
+      "AI Bot Setup & Configuration",
+      "/help/ai-bot-setup",
+      "Configure OmniCore's AI bot for automated deflection, handoff rules, and knowledge base management.",
+    ),
+  },
+  {
     path: "/terms",
     title: "Terms of Service — Atelier OmniCore",
     description:
