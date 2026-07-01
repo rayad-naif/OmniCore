@@ -589,7 +589,12 @@ async function provisionTenantFromPaddleEvent(
         "We couldn't process your latest payment. Please update your payment method in Billing.",
       );
     }
-  } else if (eventType === "transaction.completed") {
+  } else if (
+    eventType === "transaction.created" ||
+    eventType === "transaction.completed" ||
+    eventType === "transaction.ready" ||
+    eventType === "transaction.paid"
+  ) {
     const customData =
       (data.custom_data as Record<string, string>) || {};
     const email = customData.email;
