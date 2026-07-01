@@ -160,14 +160,39 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
   }
 
   // Reuse existing Paddle customer or create a new one.
+  // If the email already exists in Paddle, extract the customer ID from
+  // the conflict error message (e.g. "conflicts with customer of id ctm_xxx")
+  // rather than failing the checkout entirely.
   let paddleCustomerId = tenant.paddle_customer_id;
   if (!paddleCustomerId) {
-    const resp = await paddleRequest('POST', '/customers', {
-      email: agentEmail || undefined,
-      name: tenant.company_name || undefined,
-      custom_data: { tenant_id: String(tenant.id) },
-    });
-    paddleCustomerId = resp.data?.id;
+    try {
+      const resp = await paddleRequest('POST', '/customers', {
+        email: agentEmail || undefined,
+        name: tenant.company_name || undefined,
+        custom_data: { tenant_id: String(tenant.id) },
+      });
+      paddleCustomerId = resp.data?.id;
+    } catch (createErr) {
+      // Paddle returns "customer email conflicts with customer of id ctm_xxx"
+      // when the email is already registered. Extract the existing ID.
+      const conflictId =
+        (createErr.paddleError?.detail || createErr.message || '')
+          .match(/ctm_\w+/)?.[0];
+      if (conflictId) {
+        paddleCustomerId = conflictId;
+      } else if (agentEmail) {
+        // Fallback: list customers by email
+        try {
+          const listResp = await paddleRequest(
+            'GET',
+            `/customers?email=${encodeURIComponent(agentEmail)}&per_page=1`,
+          );
+          paddleCustomerId = listResp.data?.[0]?.id || null;
+        } catch { /* ignore nested failure */ }
+      }
+      if (!paddleCustomerId) throw createErr; // genuine error, rethrow
+    }
+
     if (paddleCustomerId) {
       await pool.query(
         'UPDATE tenants SET paddle_customer_id = $1, updated_at = NOW() WHERE id = $2',

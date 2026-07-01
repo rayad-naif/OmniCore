@@ -80,6 +80,9 @@ interface SANTenant {
   agent_count: number; max_brands_allowed: number
   max_agents_allowed: number; ai_feature_enabled: boolean
   smtp_feature_enabled: boolean; conversation_limit: number
+  trial_ends_at: string | null; grace_period_ends_at: string | null
+  lock_notified_at: string | null
+  paddle_customer_id: string | null; paddle_subscription_id: string | null
 }
 
 interface UpgradeRequest {
@@ -365,9 +368,14 @@ function useApi() {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/status`, { method: 'PATCH', body: JSON.stringify({ account_status }) })
       if (!r.ok) throw new Error('Failed to update status')
     },
-    patchTenantBilling: async (id: string, plan: string, subscription_status: string): Promise<void> => {
-      const r = await authFetch(`${API}/super-admin/tenants/${id}/billing`, { method: 'PATCH', body: JSON.stringify({ plan, subscription_status }) })
-      if (!r.ok) throw new Error('Failed to update billing')
+    patchTenantBilling: async (id: string, body: Record<string, unknown>): Promise<void> => {
+      const r = await authFetch(`${API}/super-admin/tenants/${id}/billing`, { method: 'PATCH', body: JSON.stringify(body) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update billing') }
+    },
+    adminTenantCheckout: async (tenantId: string, agentEmail: string, plan: string): Promise<{ url: string; provider: string }> => {
+      const r = await authFetch(`${API}/super-admin/tenants/${tenantId}/checkout`, { method: 'POST', body: JSON.stringify({ agentEmail, plan }) })
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to generate checkout') }
+      return r.json() as Promise<{ url: string; provider: string }>
     },
     purgeTenant: async (id: string, confirm_name: string): Promise<void> => {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/purge`, { method: 'DELETE', body: JSON.stringify({ confirm_name }) })
@@ -2788,7 +2796,13 @@ function SuperAdminSection() {
   const [purging, setPurging]         = useState(false)
   const [purgeErr, setPurgeErr]       = useState<string | null>(null)
   const [billingTarget, setBilling]   = useState<SANTenant | null>(null)
-  const [billingForm, setBForm]       = useState({ plan: 'free', subscription_status: 'active' })
+  const [billingForm, setBForm]       = useState({ plan: 'free', subscription_status: 'active', trial_ends_at: '', reset_lock: false })
+  const [billingErr, setBillingErr]   = useState<string | null>(null)
+  const [checkoutEmail, setCheckoutEmail] = useState('')
+  const [checkoutPlan, setCheckoutPlan]   = useState('starter')
+  const [checkoutUrl, setCheckoutUrl]     = useState<string | null>(null)
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [checkoutErr, setCheckoutErr] = useState<string | null>(null)
   const [saving, setSaving]           = useState(false)
   const [limitsTarget, setLimits]     = useState<SANTenant | null>(null)
   const [limitsForm, setLimitsForm]   = useState({ max_brands_allowed: 3, max_agents_allowed: 10, ai_feature_enabled: true, smtp_feature_enabled: true, conversation_limit: 1000 })
@@ -2815,10 +2829,35 @@ function SuperAdminSection() {
   }
 
   const handleBillingSave = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!billingTarget) return; setSaving(true)
-    try { await api.patchTenantBilling(billingTarget.id, billingForm.plan, billingForm.subscription_status); setTenants(prev => prev.map(x => x.id === billingTarget.id ? { ...x, plan: billingForm.plan, subscription_status: billingForm.subscription_status } : x)); setBilling(null) }
-    catch { /* ignore */ }
+    e.preventDefault(); if (!billingTarget) return; setBillingErr(null); setSaving(true)
+    try {
+      const body: Record<string, unknown> = {
+        plan: billingForm.plan,
+        subscription_status: billingForm.subscription_status,
+      }
+      if (billingForm.trial_ends_at) body.trial_ends_at = billingForm.trial_ends_at
+      if (billingForm.reset_lock) body.lock_notified_at = null
+      await api.patchTenantBilling(billingTarget.id, body)
+      setTenants(prev => prev.map(x => x.id === billingTarget.id ? {
+        ...x, plan: billingForm.plan, subscription_status: billingForm.subscription_status,
+        trial_ends_at: (billingForm.trial_ends_at || x.trial_ends_at) as string | null,
+        lock_notified_at: billingForm.reset_lock ? null : x.lock_notified_at,
+      } : x))
+      setBilling(null)
+    }
+    catch (err) { setBillingErr((err as Error).message) }
     finally { setSaving(false) }
+  }
+
+  const handleAdminCheckout = async () => {
+    if (!billingTarget || !checkoutEmail) return
+    setCheckoutLoading(true); setCheckoutErr(null); setCheckoutUrl(null)
+    try {
+      const result = await api.adminTenantCheckout(billingTarget.id, checkoutEmail, checkoutPlan)
+      setCheckoutUrl(result.url)
+    }
+    catch (err) { setCheckoutErr((err as Error).message) }
+    finally { setCheckoutLoading(false) }
   }
 
   const handleLimitsSave = async (e: React.FormEvent) => {
@@ -2928,24 +2967,80 @@ function SuperAdminSection() {
 
       {/* Billing Modal */}
       {billingTarget && (
-        <Modal onClose={() => setBilling(null)}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-semibold text-slate-900">Update Billing — {billingTarget.company_name}</h2><button onClick={() => setBilling(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button></div>
+        <Modal onClose={() => { setBilling(null); setCheckoutUrl(null); setCheckoutErr(null) }} wide>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-semibold text-slate-900">Billing Controls — {billingTarget.company_name}</h2>
+            <button onClick={() => { setBilling(null); setCheckoutUrl(null); setCheckoutErr(null) }} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+          </div>
+
+          {/* Current billing info */}
+          <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1">
+            <p><span className="font-medium text-slate-700">Status:</span> {billingTarget.subscription_status} · <span className="font-medium text-slate-700">Plan:</span> {billingTarget.plan}</p>
+            {billingTarget.trial_ends_at && <p><span className="font-medium text-slate-700">Trial ends:</span> {new Date(billingTarget.trial_ends_at).toLocaleString()}</p>}
+            {billingTarget.grace_period_ends_at && <p><span className="font-medium text-slate-700">Grace ends:</span> {new Date(billingTarget.grace_period_ends_at).toLocaleString()}</p>}
+            {billingTarget.lock_notified_at && <p className="text-amber-600"><span className="font-medium">Lock email sent:</span> {new Date(billingTarget.lock_notified_at).toLocaleString()}</p>}
+            {billingTarget.paddle_customer_id && <p><span className="font-medium">Paddle customer:</span> <code className="bg-white px-1 rounded">{billingTarget.paddle_customer_id}</code></p>}
+          </div>
+
+          {/* Plan / status form */}
+          {billingErr && <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">{billingErr}</div>}
           <form onSubmit={handleBillingSave} className="space-y-3">
-            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Plan</label>
-              <select value={billingForm.plan} onChange={e => setBForm(f => ({ ...f, plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
-                {['free','pro','business','enterprise'].map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Plan</label>
+                <select value={billingForm.plan} onChange={e => setBForm(f => ({ ...f, plan: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
+                  {['free','starter','growth','pro','business','enterprise'].map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Subscription Status</label>
+                <select value={billingForm.subscription_status} onChange={e => setBForm(f => ({ ...f, subscription_status: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
+                  {['trialing','active','past_due','cancelled','paused'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
-            <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Subscription Status</label>
-              <select value={billingForm.subscription_status} onChange={e => setBForm(f => ({ ...f, subscription_status: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30">
-                {['trialing','active','past_due','cancelled','paused'].map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Trial End Date <span className="text-slate-400 font-normal">(leave blank to keep existing)</span></label>
+              <input type="datetime-local" value={billingForm.trial_ends_at} onChange={e => setBForm(f => ({ ...f, trial_ends_at: e.target.value }))} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/30" />
             </div>
+            {billingTarget.lock_notified_at && (
+              <label className="flex items-center gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer">
+                <input type="checkbox" checked={billingForm.reset_lock} onChange={e => setBForm(f => ({ ...f, reset_lock: e.target.checked }))} className="rounded" />
+                <span className="text-xs font-medium text-amber-800">Reset lock notification (allows admin email to fire again when locked)</span>
+              </label>
+            )}
             <div className="flex gap-2 pt-1">
-              <button type="button" onClick={() => setBilling(null)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-              <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save'}</button>
+              <button type="button" onClick={() => { setBilling(null); setCheckoutUrl(null) }} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : 'Save Billing'}</button>
             </div>
           </form>
+
+          {/* Admin checkout generator */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <p className="text-xs font-semibold text-slate-700 mb-3">Generate Checkout Link for Tenant</p>
+            <p className="text-[11px] text-slate-400 mb-3">Creates a Paddle-hosted checkout. Copy the URL and share it with the tenant's admin, or open it directly to start their trial + subscription.</p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <input type="email" placeholder="Admin email" value={checkoutEmail} onChange={e => setCheckoutEmail(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500/30" />
+              <select value={checkoutPlan} onChange={e => setCheckoutPlan(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500/30">
+                {['starter','growth'].map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            {checkoutErr && <p className="text-xs text-red-600 mb-2">{checkoutErr}</p>}
+            {checkoutUrl ? (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                <p className="text-[11px] font-semibold text-emerald-700">✅ Checkout URL ready</p>
+                <code className="block text-[10px] text-slate-600 break-all">{checkoutUrl}</code>
+                <div className="flex gap-2">
+                  <button onClick={() => { navigator.clipboard.writeText(checkoutUrl); }} className="flex-1 py-1.5 text-[11px] font-medium text-emerald-700 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg transition-colors">Copy URL</button>
+                  <button onClick={() => window.open(checkoutUrl, '_blank')} className="flex-1 py-1.5 text-[11px] font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors">Open Checkout</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={handleAdminCheckout} disabled={checkoutLoading || !checkoutEmail} className="w-full py-2 text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5 transition-colors">
+                {checkoutLoading ? <><RefreshCw size={11} className="animate-spin" /> Generating…</> : 'Generate Checkout Link'}
+              </button>
+            )}
+          </div>
         </Modal>
       )}
 
@@ -3013,7 +3108,7 @@ function SuperAdminSection() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
                             <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed, max_agents_allowed: t.max_agents_allowed, ai_feature_enabled: t.ai_feature_enabled, smtp_feature_enabled: t.smtp_feature_enabled, conversation_limit: t.conversation_limit }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded text-[10px]" title="Limits & Features"><Settings size={12} /></button>
-                            <button onClick={() => { setBilling(t); setBForm({ plan: t.plan, subscription_status: t.subscription_status }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Billing"><CreditCard size={12} /></button>
+                            <button onClick={() => { setBilling(t); setBForm({ plan: t.plan, subscription_status: t.subscription_status, trial_ends_at: t.trial_ends_at ? new Date(t.trial_ends_at).toISOString().slice(0,16) : '', reset_lock: false }); setCheckoutUrl(null); setCheckoutErr(null); setCheckoutEmail('') }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Billing"><CreditCard size={12} /></button>
                             <button onClick={() => toggleStatus(t)} className={`p-1.5 rounded transition-colors ${t.account_status === 'active' ? 'text-amber-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50'}`} title={t.account_status === 'active' ? 'Suspend' : 'Activate'}>{t.account_status === 'active' ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}</button>
                             <button onClick={() => { setPurge(t); setPConf(''); setPurgeErr(null) }} className="p-1.5 text-red-300 hover:text-red-500 hover:bg-red-50 rounded" title="Delete"><Trash2 size={12} /></button>
                           </div>

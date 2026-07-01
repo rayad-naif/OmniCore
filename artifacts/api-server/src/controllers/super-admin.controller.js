@@ -122,6 +122,8 @@ router.get('/tenants', async (req, res, next) => {
         t.max_brands_allowed, t.max_agents_allowed,
         t.ai_feature_enabled, t.smtp_feature_enabled,
         t.conversation_limit, t.created_at,
+        t.trial_ends_at, t.grace_period_ends_at, t.lock_notified_at,
+        t.paddle_customer_id, t.paddle_subscription_id,
         COUNT(DISTINCT a.id)::int AS agent_count
       FROM tenants t
       LEFT JOIN agents a ON a.tenant_id = t.id
@@ -177,35 +179,82 @@ router.patch('/tenants/:id/status', async (req, res, next) => {
 });
 
 // ─── PATCH /api/super-admin/tenants/:id/billing ──────────────────────────────
+// Accepts: plan, subscription_status, trial_ends_at (ISO string | null),
+//          grace_period_ends_at (ISO string | null), lock_notified_at (ISO string | null)
+// Setting lock_notified_at to null resets the lock notification so the admin
+// email will fire again next time the tenant is detected as locked.
 router.patch('/tenants/:id/billing', async (req, res, next) => {
   try {
-    const allowed = ['plan', 'subscription_status'];
-    const fields  = Object.keys(req.body || {}).filter(k => allowed.includes(k));
-    if (!fields.length) return res.status(400).json({ error: 'Provide plan and/or subscription_status' });
+    const allowed = [
+      'plan', 'subscription_status',
+      'trial_ends_at', 'grace_period_ends_at', 'lock_notified_at',
+    ];
+    const body   = req.body || {};
+    const fields = Object.keys(body).filter(k => allowed.includes(k));
+    if (!fields.length) return res.status(400).json({ error: 'Provide at least one of: plan, subscription_status, trial_ends_at, grace_period_ends_at, lock_notified_at' });
 
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values     = fields.map(f => req.body[f]);
+    const values     = fields.map(f => body[f] ?? null);
     values.push(req.params.id);
 
     const { rows } = await pool.query(
       `UPDATE tenants SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length}
-       RETURNING id, company_name, plan, subscription_status`,
+       RETURNING id, company_name, plan, subscription_status, trial_ends_at, grace_period_ends_at, lock_notified_at`,
       values
     );
     if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
     logger.info({ tenantId: req.params.id, fields, by: req.agent.id }, 'tenant_billing_updated');
 
-    if (fields.includes('plan') && req.body.plan) {
+    if (fields.includes('plan') && body.plan) {
       notifyTenantAdmins(
         req.params.id,
         'Your OmniCore plan has changed',
         'Plan updated',
-        `Your workspace plan is now "${req.body.plan}". This change is effective immediately.`
+        `Your workspace plan is now "${body.plan}". This change is effective immediately.`
       );
     }
 
     return res.json(rows[0]);
+  } catch (err) { next(err); }
+});
+
+// ─── POST /api/super-admin/tenants/:id/checkout ───────────────────────────────
+// Generate a Paddle-hosted checkout URL for a specific tenant/agent email.
+// Body: { agentEmail: string, plan: string }
+// Returns: { url, provider }
+router.post('/tenants/:id/checkout', async (req, res, next) => {
+  try {
+    const { agentEmail, plan } = req.body || {};
+    if (!agentEmail) return res.status(400).json({ error: 'agentEmail is required' });
+    if (!plan) return res.status(400).json({ error: 'plan is required' });
+
+    const { rows } = await pool.query(
+      `SELECT id, company_name, paddle_customer_id, stripe_customer_id FROM tenants WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
+    const tenant = rows[0];
+
+    const plansRepo = require('../lib/plansRepo');
+    const target = await plansRepo.getPlanBySlug(plan);
+    if (!target || !target.active) return res.status(400).json({ error: 'Plan not found or inactive' });
+
+    const paddlePriceId = await plansRepo.ensurePaddlePriceId(plan);
+    const { createTenantCheckoutUrl } = require('../lib/billingProvider');
+    const { publicAppUrl } = require('../lib/env');
+    const baseUrl = publicAppUrl(req);
+
+    const result = await createTenantCheckoutUrl({
+      tenant,
+      agentEmail,
+      plan,
+      paddlePriceId,
+      baseUrl,
+    });
+
+    logger.info({ tenantId: req.params.id, plan, by: req.agent.id }, 'superadmin_checkout_generated');
+    return res.json(result);
   } catch (err) { next(err); }
 });
 
