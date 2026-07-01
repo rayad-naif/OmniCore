@@ -23,9 +23,22 @@ export interface RouteMeta {
 const ORGANIZATION = {
   "@type": "Organization",
   name: "Atelier OmniCore",
+  legalName: "IR Atelier (Idylle Radieuse)",
   url: SITE_URL,
   description:
     "Multi-tenant omnichannel helpdesk and AI customer support platform.",
+  address: {
+    "@type": "PostalAddress",
+    addressLocality: "Multan",
+    addressRegion: "Punjab",
+    addressCountry: "PK",
+  },
+  contactPoint: {
+    "@type": "ContactPoint",
+    contactType: "customer support",
+    telephone: "+923294816780",
+    email: "atelier@irofficial.com",
+  },
 };
 
 const HOME_JSON_LD = {

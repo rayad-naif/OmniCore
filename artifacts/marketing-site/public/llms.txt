@@ -1,0 +1,16 @@
+# Atelier OmniCore
+
+> Atelier OmniCore is a premium multi-tenant SaaS omnichannel helpdesk and AI customer support platform that unifies email, live chat, and social conversations into one AI-powered inbox. The product is operated by IR Atelier (Idylle Radieuse), based in Multan, Punjab, Pakistan. Every plan includes a 14-day free trial. Contact: atelier@irofficial.com, +92 329 4816780.
+
+## Main pages
+
+- [Home](https://omnicore.irofficial.com/): Product overview of the AI-powered omnichannel helpdesk — unified email, chat, and social support with a real-time agent dashboard and embeddable chat widget.
+- [Pricing](https://omnicore.irofficial.com/pricing): Plans and pricing. Starter $29/month, Growth $79/month, and a custom Enterprise plan. All plans include a 14-day free trial; taxes are calculated at checkout.
+- [Help Center](https://omnicore.irofficial.com/help): Setup guides for the omnichannel helpdesk, live chat widget, email integration, and AI bot deflection.
+- [Contact](https://omnicore.irofficial.com/contact): Reach the sales and support team, book a setup call, or ask about Enterprise plans.
+
+## Legal
+
+- [Terms of Service](https://omnicore.irofficial.com/terms): Subscription terms, billing, trials, and acceptable use.
+- [Privacy Policy](https://omnicore.irofficial.com/privacy): How Atelier OmniCore collects, uses, and protects customer data.
+- [Refund Policy](https://omnicore.irofficial.com/refunds): Refund, cancellation, and trial terms. New subscribers may request a full refund within 30 days.

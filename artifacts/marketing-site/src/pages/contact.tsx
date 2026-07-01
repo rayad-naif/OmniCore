@@ -26,7 +26,7 @@ export default function Contact() {
     const body = encodeURIComponent(
       `Name: ${firstName} ${lastName}\nEmail: ${email}${company ? `\nCompany: ${company}` : ""}\n\n${message}`
     );
-    const mailto = `mailto:atelier@irofficial.com,idylle_radieuse@outlook.com?subject=${subject}&body=${body}`;
+    const mailto = `mailto:atelier@irofficial.com?subject=${subject}&body=${body}`;
 
     window.location.href = mailto;
 
@@ -82,7 +82,6 @@ export default function Contact() {
                     <div>
                       <h4 className="font-medium text-sm mb-1">General Enquiries</h4>
                       <a href="mailto:atelier@irofficial.com" className="text-muted-foreground hover:text-[#C9A450] transition-colors block">atelier@irofficial.com</a>
-                      <a href="mailto:idylle_radieuse@outlook.com" className="text-muted-foreground hover:text-[#C9A450] transition-colors block mt-1">idylle_radieuse@outlook.com</a>
                     </div>
                   </div>
                   
@@ -92,7 +91,17 @@ export default function Contact() {
                     </div>
                     <div>
                       <h4 className="font-medium text-sm mb-1">Office</h4>
-                      <p className="text-muted-foreground">100 Innovation Drive<br />San Francisco, CA 94103</p>
+                      <p className="text-muted-foreground">IR Atelier (Idylle Radieuse)<br />Multan, Punjab, Pakistan</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-full bg-[#C9A450]/10 flex items-center justify-center text-[#C9A450] flex-shrink-0">
+                      <Phone className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-sm mb-1">Phone &amp; WhatsApp</h4>
+                      <a href="tel:+923294816780" className="text-muted-foreground hover:text-[#C9A450] transition-colors block">+92 329 4816780</a>
                     </div>
                   </div>
                 </div>
