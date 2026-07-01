@@ -378,14 +378,15 @@ async function sendPlatformSmtpTestEmail(toOverride) {
  * Send a welcome/invite email with a link for the new agent to set their own
  * password. Uses platform SMTP. Returns true if sent, false otherwise.
  */
-async function sendAgentInviteEmail({ to, name, inviteLink, companyName }) {
+async function sendAgentInviteEmail({ to, name, inviteLink, companyName, ctaLabel }) {
+  const buttonLabel = ctaLabel || 'Set Your Password';
   const bodyHtml = `<p style="font-size:14px;color:#475569;margin:0 0 16px;">
       You've been invited to join ${companyName ? `<strong>${companyName}</strong> on ` : ''}OmniCore.
       Set your password to activate your account and get started.
     </p>
     <p style="margin:0 0 20px;">
       <a href="${inviteLink}" style="display:inline-block;padding:10px 20px;background:#0284c7;color:#fff;font-size:14px;font-weight:600;text-decoration:none;border-radius:8px;">
-        Set Your Password
+        ${buttonLabel}
       </a>
     </p>
     <p style="font-size:12px;color:#94a3b8;">This invite link expires in 7 days.</p>`;

@@ -384,6 +384,7 @@ router.post('/users/:id/send-reset', async (req, res, next) => {
       name: agent.name,
       inviteLink: resetLink,
       companyName: agent.company_name,
+      ctaLabel: 'Set Up Your Workspace',
     });
 
     logger.info({ targetId: agent.id, by: req.agent.email, sent }, 'user_reset_email_sent_by_super_admin');
