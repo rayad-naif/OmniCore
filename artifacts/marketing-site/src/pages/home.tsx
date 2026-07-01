@@ -1,13 +1,13 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Bot, MessageSquare, Zap, Users, Inbox, ShieldCheck } from "lucide-react";
-import heroImg from "@/assets/hero.png";
-import feature1Img from "@/assets/feature-1.png";
-import feature2Img from "@/assets/feature-2.png";
-import abstractImg1 from "@assets/Gemini_Generated_Image_xqx9m7xqx9m7xqx9_1782734752504.png";
-import abstractImg2 from "@assets/Gemini_Generated_Image_ljfznyljfznyljfz_1782734752504.png";
-import coreBenefitsImg from "@assets/Gemini_Generated_Image_o33hxo33hxo33hxo_1782739956431.png";
-import coreFeaturesImg from "@assets/Gemini_Generated_Image_a3fmgsa3fmgsa3fm_1782739956432.png";
+// Only the true above-the-fold hero visual is statically imported (Vite emits a
+// <link rel="preload" as="image"> for it). All below-the-fold decorative art is
+// served from public/media as optimized WebP and lazy-loaded, so it stays out of
+// the initial render/preload path and doesn't compete with the hero + critical JS/CSS.
+import heroImg from "@/assets/hero.webp";
+
+const media = (file: string) => `${import.meta.env.BASE_URL}media/${file}`;
 
 export default function Home() {
   return (
@@ -79,6 +79,8 @@ export default function Home() {
           <img 
             src={heroImg} 
             alt="OmniCore Dashboard Interface" 
+            fetchPriority="high"
+            decoding="async"
             className="w-full h-auto object-cover border-b"
           />
         </motion.div>
@@ -176,7 +178,7 @@ export default function Home() {
               className="relative"
             >
               <div className="aspect-[4/3] rounded-2xl overflow-hidden border shadow-xl">
-                <img src={feature1Img} alt="Omnichannel routing" className="w-full h-full object-cover" />
+                <img src={media("feature-1.webp")} alt="Omnichannel routing" loading="lazy" decoding="async" className="w-full h-full object-cover" />
               </div>
               
               {/* Floating decorative elements */}
@@ -207,7 +209,7 @@ export default function Home() {
             transition={{ duration: 0.8 }}
             className="rounded-3xl overflow-hidden shadow-2xl border border-border/50 max-w-5xl mx-auto"
           >
-            <img src={coreBenefitsImg} alt="Core Benefits" className="w-full h-auto" />
+            <img src={media("core-benefits.webp")} alt="Core Benefits" loading="lazy" decoding="async" className="w-full h-auto" />
           </motion.div>
         </div>
       </section>
@@ -224,7 +226,7 @@ export default function Home() {
               className="order-2 lg:order-1 relative"
             >
               <div className="aspect-[4/3] rounded-2xl overflow-hidden border shadow-xl">
-                <img src={feature2Img} alt="AI Bot Data Analysis" className="w-full h-full object-cover" />
+                <img src={media("feature-2.webp")} alt="AI Bot Data Analysis" loading="lazy" decoding="async" className="w-full h-full object-cover" />
               </div>
             </motion.div>
 
@@ -271,7 +273,7 @@ export default function Home() {
             transition={{ duration: 0.8 }}
             className="rounded-3xl overflow-hidden shadow-2xl p-4 md:p-8 bg-card border border-border/50 max-w-4xl mx-auto"
           >
-            <img src={coreFeaturesImg} alt="Core Features" className="w-full h-auto rounded-xl" />
+            <img src={media("core-features.webp")} alt="Core Features" loading="lazy" decoding="async" className="w-full h-auto rounded-xl" />
           </motion.div>
         </div>
       </section>
@@ -279,7 +281,7 @@ export default function Home() {
       {/* Abstract Divider / Quote */}
       <section className="relative py-32 overflow-hidden bg-gradient-to-br from-[#8B6914] to-[#C9A450] text-white">
         <div className="absolute inset-0 opacity-15 mix-blend-overlay">
-          <img src={abstractImg1} alt="Abstract Background" className="w-full h-full object-cover" />
+          <img src={media("abstract-1.webp")} alt="Abstract Background" loading="lazy" decoding="async" className="w-full h-full object-cover" />
         </div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#8B6914] to-transparent opacity-40" />
         
@@ -294,7 +296,7 @@ export default function Home() {
             </h2>
             <div className="flex flex-col items-center">
               <div className="w-12 h-12 rounded-full overflow-hidden mb-4 border-2 border-white/20">
-                <img src={abstractImg2} alt="Avatar" className="w-full h-full object-cover" />
+                <img src={media("abstract-2.webp")} alt="Avatar" loading="lazy" decoding="async" className="w-full h-full object-cover" />
               </div>
               <div className="font-medium text-lg">Sarah Jenkins</div>
               <div className="text-white/80 text-sm">VP of Customer Success, TechFlow</div>
