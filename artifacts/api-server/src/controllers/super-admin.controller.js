@@ -378,21 +378,25 @@ router.post('/users/:id/send-reset', async (req, res, next) => {
 
     // Use the invite email — its "Set Your Password" copy and 7-day expiry text
     // match the token lifetime (the reset-email template says "1 hour").
+    // `variant: 'invite'` re-sends the standard invite; default is workspace setup.
+    const isInvite = (req.body && req.body.variant) === 'invite';
     const resetLink = `${publicAppUrl(req)}/dashboard/?reset_token=${rawToken}`;
     const sent = await sendAgentInviteEmail({
       to: agent.email,
       name: agent.name,
       inviteLink: resetLink,
       companyName: agent.company_name,
-      ctaLabel: 'Set Up Your Workspace',
+      ctaLabel: isInvite ? 'Set Your Password' : 'Set Up Your Workspace',
     });
 
-    logger.info({ targetId: agent.id, by: req.agent.email, sent }, 'user_reset_email_sent_by_super_admin');
+    logger.info({ targetId: agent.id, by: req.agent.email, sent, variant: isInvite ? 'invite' : 'workspace' }, 'user_reset_email_sent_by_super_admin');
     return res.json({
       ok: true,
       sent,
       message: sent
-        ? `Password setup link emailed to ${agent.email}.`
+        ? (isInvite
+            ? `Invite email re-sent to ${agent.email}.`
+            : `Password setup link emailed to ${agent.email}.`)
         : 'No working SMTP is configured, so the email could not be sent. Set the password manually instead.',
       // Dev convenience only — never leak reset links in production.
       ...(process.env.NODE_ENV !== 'production' && { reset_link: resetLink }),

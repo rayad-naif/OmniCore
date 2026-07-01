@@ -404,8 +404,8 @@ function useApi() {
       const r = await authFetch(`${API}/super-admin/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ password }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to set password') }
     },
-    sendUserReset: async (id: string): Promise<{ ok: boolean; sent: boolean; message: string }> => {
-      const r = await authFetch(`${API}/super-admin/users/${id}/send-reset`, { method: 'POST' })
+    sendUserReset: async (id: string, variant?: 'invite' | 'workspace'): Promise<{ ok: boolean; sent: boolean; message: string }> => {
+      const r = await authFetch(`${API}/super-admin/users/${id}/send-reset`, { method: 'POST', body: JSON.stringify({ variant: variant ?? 'workspace' }) })
       const data = await r.json() as { ok?: boolean; sent?: boolean; message?: string; error?: string }
       if (!r.ok) throw new Error(data.error ?? 'Failed to send email')
       return { ok: Boolean(data.ok), sent: Boolean(data.sent), message: data.message ?? '' }
@@ -3317,11 +3317,11 @@ function UserAccountsPanel({ api }: { api: ReturnType<typeof useApi> }) {
   const open  = (u: SuperAdminUser) => { setTarget(u); setForm({ password: '', confirm: '' }); setMsg(null) }
   const close = () => { setTarget(null); setForm({ password: '', confirm: '' }); setMsg(null) }
 
-  const sendReset = async (u: SuperAdminUser, inModal = false) => {
+  const sendReset = async (u: SuperAdminUser, inModal = false, variant: 'invite' | 'workspace' = 'workspace') => {
     setSendingId(u.id)
     if (inModal) setMsg(null); else setBanner(null)
     try {
-      const res = await api.sendUserReset(u.id)
+      const res = await api.sendUserReset(u.id, variant)
       const m = { ok: res.sent, text: res.message }
       if (inModal) setMsg(m); else setBanner(m)
     } catch (err) {
@@ -3361,9 +3361,10 @@ function UserAccountsPanel({ api }: { api: ReturnType<typeof useApi> }) {
               <button type="submit" disabled={saving} className="flex-1 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{saving ? <><RefreshCw size={11} className="animate-spin" /> Saving…</> : <><KeyRound size={11} /> Set Password</>}</button>
             </div>
           </form>
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <p className="text-[11px] text-slate-500 mb-2">Or let the user choose their own password — email them a secure setup link (valid 7 days).</p>
+          <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+            <p className="text-[11px] text-slate-500">Or let the user choose their own password — email them a secure link (valid 7 days).</p>
             <button type="button" onClick={() => sendReset(target, true)} disabled={sendingId === target.id} className="w-full py-2 text-xs font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{sendingId === target.id ? <><RefreshCw size={11} className="animate-spin" /> Sending…</> : <><Mail size={11} /> Email setup link</>}</button>
+            <button type="button" onClick={() => sendReset(target, true, 'invite')} disabled={sendingId === target.id} className="w-full py-2 text-xs font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-50 rounded-lg flex items-center justify-center gap-1.5">{sendingId === target.id ? <><RefreshCw size={11} className="animate-spin" /> Sending…</> : <><Send size={11} /> Resend invite email</>}</button>
           </div>
         </Modal>
       )}
@@ -3394,6 +3395,7 @@ function UserAccountsPanel({ api }: { api: ReturnType<typeof useApi> }) {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <button onClick={() => sendReset(u)} disabled={sendingId === u.id} className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-600 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors disabled:opacity-50">{sendingId === u.id ? <RefreshCw size={12} className="animate-spin" /> : <Mail size={12} />} Email link</button>
+                      <button onClick={() => sendReset(u, false, 'invite')} disabled={sendingId === u.id} className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-violet-600 hover:text-violet-700 hover:bg-violet-50 rounded transition-colors disabled:opacity-50">{sendingId === u.id ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />} Resend invite</button>
                       <button onClick={() => open(u)} className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"><KeyRound size={12} /> Set Password</button>
                     </div>
                   </td>
