@@ -50,6 +50,8 @@ export default function Checkout() {
   const plan = PLAN_META[planSlug];
 
   const [email, setEmail] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [userName, setUserName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,14 +67,21 @@ export default function Checkout() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!email.trim()) { setError("Please enter your email address."); return; }
+    if (!businessName.trim()) { setError("Please enter your business name."); return; }
+    if (!userName.trim()) { setError("Please enter your name."); return; }
+    if (!email.trim()) { setError("Please enter your work email address."); return; }
 
     setLoading(true);
     try {
       const res = await fetch("/api/billing/checkout/public", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), plan: planSlug }),
+        body: JSON.stringify({
+          email: email.trim(),
+          plan: planSlug,
+          businessName: businessName.trim(),
+          userName: userName.trim(),
+        }),
       });
       const data = await res.json() as { url?: string; error?: string };
       if (!res.ok || !data.url) {
@@ -162,6 +171,35 @@ export default function Checkout() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
+                <label htmlFor="businessName" className="block text-sm font-medium mb-1.5">
+                  Business name
+                </label>
+                <input
+                  id="businessName"
+                  type="text"
+                  required
+                  autoFocus
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  placeholder="Acme Corp"
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
+                />
+              </div>
+              <div>
+                <label htmlFor="userName" className="block text-sm font-medium mb-1.5">
+                  Your name
+                </label>
+                <input
+                  id="userName"
+                  type="text"
+                  required
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  placeholder="Jane Smith"
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
+                />
+              </div>
+              <div>
                 <label htmlFor="email" className="block text-sm font-medium mb-1.5">
                   Work email
                 </label>
@@ -169,7 +207,6 @@ export default function Checkout() {
                   id="email"
                   type="email"
                   required
-                  autoFocus
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"

@@ -114,10 +114,16 @@ async function paddleRequest(method, path, body) {
  * Creates a Paddle Billing transaction and returns the hosted checkout URL.
  * Trial periods must be baked into the Price object (via seed-paddle).
  */
-async function createCheckoutTransaction({ priceId, email, plan, successUrl, cancelUrl }) {
+async function createCheckoutTransaction({ priceId, email, plan, businessName, userName, successUrl, cancelUrl }) {
   const resp = await paddleRequest('POST', '/transactions', {
     items: [{ price_id: priceId, quantity: 1 }],
-    custom_data: { plan, email, cancel_url: cancelUrl || null },
+    custom_data: {
+      plan,
+      email,
+      business_name: businessName || null,
+      user_name: userName || null,
+      cancel_url: cancelUrl || null,
+    },
     checkout: { url: successUrl },
   });
 

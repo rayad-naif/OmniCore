@@ -35,7 +35,7 @@ function getActiveProvider() {
 
 // ─── Stripe helpers ───────────────────────────────────────────────────────────
 
-async function _stripePublicCheckout({ email, plan, stripepriceId, baseUrl }) {
+async function _stripePublicCheckout({ email, plan, businessName, userName, stripepriceId, baseUrl }) {
   const { getUncachableStripeClient } = require('./stripeClient');
   const stripe = await getUncachableStripeClient();
 
@@ -43,7 +43,11 @@ async function _stripePublicCheckout({ email, plan, stripepriceId, baseUrl }) {
   const customer =
     existing.data.length > 0
       ? existing.data[0]
-      : await stripe.customers.create({ email });
+      : await stripe.customers.create({
+          email,
+          name: userName || undefined,
+          metadata: { business_name: businessName || undefined },
+        });
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
@@ -51,7 +55,7 @@ async function _stripePublicCheckout({ email, plan, stripepriceId, baseUrl }) {
     line_items: [{ price: stripepriceId, quantity: 1 }],
     subscription_data: {
       trial_period_days: 14,
-      metadata: { plan },
+      metadata: { plan, business_name: businessName, user_name: userName },
     },
     allow_promotion_codes: true,
     success_url: `${baseUrl}/checkout/success?plan=${plan}&session_id={CHECKOUT_SESSION_ID}`,
@@ -114,7 +118,7 @@ async function _stripePortal({ tenant, baseUrl }) {
 
 // ─── Paddle helpers ───────────────────────────────────────────────────────────
 
-async function _paddlePublicCheckout({ email, plan, paddlePriceId, baseUrl }) {
+async function _paddlePublicCheckout({ email, plan, businessName, userName, paddlePriceId, baseUrl }) {
   const { createCheckoutTransaction, getPaddlePriceId } = require('./paddleClient');
 
   const priceId = paddlePriceId || getPaddlePriceId(plan);
@@ -131,6 +135,8 @@ async function _paddlePublicCheckout({ email, plan, paddlePriceId, baseUrl }) {
     priceId,
     email,
     plan,
+    businessName,
+    userName,
     successUrl: `${baseUrl}/checkout/success?plan=${plan}`,
     cancelUrl: `${baseUrl}/pricing`,
   });
@@ -207,12 +213,12 @@ async function _paddlePortal({ tenant }) {
  * @param {string} opts.baseUrl
  * @returns {Promise<{url: string, provider: string}>}
  */
-async function createPublicCheckoutUrl({ email, plan, stripepriceId, paddlePriceId, baseUrl }) {
+async function createPublicCheckoutUrl({ email, plan, businessName, userName, stripepriceId, paddlePriceId, baseUrl }) {
   const provider = getActiveProvider();
   if (provider === 'paddle') {
-    return _paddlePublicCheckout({ email, plan, paddlePriceId, baseUrl });
+    return _paddlePublicCheckout({ email, plan, businessName, userName, paddlePriceId, baseUrl });
   }
-  return _stripePublicCheckout({ email, plan, stripepriceId, baseUrl });
+  return _stripePublicCheckout({ email, plan, businessName, userName, stripepriceId, baseUrl });
 }
 
 /**

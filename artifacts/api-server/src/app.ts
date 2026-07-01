@@ -437,11 +437,15 @@ async function provisionTenantFromPaddlePublicCheckout({
   plan,
   paddleCustomerId,
   paddleSubscriptionId,
+  businessName,
+  userName,
 }: {
   email: string;
   plan: string;
   paddleCustomerId: string;
   paddleSubscriptionId?: string | null;
+  businessName?: string | null;
+  userName?: string | null;
 }): Promise<string> {
   // Check if tenant already exists for this Paddle customer.
   const { rows: existing } = await pool.query(
@@ -461,8 +465,8 @@ async function provisionTenantFromPaddlePublicCheckout({
     return existing[0].id as string;
   }
 
-  const displayName = email.split("@")[0];
-  const companyName = `${displayName}'s workspace`;
+  const displayName = userName || email.split("@")[0];
+  const companyName = businessName || `${displayName}'s workspace`;
 
   const { rows: tenantRows } = await pool.query(
     `INSERT INTO tenants
@@ -549,6 +553,8 @@ async function provisionTenantFromPaddleEvent(
             plan: plan || "starter",
             paddleCustomerId: customerId,
             paddleSubscriptionId: subId,
+            businessName: customData.business_name || null,
+            userName: customData.user_name || null,
           });
         await notifyTenantAdmins(
           createdTenantId,
@@ -615,6 +621,8 @@ async function provisionTenantFromPaddleEvent(
         plan: plan || "starter",
         paddleCustomerId: customerId,
         paddleSubscriptionId: subId,
+        businessName: customData.business_name || null,
+        userName: customData.user_name || null,
       });
     }
   } else if (eventType === "subscription.canceled") {

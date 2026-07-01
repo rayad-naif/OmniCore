@@ -233,11 +233,15 @@ async function getUsage(req, res) {
  * Returns: { url, provider }
  */
 async function createPublicCheckout(req, res) {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  const plan  = String(req.body?.plan  || '').trim().toLowerCase();
+  const email        = String(req.body?.email        || '').trim().toLowerCase();
+  const plan         = String(req.body?.plan         || '').trim().toLowerCase();
+  const businessName = String(req.body?.businessName || '').trim();
+  const userName     = String(req.body?.userName     || '').trim();
 
-  if (!email) return res.status(400).json({ error: 'email is required' });
-  if (!plan)  return res.status(400).json({ error: 'plan is required' });
+  if (!businessName) return res.status(400).json({ error: 'businessName is required' });
+  if (!userName)     return res.status(400).json({ error: 'userName is required' });
+  if (!email)        return res.status(400).json({ error: 'email is required' });
+  if (!plan)         return res.status(400).json({ error: 'plan is required' });
 
   const target = await plansRepo.getPlanBySlug(plan);
   if (!target || !target.active || !target.self_serve || target.is_free) {
@@ -253,6 +257,8 @@ async function createPublicCheckout(req, res) {
   const result = await billingProvider.createPublicCheckoutUrl({
     email,
     plan,
+    businessName,
+    userName,
     stripepriceId: target.paddle_price_id || null,
     paddlePriceId,
     baseUrl:       base,
