@@ -73,9 +73,25 @@ to = "/refunds.html"
 from = "/refunds/"
 to = "/refunds.html"
 
-# SPA fallback for client-only routes (e.g. /checkout) and deep links.
+# SPA fallback for client-only routes that are NOT prerendered (e.g. /checkout).
+# These are served through the app shell so deep links / hard refreshes work.
+# NOTE: there is intentionally no blanket "/*" catch-all. Unknown paths are left
+# unmatched so the static host returns a real HTTP 404 (serving 404.html) rather
+# than a 200 home shell, which would look like an indexable soft 404 to crawlers.
 [[services.production.rewrites]]
-from = "/*"
+from = "/checkout"
+to = "/index.html"
+
+[[services.production.rewrites]]
+from = "/checkout/"
+to = "/index.html"
+
+[[services.production.rewrites]]
+from = "/checkout/success"
+to = "/index.html"
+
+[[services.production.rewrites]]
+from = "/checkout/success/"
 to = "/index.html"
 
 [services.env]

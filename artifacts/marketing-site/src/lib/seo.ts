@@ -18,6 +18,8 @@ export interface RouteMeta {
   ogType: string;
   /** JSON-LD structured data for this route, or null for none. */
   jsonLd: unknown | null;
+  /** When true, emit `noindex` and omit the canonical link (e.g. the 404 page). */
+  noindex?: boolean;
 }
 
 const ORGANIZATION = {
@@ -232,6 +234,20 @@ export const routeMeta: RouteMeta[] = [
   },
 ];
 
+/**
+ * Metadata for unmatched paths. Rendered into 404.html at build time and applied
+ * on the client for any route that matches no page, so JS-rendering crawlers keep
+ * the `noindex` signal instead of inheriting the home page's index directive.
+ */
+export const NOT_FOUND_META: RouteMeta = {
+  path: "/404",
+  title: "Page Not Found — Atelier OmniCore",
+  description: "Sorry, the page you were looking for could not be found.",
+  ogType: "website",
+  jsonLd: null,
+  noindex: true,
+};
+
 /** Normalize an incoming pathname to a canonical route key. */
 function normalizePath(pathname: string): string {
   if (!pathname) return "/";
@@ -244,7 +260,7 @@ function normalizePath(pathname: string): string {
 /** Metadata for a path; falls back to the home entry for unknown routes. */
 export function metaForPath(pathname: string): RouteMeta {
   const p = normalizePath(pathname);
-  return routeMeta.find((m) => m.path === p) ?? routeMeta[0];
+  return routeMeta.find((m) => m.path === p) ?? NOT_FOUND_META;
 }
 
 function escapeHtml(value: string): string {
@@ -270,8 +286,8 @@ export function renderHead(meta: RouteMeta): string {
   const tags = [
     `<title>${t}</title>`,
     `<meta name="description" content="${d}" />`,
-    `<meta name="robots" content="index, follow" />`,
-    `<link rel="canonical" href="${escapeHtml(canonical)}" />`,
+    `<meta name="robots" content="${meta.noindex ? "noindex, follow" : "index, follow"}" />`,
+    meta.noindex ? "" : `<link rel="canonical" href="${escapeHtml(canonical)}" />`,
     `<meta property="og:title" content="${t}" />`,
     `<meta property="og:description" content="${d}" />`,
     `<meta property="og:type" content="${escapeHtml(meta.ogType)}" />`,
@@ -287,7 +303,7 @@ export function renderHead(meta: RouteMeta): string {
     const json = JSON.stringify(meta.jsonLd).replace(/</g, "\\u003c");
     tags.push(`<script type="application/ld+json">${json}</script>`);
   }
-  return tags.join("\n    ");
+  return tags.filter(Boolean).join("\n    ");
 }
 
 /**
@@ -317,7 +333,7 @@ export function applyMeta(meta: RouteMeta): void {
   };
 
   setMeta("name", "description", meta.description);
-  setMeta("name", "robots", "index, follow");
+  setMeta("name", "robots", meta.noindex ? "noindex, follow" : "index, follow");
   setMeta("property", "og:title", meta.title);
   setMeta("property", "og:description", meta.description);
   setMeta("property", "og:type", meta.ogType);
@@ -331,12 +347,16 @@ export function applyMeta(meta: RouteMeta): void {
   let link = document.head.querySelector<HTMLLinkElement>(
     'link[rel="canonical"]',
   );
-  if (!link) {
-    link = document.createElement("link");
-    link.setAttribute("rel", "canonical");
-    document.head.appendChild(link);
+  if (meta.noindex) {
+    if (link) link.remove();
+  } else {
+    if (!link) {
+      link = document.createElement("link");
+      link.setAttribute("rel", "canonical");
+      document.head.appendChild(link);
+    }
+    link.setAttribute("href", canonical);
   }
-  link.setAttribute("href", canonical);
 
   const existing = document.getElementById("route-jsonld");
   if (existing) existing.remove();

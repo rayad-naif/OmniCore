@@ -14,7 +14,7 @@ const serverEntry = pathToFileURL(
   resolve(rootDir, "dist/server/entry-server.js"),
 ).href;
 
-const { render, routeMeta, renderHead } = await import(serverEntry);
+const { render, routeMeta, renderHead, NOT_FOUND_META } = await import(serverEntry);
 
 const template = readFileSync(resolve(distPublic, "index.html"), "utf-8");
 
@@ -36,3 +36,13 @@ for (const meta of routeMeta) {
   writeFileSync(resolve(distPublic, fileName), html);
   console.log(`prerendered ${meta.path} -> ${fileName}`);
 }
+
+// Prerender a dedicated 404 page (noindex) so the static host can serve it for
+// unmatched paths with a real 404 status, instead of falling through to the
+// indexable home shell (which would look like a soft 404 to crawlers). Any
+// path that matches no route renders the client NotFound component.
+const html404 = template
+  .replace("<!--app-head-->", renderHead(NOT_FOUND_META))
+  .replace("<!--app-html-->", render("/__not_found__"));
+writeFileSync(resolve(distPublic, "404.html"), html404);
+console.log("prerendered /__not_found__ -> 404.html");

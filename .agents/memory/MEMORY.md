@@ -2,3 +2,4 @@
 - [Widget embed backward-compat](widget-embed-compat.md) — widget.js is cached on 3rd-party sites; keep widget endpoint responses shape-tolerant
 - [Deploy static web (vite) artifacts](deploy-static-web-artifacts.md) — vite web artifacts must use `serve = "static"`; a custom `npx serve` run command fails publish (port never opens)
 - [Paddle billing integration](paddle-integration.md) — dual-provider (Stripe + Paddle) arch, env vars, webhook path, seed script, no SDK (fetch-based)
+- [Static SPA 404 & crawlability](static-spa-404-crawlability.md) — removing the /* rewrite is how you get real 404s (no status codes in rewrites); prerendered noindex 404 must be mirrored client-side or hydration overwrites it
