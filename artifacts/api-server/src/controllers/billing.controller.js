@@ -53,6 +53,12 @@ const plansRepo           = require('../lib/plansRepo');
  * Prefers the published Replit domain, falls back to the request host.
  */
 function appBaseUrl(req) {
+  // Explicit override so checkout redirect URLs deterministically use the public
+  // domain that is approved in the payment provider dashboard. Paddle rejects any
+  // `checkout.url` whose domain is not on its approved-domains list, so this must
+  // match exactly (e.g. the custom domain, not the .replit.app fallback).
+  const override = (process.env.PUBLIC_APP_URL || '').trim();
+  if (override) return override.replace(/\/+$/, '');
   const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
   if (domain) return `https://${domain}`;
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';

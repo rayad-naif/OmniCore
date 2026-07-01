@@ -42,3 +42,6 @@ JWT_SECRET = "66a10cf1886ab12095a289305752bbe10e9c209528c8cdf7c8a37e21b28a6884f6
 GEMINI_API_KEY = "AQ.Ab8RN6JfE7Oec86Asy9YfH4QrD-EyibuQJhf3mlCpzBYR-MaLQ"
 SUPER_ADMIN_EMAIL = "atelier@irofficial.com"
 BILLING_PROVIDER = "paddle"
+
+[userenv.production]
+PUBLIC_APP_URL = "https://omnicore.irofficial.com"
