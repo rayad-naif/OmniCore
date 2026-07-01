@@ -27,6 +27,30 @@ The Free plan is managed here too (features/limits only, no Paddle product, not 
 - `PADDLE_STARTER_PRICE_ID` — set after running `pnpm --filter @workspace/scripts run seed-paddle`
 - `PADDLE_GROWTH_PRICE_ID` — set after running seed-paddle
 
+## Connector environment gotcha (non-obvious)
+
+The Replit Paddle **connector** is a single, environment-scoped connection. In this
+project it is provisioned as **production**, so `paddleRequest` (which prefers
+`connectors.proxy('paddle', …)`) hits **live Paddle regardless of
+`PADDLE_ENVIRONMENT`**. `PADDLE_ENVIRONMENT` only picks the base-URL strings for the
+direct-fetch fallback + the portal/checkout fallback URLs (`paddleBaseUrl`,
+`paddleCheckoutBaseUrl`, `_paddlePortal`).
+**Why:** setting `PADDLE_ENVIRONMENT=sandbox` in dev does NOT isolate dev from live
+Paddle (the connector still routes to prod) — it just makes portal/checkout fallback
+URLs point at sandbox while real customers live in prod. Keep `PADDLE_ENVIRONMENT`
+matched to the connector's environment (production here). True dev isolation needs a
+separate sandbox connector.
+
+## Canonical public origin for all user-facing links
+
+`publicAppUrl(req)` in `artifacts/api-server/src/lib/env.js` is the single source for
+the public origin: prefers `PUBLIC_APP_URL` (the custom domain, e.g.
+`https://omnicore.irofficial.com`), then `REPLIT_DOMAINS[0]`, then request host. It
+backs checkout success/cancel URLs, password-reset + agent-invite email links, and the
+Stripe managed-webhook URL. `PUBLIC_APP_URL` must equal the domain approved in Paddle,
+or checkout is rejected. Set `PUBLIC_APP_URL` in the **production** env scope so dev
+still falls back to the Replit dev domain.
+
 ## Paddle vs Stripe key differences
 
 - Paddle is Merchant of Record — taxes handled globally by Paddle automatically, no Stripe Tax needed
