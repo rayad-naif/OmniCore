@@ -12,7 +12,14 @@ const { attachSocketServer } = require("./services/socket.service");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { pool } = require("./lib/db");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendAccountUpdateEmail } = require("./services/email.service");
+const { sendAccountUpdateEmail, sendAgentInviteEmail } =
+  require("./services/email.service");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bcrypt = require("bcryptjs");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const crypto = require("crypto");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { publicAppUrl } = require("./lib/env");
 
 // Injects the shared pg.Pool as req.db — consumed by CJS controllers via req.db.query()
 function attachDb(
@@ -340,6 +347,21 @@ app.post(
     const signatureHeader = req.headers["paddle-signature"];
     const secret = process.env.PADDLE_WEBHOOK_SECRET;
 
+    // Diagnostic logging — helps verify the correct secret is configured.
+    logger.info(
+      {
+        hasSecret: !!secret,
+        secretLength: secret?.length,
+        hasSig: !!signatureHeader,
+        sigLength: (
+          Array.isArray(signatureHeader)
+            ? signatureHeader[0]
+            : signatureHeader
+        )?.length,
+      },
+      "paddle_webhook_received",
+    );
+
     if (!signatureHeader || !secret) {
       logger.warn("paddle_webhook_missing_signature_or_secret");
       return res.status(400).json({ error: "Webhook configuration error" });
@@ -353,13 +375,24 @@ app.post(
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { verifyPaddleWebhook } = require("./lib/paddleClient");
-      const sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-      const event = verifyPaddleWebhook(req.body, secret, sig) as Record<string, unknown> | null;
+      const sig = Array.isArray(signatureHeader)
+        ? signatureHeader[0]
+        : signatureHeader;
+      const event = verifyPaddleWebhook(
+        req.body,
+        secret,
+        sig,
+      ) as Record<string, unknown> | null;
 
       if (!event) {
         logger.warn("paddle_webhook_signature_invalid");
         return res.status(400).json({ error: "Invalid signature" });
       }
+
+      logger.info(
+        { eventType: event.event_type },
+        "paddle_webhook_verified",
+      );
 
       try {
         await provisionTenantFromPaddleEvent(event);
@@ -369,7 +402,10 @@ app.post(
 
       return res.status(200).json({ received: true });
     } catch (err) {
-      logger.error({ err: (err as Error).message }, "paddle_webhook_error");
+      logger.error(
+        { err: (err as Error).message },
+        "paddle_webhook_error",
+      );
       return res.status(400).json({ error: "Webhook processing error" });
     }
   },
@@ -394,6 +430,87 @@ function mapPaddleStatus(status: string | undefined): string {
   }
 }
 
+// Creates a tenant + admin agent from a Paddle public checkout, then sends a
+// setup email with a password-reset link. Returns the new tenant id.
+async function provisionTenantFromPaddlePublicCheckout({
+  email,
+  plan,
+  paddleCustomerId,
+  paddleSubscriptionId,
+}: {
+  email: string;
+  plan: string;
+  paddleCustomerId: string;
+  paddleSubscriptionId?: string | null;
+}): Promise<string> {
+  // Check if tenant already exists for this Paddle customer.
+  const { rows: existing } = await pool.query(
+    `SELECT id FROM tenants WHERE paddle_customer_id = $1 LIMIT 1`,
+    [paddleCustomerId],
+  );
+  if (existing[0]?.id) {
+    await pool.query(
+      `UPDATE tenants SET
+         plan = COALESCE($1, plan),
+         subscription_status = 'trialing',
+         paddle_subscription_id = COALESCE($2, paddle_subscription_id),
+         updated_at = NOW()
+       WHERE id = $3`,
+      [plan, paddleSubscriptionId || null, existing[0].id],
+    );
+    return existing[0].id as string;
+  }
+
+  const displayName = email.split("@")[0];
+  const companyName = `${displayName}'s workspace`;
+
+  const { rows: tenantRows } = await pool.query(
+    `INSERT INTO tenants
+       (company_name, plan, subscription_status,
+        paddle_customer_id, paddle_subscription_id)
+     VALUES ($1, $2, 'trialing', $3, $4)
+     RETURNING id`,
+    [companyName, plan, paddleCustomerId, paddleSubscriptionId || null],
+  );
+  const tenantId = tenantRows[0].id as string;
+
+  const tempPassword = crypto.randomBytes(16).toString("hex");
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const { rows: agentRows } = await pool.query(
+    `INSERT INTO agents
+       (tenant_id, name, email, role, password_hash, is_active)
+     VALUES ($1, $2, $3, 'admin', $4, true)
+     RETURNING id`,
+    [tenantId, displayName, email, passwordHash],
+  );
+  const agentId = agentRows[0].id as string;
+
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
+     VALUES ($1, $2, $3)`,
+    [agentId, rawToken, expiresAt],
+  );
+
+  const base = publicAppUrl();
+  const setupLink = `${base}/dashboard/?reset_token=${rawToken}`;
+  await sendAgentInviteEmail({
+    to: email,
+    name: displayName,
+    inviteLink: setupLink,
+    companyName,
+  });
+
+  await applyPlanFeatures(tenantId, plan);
+  logger.info(
+    { tenantId, email, plan },
+    "paddle_public_tenant_provisioned",
+  );
+
+  return tenantId;
+}
+
 // Reconcile tenant plan/status from a verified Paddle webhook event.
 async function provisionTenantFromPaddleEvent(
   event: Record<string, unknown>,
@@ -408,16 +525,40 @@ async function provisionTenantFromPaddleEvent(
   ) {
     const customData =
       (data.custom_data as Record<string, string>) ||
-      (data.transaction_details as Record<string, Record<string, string>>)?.custom_data ||
+      (data.transaction_details as Record<string, Record<string, string>>)
+        ?.custom_data ||
       {};
     const tenantId = customData.tenant_id;
-    if (!tenantId) return; // public checkout — no tenant yet
-
+    const email = customData.email;
+    const items =
+      (data.items as Array<{
+        price?: { custom_data?: { plan?: string } };
+      }>) || [];
+    const plan =
+      items[0]?.price?.custom_data?.plan || customData.plan || null;
     const subId = data.id as string;
     const customerId = data.customer_id as string;
     const status = mapPaddleStatus(data.status as string);
-    const items = (data.items as Array<{ price?: { custom_data?: { plan?: string } } }>) || [];
-    const plan = items[0]?.price?.custom_data?.plan || customData.plan || null;
+
+    if (!tenantId) {
+      // Public checkout — no tenant yet, create one.
+      if (email && customerId) {
+        const createdTenantId =
+          await provisionTenantFromPaddlePublicCheckout({
+            email,
+            plan: plan || "starter",
+            paddleCustomerId: customerId,
+            paddleSubscriptionId: subId,
+          });
+        await notifyTenantAdmins(
+          createdTenantId,
+          "Your plan is now active",
+          "Plan activated",
+          `Your ${plan || "subscription"} plan is now active. Thank you for subscribing!`,
+        );
+      }
+      return;
+    }
 
     await pool.query(
       `UPDATE tenants SET
@@ -448,12 +589,52 @@ async function provisionTenantFromPaddleEvent(
         "We couldn't process your latest payment. Please update your payment method in Billing.",
       );
     }
+  } else if (eventType === "transaction.completed") {
+    const customData =
+      (data.custom_data as Record<string, string>) || {};
+    const email = customData.email;
+    const plan =
+      (
+        data.items as Array<{
+          price?: { custom_data?: { plan?: string } };
+        }>
+      )?.[0]?.price?.custom_data?.plan ||
+      customData.plan ||
+      null;
+    const customerId = data.customer_id as string;
+    const subId = data.subscription_id as string | undefined;
+
+    if (email && customerId) {
+      await provisionTenantFromPaddlePublicCheckout({
+        email,
+        plan: plan || "starter",
+        paddleCustomerId: customerId,
+        paddleSubscriptionId: subId,
+      });
+    }
   } else if (eventType === "subscription.canceled") {
-    const customData = (data.custom_data as Record<string, string>) || {};
-    const tenantId = customData.tenant_id;
+    const customData =
+      (data.custom_data as Record<string, string>) || {};
+    let tenantId = customData.tenant_id;
+    const subId = data.id as string;
+    const customerId = data.customer_id as string;
+
+    if (!tenantId && subId) {
+      const { rows } = await pool.query(
+        `SELECT id FROM tenants WHERE paddle_subscription_id = $1 LIMIT 1`,
+        [subId],
+      );
+      tenantId = rows[0]?.id;
+    }
+    if (!tenantId && customerId) {
+      const { rows } = await pool.query(
+        `SELECT id FROM tenants WHERE paddle_customer_id = $1 LIMIT 1`,
+        [customerId],
+      );
+      tenantId = rows[0]?.id;
+    }
     if (!tenantId) return;
 
-    const subId = data.id as string;
     await pool.query(
       `UPDATE tenants SET
          paddle_subscription_id = NULL,

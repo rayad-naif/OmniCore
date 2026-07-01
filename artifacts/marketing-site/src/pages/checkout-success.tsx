@@ -20,7 +20,7 @@ export default function CheckoutSuccess() {
         <h1 className="text-3xl font-bold font-serif mb-3">Your trial has started!</h1>
         <p className="text-muted-foreground mb-6">
           Your 14-day free trial of OmniCore is now active. Check your inbox — you'll receive
-          a confirmation from Stripe and a setup email from us shortly.
+          a confirmation from Paddle and a setup email from us shortly.
         </p>
 
         <div className="bg-[#C9A450]/8 border border-[#C9A450]/20 rounded-2xl p-4 text-sm text-left space-y-2 mb-8">
