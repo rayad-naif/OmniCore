@@ -23,3 +23,9 @@ id = "g2DAYx-XQJfK3xiLg4DiS"
 uri = "file://docs/OmniCore-Developer-Guide.pdf"
 type = "pdf"
 title = "Atelier OmniCore — Developer Guide"
+
+[[outputs]]
+id = "WEfbliebmRFWNuYSX_7RV"
+uri = "file://docs/project-file-tree.md"
+type = "text"
+title = "Atelier OmniCore — Complete File Tree"
