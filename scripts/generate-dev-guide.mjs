@@ -7,7 +7,6 @@ const require = createRequire(path.join(__dirname, '../artifacts/api-server/pack
 const PDFDocument = require('pdfkit');
 const fs = require('node:fs');
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
   ink:    '#0f172a',
   body:   '#1e293b',
@@ -15,7 +14,6 @@ const C = {
   gold:   '#C9A450',
   goldDk: '#8a6d20',
   sky:    '#0ea5e9',
-  green:  '#25D366',
   line:   '#e2e8f0',
   codeBg: '#0f172a',
   codeTx: '#7dd3fc',
@@ -28,7 +26,7 @@ fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
 const doc = new PDFDocument({
   size: 'A4',
-  margins: { top: 64, bottom: 64, left: 60, right: 60 },
+  margins: { top: 56, bottom: 48, left: 56, right: 56 },
   bufferPages: true,
   info: {
     Title: 'Atelier OmniCore — Developer Guide',
@@ -40,174 +38,164 @@ doc.pipe(fs.createWriteStream(outPath));
 
 const PAGE_W = doc.page.width;
 const ML = doc.page.margins.left;
-const MR = doc.page.margins.right;
-const CW = PAGE_W - ML - MR;
-const BOTTOM = doc.page.height - doc.page.margins.bottom;
+const CW = PAGE_W - ML - doc.page.margins.right;
 
-// ─── TOC tracking ───────────────────────────────────────────────────────────
 const toc = [];
-// Footer labels use the 0-based buffered page index (cover skipped), so the
-// TOC must record the current page's index (count - 1), not the raw count.
-function tocAdd(title, level) { toc.push({ title, level, page: pageNumber() - 1 }); }
-function pageNumber() { return doc.bufferedPageRange().count; }
-
-// ─── Layout helpers ─────────────────────────────────────────────────────────
-function ensure(space) {
-  if (doc.y + space > BOTTOM) doc.addPage();
-}
-function gap(h = 8) { doc.y += h; }
+function tocAdd(title, level) { toc.push({ title, level, page: doc.bufferedPageRange().count }); }
+function gap(h = 6) { doc.y += h; }
 
 function h1(text, opts = {}) {
-  doc.addPage();
   if (opts.toc !== false) tocAdd(text, 1);
-  doc.rect(ML, doc.y, 4, 26).fill(C.gold);
-  doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(22)
-     .text(text, ML + 14, doc.y + 1);
-  gap(6);
-  doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(1).strokeColor(C.line).stroke();
-  gap(14);
+  gap(10);
+  doc.rect(ML, doc.y, 3, 22).fill(C.gold);
+  doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(20)
+     .text(text, ML + 12, doc.y + 1);
+  gap(5);
+  doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(0.8).strokeColor(C.line).stroke();
+  gap(10);
 }
 
 function h2(text) {
-  ensure(60);
   tocAdd(text, 2);
-  gap(6);
-  doc.fillColor(C.goldDk).font('Helvetica-Bold').fontSize(14).text(text, ML);
-  gap(6);
+  gap(8);
+  doc.fillColor(C.goldDk).font('Helvetica-Bold').fontSize(13).text(text, ML);
+  gap(5);
 }
 
 function h3(text) {
-  ensure(44);
-  gap(4);
-  doc.fillColor(C.sky).font('Helvetica-Bold').fontSize(11).text(text, ML);
+  gap(6);
+  doc.fillColor(C.sky).font('Helvetica-Bold').fontSize(10.5).text(text, ML);
   gap(3);
 }
 
 function para(text, opts = {}) {
-  ensure(30);
   doc.fillColor(opts.color || C.body).font(opts.font || 'Helvetica')
-     .fontSize(opts.size || 10)
-     .text(text, ML, doc.y, { width: CW, align: 'left', lineGap: 2.5 });
-  gap(6);
+     .fontSize(opts.size || 9.5)
+     .text(text, ML, doc.y, { width: CW, align: 'left', lineGap: 2 });
+  gap(5);
 }
 
 function bullet(text, opts = {}) {
-  ensure(24);
   const x = ML + (opts.indent || 0);
   const startY = doc.y;
-  doc.fillColor(C.gold).font('Helvetica-Bold').fontSize(10).text('•', x, startY, { width: 12 });
-  doc.fillColor(C.body).font('Helvetica').fontSize(9.5)
-     .text(text, x + 14, startY, { width: CW - 14 - (opts.indent || 0), lineGap: 2 });
-  gap(4);
+  doc.fillColor(C.gold).font('Helvetica-Bold').fontSize(9.5).text('•', x, startY, { width: 10 });
+  doc.fillColor(C.body).font('Helvetica').fontSize(9)
+     .text(text, x + 12, startY, { width: CW - 12 - (opts.indent || 0), lineGap: 1.5 });
+  gap(3);
 }
 
 function kv(key, value) {
-  ensure(20);
   const startY = doc.y;
-  doc.fillColor(C.goldDk).font('Helvetica-Bold').fontSize(9.5).text(key, ML, startY, { width: 150, continued: false });
-  doc.fillColor(C.body).font('Helvetica').fontSize(9.5)
-     .text(value, ML + 155, startY, { width: CW - 155, lineGap: 1.5 });
-  doc.y = Math.max(doc.y, startY);
-  gap(5);
+  doc.fillColor(C.goldDk).font('Helvetica-Bold').fontSize(9).text(key, ML, startY, { width: 140 });
+  doc.fillColor(C.body).font('Helvetica').fontSize(9)
+     .text(value, ML + 145, startY, { width: CW - 145, lineGap: 1.5 });
+  gap(3);
 }
 
 function code(lines) {
   const text = Array.isArray(lines) ? lines.join('\n') : lines;
-  doc.font('Courier').fontSize(8.5);
-  const h = doc.heightOfString(text, { width: CW - 24, lineGap: 2 }) + 18;
-  ensure(h + 6);
+  const h = doc.heightOfString(text, { width: CW - 20, lineGap: 1.5 }) + 14;
   const y = doc.y;
-  doc.roundedRect(ML, y, CW, h, 6).fill(C.codeBg);
-  doc.fillColor(C.codeTx).font('Courier').fontSize(8.5)
-     .text(text, ML + 12, y + 9, { width: CW - 24, lineGap: 2 });
+  doc.roundedRect(ML, y, CW, h, 4).fill(C.codeBg);
+  doc.fillColor(C.codeTx).font('Courier').fontSize(8)
+     .text(text, ML + 10, y + 7, { width: CW - 20, lineGap: 1.5 });
   doc.y = y + h;
-  gap(8);
+  gap(6);
 }
 
-// Simple table: columns = [{header,width}], rows = [[..],[..]]
-function table(columns, rows, opts = {}) {
+function table(columns, rows) {
   const totalW = columns.reduce((s, c) => s + c.width, 0);
   const scale = CW / totalW;
   const cols = columns.map(c => ({ ...c, w: c.width * scale }));
 
-  function drawHeader() {
-    const y = doc.y;
-    doc.roundedRect(ML, y, CW, 20, 3).fill(C.ink);
-    let x = ML;
-    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
-    for (const c of cols) {
-      doc.text(c.header, x + 6, y + 6, { width: c.w - 12 });
-      x += c.w;
-    }
-    doc.y = y + 20;
-  }
+  const hdrH = 18;
+  const rowPad = 5;
 
-  ensure(60);
-  drawHeader();
-
-  doc.font('Helvetica').fontSize(8);
-  let zebra = false;
+  // Pre-calculate row heights
+  let rowHs = [];
   for (const row of rows) {
-    // compute row height
-    let maxH = 12;
-    let x = ML;
+    let maxH = 10;
     for (let i = 0; i < cols.length; i++) {
-      const hh = doc.heightOfString(String(row[i] ?? ''), { width: cols[i].w - 12, lineGap: 1 });
+      const hh = doc.heightOfString(String(row[i] ?? ''), { width: cols[i].w - 10, lineGap: 1 });
       maxH = Math.max(maxH, hh);
     }
-    const rowH = maxH + 8;
-    if (doc.y + rowH > BOTTOM) { doc.addPage(); drawHeader(); doc.font('Helvetica').fontSize(8); }
+    rowHs.push(maxH + rowPad * 2);
+  }
+
+  const BOTTOM = doc.page.height - doc.page.margins.bottom;
+
+  function drawHeader() {
+    const y = doc.y;
+    doc.roundedRect(ML, y, CW, hdrH, 3).fill(C.ink);
+    let x = ML;
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    for (const c of cols) {
+      doc.text(c.header, x + 5, y + 5, { width: c.w - 10 });
+      x += c.w;
+    }
+    doc.y = y + hdrH;
+    doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(0.5).strokeColor(C.line).stroke();
+  }
+
+  drawHeader();
+
+  doc.font('Helvetica').fontSize(7.5);
+  let zebra = false;
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
+    const rowH = rowHs[ri];
+    if (doc.y + rowH > BOTTOM) {
+      doc.addPage();
+      drawHeader();
+      doc.font('Helvetica').fontSize(7.5);
+    }
     const y = doc.y;
     if (zebra) doc.rect(ML, y, CW, rowH).fill(C.chip);
     zebra = !zebra;
-    x = ML;
+    let x = ML;
     for (let i = 0; i < cols.length; i++) {
       doc.fillColor(i === 0 ? C.goldDk : C.body)
-         .font(i === 0 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8)
-         .text(String(row[i] ?? ''), x + 6, y + 4, { width: cols[i].w - 12, lineGap: 1 });
+         .font(i === 0 ? 'Helvetica-Bold' : 'Helvetica').fontSize(7.5)
+         .text(String(row[i] ?? ''), x + 5, y + rowPad, { width: cols[i].w - 10, lineGap: 1 });
       x += cols[i].w;
     }
     doc.y = y + rowH;
     doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(0.5).strokeColor(C.line).stroke();
   }
-  gap(10);
+  gap(8);
 }
 
 function callout(title, text, color = C.gold) {
-  doc.font('Helvetica').fontSize(9.5);
-  const bodyH = doc.heightOfString(text, { width: CW - 40, lineGap: 2 });
-  const h = bodyH + 34;
-  ensure(h + 6);
+  doc.font('Helvetica').fontSize(9);
+  const bodyH = doc.heightOfString(text, { width: CW - 32, lineGap: 1.5 });
+  const h = bodyH + 26;
   const y = doc.y;
-  doc.roundedRect(ML, y, CW, h, 6).fillOpacity(0.08).fill(color).fillOpacity(1);
-  doc.rect(ML, y, 4, h).fill(color);
-  doc.fillColor(color).font('Helvetica-Bold').fontSize(9.5).text(title, ML + 16, y + 10);
-  doc.fillColor(C.body).font('Helvetica').fontSize(9.5)
-     .text(text, ML + 16, doc.y + 2, { width: CW - 32, lineGap: 2 });
+  doc.roundedRect(ML, y, CW, h, 4).fillOpacity(0.07).fill(color).fillOpacity(1);
+  doc.rect(ML, y, 3, h).fill(color);
+  doc.fillColor(color).font('Helvetica-Bold').fontSize(9).text(title, ML + 12, y + 7);
+  doc.fillColor(C.body).font('Helvetica').fontSize(9)
+     .text(text, ML + 12, doc.y + 1, { width: CW - 24, lineGap: 1.5 });
   doc.y = y + h;
-  gap(10);
+  gap(8);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// COVER
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══ COVER ═══════════════════════════════════════════════════════════════════════
 doc.rect(0, 0, PAGE_W, doc.page.height).fill('#F5EDE0');
-doc.rect(0, 0, PAGE_W, 8).fill(C.gold);
-doc.rect(0, doc.page.height - 8, PAGE_W, 8).fill(C.gold);
+doc.rect(0, 0, PAGE_W, 6).fill(C.gold);
+doc.rect(0, doc.page.height - 6, PAGE_W, 6).fill(C.gold);
 
-doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(13)
-   .text('ATELIER', ML, 150, { characterSpacing: 4 });
-doc.fillColor(C.gold).font('Helvetica-Bold').fontSize(52)
-   .text('OmniCore', ML, 170);
-doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(28)
-   .text('Developer Guide', ML, 240);
-doc.fillColor(C.muted).font('Helvetica').fontSize(12)
+doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(12)
+   .text('ATELIER', ML, 140, { characterSpacing: 3 });
+doc.fillColor(C.gold).font('Helvetica-Bold').fontSize(48)
+   .text('OmniCore', ML, 158);
+doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(26)
+   .text('Developer Guide', ML, 220);
+doc.fillColor(C.muted).font('Helvetica').fontSize(11)
    .text('The complete architecture & codebase reference — every file, section,\nfunction, table, endpoint and webhook a developer needs to own this code.',
-     ML, 288, { lineGap: 4 });
+     ML, 262, { lineGap: 3 });
 
-doc.moveTo(ML, 360).lineTo(ML + 200, 360).lineWidth(2).strokeColor(C.gold).stroke();
+doc.moveTo(ML, 330).lineTo(ML + 180, 330).lineWidth(1.5).strokeColor(C.gold).stroke();
 
-doc.fillColor(C.body).font('Helvetica').fontSize(10);
 const coverFacts = [
   'Product      Multi-tenant SaaS omnichannel helpdesk & AI support platform',
   'Repository   pnpm monorepo (artifacts + shared libs)',
@@ -216,18 +204,21 @@ const coverFacts = [
   'Frontend     React 19 · Vite · Tailwind v4',
   'Billing      Stripe + Paddle (dual-provider)',
 ];
-let cy = 380;
-for (const f of coverFacts) { doc.font('Courier').fontSize(9.5).fillColor(C.body).text(f, ML, cy); cy += 18; }
+let cy = 350;
+for (const f of coverFacts) { doc.font('Courier').fontSize(9).fillColor(C.body).text(f, ML, cy); cy += 16; }
 
-doc.fillColor(C.muted).font('Helvetica').fontSize(9)
+doc.fillColor(C.muted).font('Helvetica').fontSize(8)
    .text('Generated ' + new Date().toISOString().slice(0, 10) + '  ·  Confidential — internal engineering document',
-     ML, doc.page.height - 90);
+     ML, doc.page.height - 80);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// (Content pages follow — TOC is rendered last onto a reserved page)
-// ═══════════════════════════════════════════════════════════════════════════
-const tocPageIndex = pageNumber(); // reserve
-doc.addPage(); // this page becomes the TOC placeholder
+// ═══ TOC ═══════════════════════════════════════════════════════════════════════════
+doc.addPage();
+
+doc.rect(ML, doc.y, 3, 22).fill(C.gold);
+doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(20).text('Contents', ML + 12, doc.y + 1);
+gap(8);
+doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(0.8).strokeColor(C.line).stroke();
+gap(10);
 
 // 1. INTRODUCTION ─────────────────────────────────────────────────────────
 h1('1 · Introduction & Mental Model');
@@ -422,7 +413,7 @@ bullet('stripQuotes (L50–56) removes quoted reply chains so only the new text 
 callout('Why webhooks are mounted before express.json',
   'Stripe and Paddle sign the RAW request body. If express.json parses it first, the signature check fails. That is why these routes use express.raw and are registered early in app.ts. Never move them below the JSON parser.');
 
-// 5. DATABASE ───────────────────────────────────────────────────────────────
+// 5. DATABASE ────────────────────────────────────────────────────────────────
 h1('5 · Database — Schema, Tables & Relationships');
 para('PostgreSQL (Replit-managed). Baseline DDL is artifacts/api-server/schema.sql, applied MANUALLY (no Drizzle migrations). Several tables/columns are added at runtime by "self-healing" migrations that run when a controller/service boots.');
 
@@ -463,7 +454,7 @@ para('billing.controller.js and super-admin.controller.js ALTER the tenants tabl
 callout('Schema quirks you must respect',
   'visitors uses display_name (not name) — queries COALESCE(v.display_name, v.email, \'Visitor\'). messages uses sender_id (not sender_agent_id). Both bit earlier developers; keep to these names.');
 
-// 6. DASHBOARD ──────────────────────────────────────────────────────────────
+// 6. DASHBOARD ───────────────────────────────────────────────────────────────────────────
 h1('6 · Dashboard Frontend — Deep Dive');
 para('Path: artifacts/dashboard/src/. React 19 + Vite + Tailwind v4 + TypeScript. Almost the entire app lives in a single large file, App.tsx (~5300 lines). Auth lives in context/AuthContext.jsx.');
 
@@ -536,7 +527,7 @@ bullet('On close, an optional 1–5 star CSAT survey posts to /api/widget/csat.'
 callout('Widget CORS is intentionally wide open',
   'widget.controller.js sets Access-Control-Allow-Origin: * and Cross-Origin-Resource-Policy: cross-origin (overriding Helmet) because the widget must load on ANY customer domain. The /api/widget/session endpoint is deliberately unauthenticated — it is visitor-facing. Keep widget responses shape-tolerant: the widget.js is cached on third-party sites and old versions stay in the wild.');
 
-// 8. ENV VARS ───────────────────────────────────────────────────────────────
+// 8. ENV VARS ────────────────────────────────────────────────────────────────
 h1('8 · Environment Variables Reference');
 para('Manage these through Replit secrets — never hard-code them. The server hard-exits on boot if a REQUIRED var is missing (see lib/env.js).');
 h2('Required (server will not start without these)');
@@ -564,7 +555,7 @@ table(
   ]
 );
 
-// 9. COMMON TASKS ───────────────────────────────────────────────────────────
+// 9. COMMON TASKS ───────────────────────────────────────────────────────────────
 h1('9 · Recipes — "Where Do I Change X?"');
 para('A quick lookup from feature → files to edit. Follow the golden rule (carry tenant_id) on anything data-related.');
 table(
@@ -599,42 +590,18 @@ bullet('Verify apps with typecheck, not build — build needs workflow-provided 
 callout('Demo credentials (development)',
   'admin@omnicore.test / Admin123!   ·   sara@omnicore.test / Agent123!');
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Render TABLE OF CONTENTS onto the reserved page, then footers
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══ FOOTERS (post-render via switchToPage) ═════════════════════════════════════════════════════─══════════════════════════
 const range = doc.bufferedPageRange();
-// switch to the reserved TOC page (index = tocPageIndex, 0-based within buffered range)
-doc.switchToPage(tocPageIndex);
-doc.y = doc.page.margins.top;
-doc.rect(ML, doc.y, 4, 26).fill(C.gold);
-doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(22).text('Contents', ML + 14, doc.y + 1);
-gap(10);
-doc.moveTo(ML, doc.y).lineTo(ML + CW, doc.y).lineWidth(1).strokeColor(C.line).stroke();
-gap(14);
-for (const item of toc) {
-  const indent = item.level === 1 ? 0 : 18;
-  const font = item.level === 1 ? 'Helvetica-Bold' : 'Helvetica';
-  const size = item.level === 1 ? 10.5 : 9.5;
-  const color = item.level === 1 ? C.ink : C.muted;
-  ensure(18);
-  const y = doc.y;
-  doc.fillColor(color).font(font).fontSize(size).text(item.title, ML + indent, y, { width: CW - 40 - indent, continued: false });
-  doc.fillColor(C.muted).font('Helvetica').fontSize(9).text(String(item.page), ML + CW - 30, y, { width: 30, align: 'right' });
-  doc.y = y + (item.level === 1 ? 15 : 13);
-}
-
-// Footers on every page (skip cover = page 0)
-for (let i = 0; i < range.count; i++) {
+for (let i = range.start; i < range.start + range.count; i++) {
+  if (i === 0) continue; // cover has no footer
   doc.switchToPage(i);
-  if (i === 0) continue;
-  const fy = doc.page.height - 42;
+  const fy = doc.page.height - 38;
   doc.moveTo(ML, fy).lineTo(ML + CW, fy).lineWidth(0.5).strokeColor(C.line).stroke();
-  doc.fillColor(C.muted).font('Helvetica').fontSize(8)
-     .text('Atelier OmniCore — Developer Guide', ML, fy + 8, { width: CW / 2, align: 'left' });
-  doc.fillColor(C.muted).font('Helvetica').fontSize(8)
-     .text('Page ' + i + ' / ' + (range.count - 1), ML + CW / 2, fy + 8, { width: CW / 2, align: 'right' });
+  doc.fillColor(C.muted).font('Helvetica').fontSize(7.5)
+     .text('Atelier OmniCore — Developer Guide', ML, fy + 6, { width: CW / 2, align: 'left' });
+  doc.fillColor(C.muted).font('Helvetica').fontSize(7.5)
+     .text('Page ' + i, ML + CW / 2, fy + 6, { width: CW / 2, align: 'right' });
 }
 
-doc.flushPages();
 doc.end();
 console.log('PDF written to ' + outPath);
