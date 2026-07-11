@@ -452,10 +452,15 @@ function useApi() {
       const r = await authFetch(`${API}/ai/knowledge-base/${id}`, { method: 'DELETE' })
       if (!r.ok) throw new Error('Failed to delete article')
     },
-    crawlUrl: async (url: string, brandId?: string): Promise<KnowledgeArticle> => {
-      const r = await authFetch(`${API}/ai/knowledge-base/crawl`, { method: 'POST', body: JSON.stringify({ url, brand_id: brandId }) })
+    startSiteCrawl: async (url: string, brandId?: string, maxPages = 100, maxDepth = 5): Promise<{ jobId: string; maxPages: number; maxDepth: number; startUrl: string }> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/crawl`, { method: 'POST', body: JSON.stringify({ url, brand_id: brandId, max_pages: maxPages, max_depth: maxDepth }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Crawl failed') }
-      return r.json() as Promise<KnowledgeArticle>
+      return r.json()
+    },
+    getCrawlStatus: async (jobId: string): Promise<{ status: string; crawled: number; saved: number; errors: number; maxPages: number; currentUrl?: string; errorMessage?: string }> => {
+      const r = await authFetch(`${API}/ai/knowledge-base/crawl/status/${jobId}`)
+      if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Status check failed') }
+      return r.json()
     },
     uploadPdfKnowledge: async (data: string, filename: string, brandId?: string): Promise<KnowledgeArticle> => {
       const r = await authFetch(`${API}/ai/knowledge-base/upload-pdf`, { method: 'POST', body: JSON.stringify({ data, filename, brand_id: brandId }) })
@@ -3725,8 +3730,11 @@ function AITrainingSection() {
   const [artSaving, setArtSaving] = useState(false)
   const [artMsg, setArtMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [crawlUrl, setCrawlUrl] = useState('')
+  const [crawlMaxPages, setCrawlMaxPages] = useState(100)
+  const [crawlMaxDepth, setCrawlMaxDepth] = useState(5)
   const [crawling, setCrawling] = useState(false)
   const [crawlMsg, setCrawlMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [crawlProgress, setCrawlProgress] = useState<{ crawled: number; saved: number; errors: number; maxPages: number; currentUrl?: string } | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [pdfMsg, setPdfMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -3815,11 +3823,33 @@ function AITrainingSection() {
 
   const handleCrawl = async () => {
     if (!crawlUrl.trim()) return
-    setCrawling(true); setCrawlMsg(null)
+    setCrawling(true); setCrawlMsg(null); setCrawlProgress(null)
     try {
-      const article = await api.crawlUrl(crawlUrl.trim())
-      setArticles(prev => [article, ...prev])
-      setCrawlMsg({ ok: true, text: `Crawled and saved as article: "${article.title}"` })
+      const { jobId, maxPages } = await api.startSiteCrawl(crawlUrl.trim(), undefined, crawlMaxPages, crawlMaxDepth)
+
+      // Poll for progress every 2 seconds
+      await new Promise<void>((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            const job = await api.getCrawlStatus(jobId)
+            setCrawlProgress({ crawled: job.crawled, saved: job.saved, errors: job.errors, maxPages: job.maxPages, currentUrl: job.currentUrl })
+            if (job.status === 'done' || job.status === 'error') {
+              clearInterval(interval)
+              if (job.status === 'error') reject(new Error(job.errorMessage ?? 'Crawl failed'))
+              else resolve()
+            }
+          } catch (err) { clearInterval(interval); reject(err) }
+        }, 2000)
+      })
+
+      // Reload articles list so crawled pages appear
+      const data = await api.listKnowledge()
+      setArticles(data)
+
+      const prog = await api.getCrawlStatus(jobId).catch(() => null)
+      const saved = prog?.saved ?? 0
+      const errors = prog?.errors ?? 0
+      setCrawlMsg({ ok: true, text: `Done! Crawled ${maxPages <= crawlMaxPages ? prog?.crawled ?? 0 : crawlMaxPages} pages — ${saved} article${saved !== 1 ? 's' : ''} saved${errors > 0 ? `, ${errors} page${errors !== 1 ? 's' : ''} skipped` : ''}.` })
       setCrawlUrl('')
     } catch (err) { setCrawlMsg({ ok: false, text: (err as Error).message }) }
     finally { setCrawling(false) }
@@ -3955,25 +3985,69 @@ function AITrainingSection() {
         {tab === 'crawl' && (
           <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div>
-              <p className="text-xs font-semibold text-slate-700 mb-1">Crawl a Web Page</p>
-              <p className="text-[11px] text-slate-400">Enter a URL and we'll fetch its content, strip HTML, and save it as a knowledge article.</p>
+              <p className="text-xs font-semibold text-slate-700 mb-1">Crawl a Website</p>
+              <p className="text-[11px] text-slate-400">Enter a starting URL and we'll crawl the whole site — following internal links up to your chosen depth and page limit.</p>
             </div>
             <StatusBanner msg={crawlMsg} />
+
+            {/* URL input row */}
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Globe size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="url" value={crawlUrl} onChange={e => setCrawlUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCrawl()} placeholder="https://docs.yoursite.com/getting-started" className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400" />
+                <input type="url" value={crawlUrl} onChange={e => setCrawlUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && !crawling && handleCrawl()} placeholder="https://docs.yoursite.com" disabled={crawling} className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 disabled:opacity-50" />
               </div>
               <button onClick={handleCrawl} disabled={crawling || !crawlUrl.trim()} className="px-4 py-2.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5 shrink-0">
-                {crawling ? <><RefreshCw size={11} className="animate-spin" /> Crawling…</> : <><Globe size={11} /> Crawl Page</>}
+                {crawling ? <><RefreshCw size={11} className="animate-spin" /> Crawling…</> : <><Globe size={11} /> Start Crawl</>}
               </button>
             </div>
+
+            {/* Crawl settings */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">Max pages <span className="text-slate-400 font-normal">(1–500)</span></label>
+                <input type="number" min={1} max={500} value={crawlMaxPages} onChange={e => setCrawlMaxPages(Math.min(500, Math.max(1, parseInt(e.target.value) || 1)))} disabled={crawling} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 disabled:opacity-50" />
+                <p className="text-[10px] text-slate-400 mt-0.5">~{Math.round(crawlMaxPages * 0.6 / 60)} min at 600 ms/page</p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">Link depth <span className="text-slate-400 font-normal">(1–20)</span></label>
+                <input type="number" min={1} max={20} value={crawlMaxDepth} onChange={e => setCrawlMaxDepth(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))} disabled={crawling} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 disabled:opacity-50" />
+                <p className="text-[10px] text-slate-400 mt-0.5">Hops from the starting URL</p>
+              </div>
+            </div>
+
+            {/* Live progress */}
+            {crawling && crawlProgress && (
+              <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-purple-700">Crawling in progress…</span>
+                  <span className="text-[11px] text-purple-600">{crawlProgress.crawled} / {crawlProgress.maxPages} pages</span>
+                </div>
+                <div className="w-full bg-purple-100 rounded-full h-1.5">
+                  <div className="bg-purple-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (crawlProgress.crawled / crawlProgress.maxPages) * 100)}%` }} />
+                </div>
+                <div className="flex gap-3 text-[10px] text-purple-600">
+                  <span>✓ {crawlProgress.saved} saved</span>
+                  {crawlProgress.errors > 0 && <span className="text-amber-600">⚠ {crawlProgress.errors} skipped</span>}
+                </div>
+                {crawlProgress.currentUrl && (
+                  <p className="text-[10px] text-purple-400 truncate" title={crawlProgress.currentUrl}>↳ {crawlProgress.currentUrl}</p>
+                )}
+              </div>
+            )}
+            {crawling && !crawlProgress && (
+              <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg flex items-center gap-2">
+                <RefreshCw size={11} className="animate-spin text-purple-500 shrink-0" />
+                <span className="text-[11px] text-purple-600">Starting crawl…</span>
+              </div>
+            )}
+
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
               <p className="text-[11px] text-slate-500 font-medium mb-1">Tips</p>
               <ul className="text-[11px] text-slate-400 space-y-0.5 list-disc list-inside">
-                <li>Works best with documentation, help center, and FAQ pages</li>
-                <li>JavaScript-heavy SPAs may not render correctly</li>
-                <li>Content is capped at 15,000 characters per page</li>
+                <li>Crawl runs in the background — you can navigate away</li>
+                <li>Only follows links on the same domain as the starting URL</li>
+                <li>JavaScript-heavy SPAs may not render all content</li>
+                <li>Pages with <code className="bg-slate-100 px-0.5 rounded text-[10px]">noindex</code> headers are skipped automatically</li>
                 <li>Crawled articles appear in the Articles tab</li>
               </ul>
             </div>

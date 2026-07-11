@@ -2,13 +2,15 @@
 
 /**
  * ai.router.js
- * POST /api/ai/rephrase          — agent copilot text rephrase
- * GET  /api/ai/knowledge-base    — list knowledge articles
- * POST /api/ai/knowledge-base    — create knowledge article
- * PATCH /api/ai/knowledge-base/:id — update article
- * DELETE /api/ai/knowledge-base/:id — delete article
- * GET  /api/ai/settings          — get brand AI settings
- * PATCH /api/ai/settings/:brandId — update brand AI system prompt
+ * POST /api/ai/rephrase                          — agent copilot text rephrase
+ * GET  /api/ai/knowledge-base                    — list knowledge articles
+ * POST /api/ai/knowledge-base                    — create knowledge article
+ * PATCH /api/ai/knowledge-base/:id               — update article
+ * DELETE /api/ai/knowledge-base/:id              — delete article
+ * POST /api/ai/knowledge-base/crawl              — start full-site BFS crawl job
+ * GET  /api/ai/knowledge-base/crawl/status/:id   — poll crawl job status
+ * GET  /api/ai/settings                          — get brand AI settings
+ * PATCH /api/ai/settings/:brandId                — update brand AI system prompt
  */
 
 const { Router }      = require('express');
@@ -16,6 +18,115 @@ const { requireAuth, requirePermissionByMethod, requirePermission } = require('.
 const { rephraseText } = require('../services/ai.service');
 const logger          = require('../utils/logger');
 const { pool }        = require('../lib/db');
+const crypto          = require('node:crypto');
+const cheerio         = require('cheerio');
+
+// ─── In-memory crawl job store ────────────────────────────────────────────────
+// Jobs expire after 30 minutes of age. Restarting the server clears all jobs.
+const crawlJobs = new Map(); // jobId → CrawlJob
+
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, job] of crawlJobs) {
+    if (job.startedAt < cutoff) crawlJobs.delete(id);
+  }
+}, 5 * 60 * 1000).unref();
+
+// ─── BFS site crawler ─────────────────────────────────────────────────────────
+const CRAWL_DELAY_MS  = 600;
+const CRAWL_TIMEOUT   = 12_000;
+const CRAWL_USER_AGENT = 'AtelierOmniCoreBot/1.0 (+https://iratelier.com/bot)';
+const SKIP_EXT  = /\.(pdf|zip|png|jpg|jpeg|gif|svg|mp4|mp3|css|js|xml|json|ico|woff2?)$/i;
+const SKIP_PROTO = /^(mailto:|tel:|javascript:|#)/i;
+const PRIVATE_HOST_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.|::1$|fc00:|fe80:|0\.0\.0\.0$)/i;
+
+async function runSiteCrawl({ jobId, tenantId, agentId, brandId, startUrl, maxPages, maxDepth }) {
+  const job = crawlJobs.get(jobId);
+  const visited = new Set();
+  const queue   = [{ url: startUrl, depth: 0 }];
+
+  while (queue.length && job.crawled < maxPages) {
+    const { url, depth } = queue.shift();
+    const norm = url.split('?')[0].split('#')[0];
+    if (visited.has(norm) || SKIP_EXT.test(norm)) continue;
+    visited.add(norm);
+
+    try {
+      const ctrl  = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), CRAWL_TIMEOUT);
+      const res   = await fetch(norm, {
+        signal:  ctrl.signal,
+        headers: { 'User-Agent': CRAWL_USER_AGENT, Accept: 'text/html' },
+        redirect: 'follow',
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) continue;
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('text/html')) continue;
+
+      const robotsTag = (res.headers.get('x-robots-tag') || '').toLowerCase();
+      const noIndex   = robotsTag.includes('noindex');
+      const noFollow  = robotsTag.includes('nofollow');
+
+      const html = await res.text();
+      const $    = cheerio.load(html);
+      $('script,style,nav,footer,header,aside,form,noscript,iframe,[aria-hidden="true"]').remove();
+
+      const title = (
+        $('meta[property="og:title"]').attr('content') ||
+        $('title').text() ||
+        norm
+      ).trim().slice(0, 255) || 'Crawled Page';
+
+      const parts = [];
+      $('p,li,h1,h2,h3,h4,blockquote').each((_, el) => {
+        const t = $(el).text().replace(/\s+/g, ' ').trim();
+        if (t.length > 20) parts.push(t);
+      });
+      const text = parts.join('\n\n').slice(0, 15_000);
+
+      if (!noIndex && text.length > 100) {
+        await pool.query(
+          `INSERT INTO knowledge_articles
+             (tenant_id, brand_id, title, content, plain_text_content, tags, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [tenantId, brandId || null, title, text, text, ['web-crawl'], agentId]
+        );
+        job.saved++;
+      }
+
+      job.crawled++;
+      job.currentUrl = norm;
+
+      // Enqueue child links (same origin only)
+      if (!noFollow && depth < maxDepth) {
+        const base = new URL(norm);
+        $('a[href]').each((_, el) => {
+          const href = ($(el).attr('href') || '').trim();
+          if (!href || SKIP_PROTO.test(href) || SKIP_EXT.test(href)) return;
+          try {
+            const resolved = new URL(href, norm);
+            resolved.hash  = '';
+            const rn = resolved.toString().split('?')[0];
+            if (resolved.hostname === base.hostname && !visited.has(rn)) {
+              queue.push({ url: resolved.toString(), depth: depth + 1 });
+            }
+          } catch { /* malformed href */ }
+        });
+      }
+
+    } catch (err) {
+      job.errors++;
+      logger.warn({ url: norm, err: err.message }, 'crawl_page_error');
+    }
+
+    if (queue.length) await new Promise(r => setTimeout(r, CRAWL_DELAY_MS));
+  }
+
+  job.status = 'done';
+  logger.info({ jobId, tenantId, crawled: job.crawled, saved: job.saved, errors: job.errors }, 'crawl_site_complete');
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -213,60 +324,66 @@ router.patch('/settings/:brandId', requirePermission('knowledge_base', 'edit'), 
 });
 
 // ─── POST /api/ai/knowledge-base/crawl ───────────────────────────────────────
+// Starts a background BFS site crawl. Returns { jobId } immediately.
+// Poll GET /api/ai/knowledge-base/crawl/status/:jobId for progress.
 router.post('/knowledge-base/crawl', async (req, res, next) => {
   try {
-    const { url, brand_id } = req.body || {};
+    const { url, brand_id, max_pages, max_depth } = req.body || {};
     if (!url?.trim()) return res.status(400).json({ error: 'url is required' });
 
-    let targetUrl;
-    try { targetUrl = new URL(url.trim()); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
-    if (!['http:', 'https:'].includes(targetUrl.protocol)) return res.status(400).json({ error: 'Only http/https URLs allowed' });
+    let startUrl;
+    try {
+      const parsed = new URL(url.trim());
+      if (!['http:', 'https:'].includes(parsed.protocol))
+        return res.status(400).json({ error: 'Only http/https URLs allowed' });
+      if (PRIVATE_HOST_RE.test(parsed.hostname))
+        return res.status(400).json({ error: 'Private/local URLs are not permitted' });
+      startUrl = parsed.toString();
+    } catch {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
 
-    const mod = targetUrl.protocol === 'https:' ? require('node:https') : require('node:http');
+    const maxPages = Math.min(Math.max(parseInt(String(max_pages)) || 100, 1), 500);
+    const maxDepth = Math.min(Math.max(parseInt(String(max_depth))  || 5,   1), 20);
 
-    const html = await new Promise((resolve, reject) => {
-      const request = mod.get(url.trim(), { timeout: 12000, headers: { 'User-Agent': 'OmniCore-Crawler/1.0' } }, (response) => {
-        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          return resolve(`<meta-redirect>${response.headers.location}</meta-redirect>`);
-        }
-        if (response.statusCode !== 200) { reject(new Error(`HTTP ${response.statusCode}`)); return; }
-        let data = '';
-        response.setEncoding('utf8');
-        response.on('data', chunk => { data += chunk; if (data.length > 500000) response.destroy(); });
-        response.on('end', () => resolve(data));
-      });
-      request.on('error', reject);
-      request.on('timeout', () => { request.destroy(); reject(new Error('Request timed out')); });
+    const jobId = crypto.randomUUID();
+    crawlJobs.set(jobId, {
+      status:     'running',
+      crawled:    0,
+      saved:      0,
+      errors:     0,
+      maxPages,
+      maxDepth,
+      startUrl,
+      currentUrl: startUrl,
+      startedAt:  Date.now(),
     });
 
-    const text = String(html)
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<(h[1-6])[^>]*>([\s\S]*?)<\/\1>/gi, '\n\n$2\n')
-      .replace(/<(p|li|td|th|div|section|article)[^>]*>/gi, '\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"')
-      .replace(/[ \t]{2,}/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-      .slice(0, 15000);
+    // Fire-and-forget — response is returned before crawl completes
+    runSiteCrawl({
+      jobId,
+      tenantId: req.agent.tenantId,
+      agentId:  req.agent.id,
+      brandId:  brand_id || null,
+      startUrl,
+      maxPages,
+      maxDepth,
+    }).catch(err => {
+      const j = crawlJobs.get(jobId);
+      if (j) { j.status = 'error'; j.errorMessage = err.message; }
+      logger.error({ jobId, err: err.message }, 'crawl_site_failed');
+    });
 
-    if (!text || text.length < 50) return res.status(422).json({ error: 'Could not extract meaningful text from page' });
-
-    const pathParts = targetUrl.pathname.split('/').filter(Boolean);
-    const rawTitle = pathParts.pop() || targetUrl.hostname;
-    const title = rawTitle.replace(/[-_]/g, ' ').replace(/\.[^.]+$/, '').replace(/\b\w/g, c => c.toUpperCase()) || 'Crawled Page';
-
-    const { rows } = await pool.query(
-      `INSERT INTO knowledge_articles (tenant_id, brand_id, title, content, tags, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, title, content, tags, brand_id, is_active, created_at, updated_at`,
-      [req.agent.tenantId, brand_id || null, title, text, ['web-crawl'], req.agent.id]
-    );
-    logger.info({ id: rows[0].id, url }, 'knowledge_crawled');
-    return res.status(201).json(rows[0]);
+    logger.info({ jobId, startUrl, maxPages, maxDepth }, 'crawl_site_started');
+    return res.json({ jobId, maxPages, maxDepth, startUrl });
   } catch (err) { next(err); }
+});
+
+// ─── GET /api/ai/knowledge-base/crawl/status/:jobId ──────────────────────────
+router.get('/knowledge-base/crawl/status/:jobId', (req, res) => {
+  const job = crawlJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found or expired' });
+  return res.json(job);
 });
 
 // ─── POST /api/ai/knowledge-base/upload-pdf ──────────────────────────────────

@@ -201,21 +201,19 @@ function extractInternalLinks($, baseUrl) {
  * Returns the article id.
  */
 async function upsertArticle({ tenantId, brandId, title, htmlContent, plainText, agentId = null }) {
-  // We use a unique constraint on (tenant_id, brand_id, title) as a proxy.
-  // A dedicated source_url column on knowledge_articles would be cleaner —
-  // add one as needed without breaking this logic.
   const { rows } = await pool.query(
     `INSERT INTO knowledge_articles
-       (tenant_id, brand_id, title, public_html_content, plain_text_content,
-        is_public, is_vectorized, author_agent_id)
-     VALUES ($1,$2,$3,$4,$5, FALSE, FALSE, $6)
+       (tenant_id, brand_id, title, content, public_html_content, plain_text_content,
+        tags, is_public, is_vectorized, author_agent_id)
+     VALUES ($1,$2,$3,$4,$5,$6, '{web-crawl}', FALSE, FALSE, $7)
      ON CONFLICT (tenant_id, brand_id, title) DO UPDATE
-       SET public_html_content = EXCLUDED.public_html_content,
+       SET content             = EXCLUDED.content,
+           public_html_content = EXCLUDED.public_html_content,
            plain_text_content  = EXCLUDED.plain_text_content,
            is_vectorized       = FALSE,
            updated_at          = NOW()
      RETURNING id`,
-    [tenantId, brandId, title, htmlContent, plainText, agentId]
+    [tenantId, brandId, title, plainText, htmlContent, plainText, agentId]
   );
   return rows[0].id;
 }
