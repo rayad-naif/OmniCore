@@ -97,7 +97,7 @@ export default function Checkout() {
         paddle.Checkout.open({
           transactionId: data.transactionId,
           settings: {
-            successUrl: `${window.location.origin}/checkout/success?plan=${planSlug}`,
+            successUrl: `${window.location.origin}/checkout/success`,
             displayMode: 'overlay',
             theme: 'light',
           },

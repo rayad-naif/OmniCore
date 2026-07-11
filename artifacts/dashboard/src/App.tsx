@@ -2020,7 +2020,7 @@ function BillingSection() {
         paddle.Checkout.open({
           transactionId: result.transactionId,
           settings: {
-            successUrl: `${window.location.origin}/dashboard/?checkout=success`,
+            successUrl: `${window.location.origin}/dashboard/`,
             displayMode: 'overlay',
             theme: 'light',
           },

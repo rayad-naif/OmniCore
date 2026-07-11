@@ -137,8 +137,6 @@ async function _paddlePublicCheckout({ email, plan, businessName, userName, padd
     plan,
     businessName,
     userName,
-    successUrl: `${baseUrl}/checkout/success?plan=${plan}`,
-    cancelUrl: `${baseUrl}/pricing`,
   });
 
   logger.info({ plan, provider: 'paddle' }, 'public_checkout_created');
@@ -205,8 +203,7 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
     priceId,
     email: agentEmail,
     plan,
-    successUrl: `${baseUrl}/dashboard/?checkout=success`,
-    cancelUrl: `${baseUrl}/dashboard/?checkout=cancelled`,
+    tenantId: String(tenant.id),
   });
 
   return { url, transactionId, provider: 'paddle' };

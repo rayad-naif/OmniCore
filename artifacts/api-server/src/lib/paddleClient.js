@@ -114,23 +114,26 @@ async function paddleRequest(method, path, body) {
  * Creates a Paddle Billing transaction and returns the hosted checkout URL.
  * Trial periods must be baked into the Price object (via seed-paddle).
  */
-async function createCheckoutTransaction({ priceId, email, plan, businessName, userName, successUrl, cancelUrl }) {
+async function createCheckoutTransaction({ priceId, email, plan, businessName, userName, tenantId }) {
+  // NOTE: We do NOT pass checkout.url here. With Paddle.js overlay checkout,
+  // the success/cancel URLs are specified client-side via Paddle.Checkout.open()
+  // settings. Passing a server-side checkout.url requires that domain to be
+  // pre-approved in the Paddle dashboard — omitting it avoids that constraint.
   const resp = await paddleRequest('POST', '/transactions', {
     items: [{ price_id: priceId, quantity: 1 }],
     custom_data: {
       plan,
       email,
       business_name: businessName || null,
-      user_name: userName || null,
-      cancel_url: cancelUrl || null,
+      user_name:     userName || null,
+      tenant_id:     tenantId || null,
     },
-    checkout: { url: successUrl },
   });
 
   const txId = resp.data?.id;
-  const url =
-    resp.data?.checkout?.url ||
-    `${paddleCheckoutBaseUrl()}/checkout/custom/${txId}`;
+  // Build a fallback redirect URL (used if JS overlay isn't available)
+  const base = paddleCheckoutBaseUrl();
+  const url = resp.data?.checkout?.url || `${base}/checkout/custom-checkout?_ptxn=${txId}`;
 
   return { url, transactionId: txId };
 }

@@ -741,17 +741,39 @@ app.post(
         (data.items as Array<{
           price?: { custom_data?: { plan?: string } };
         }>) || [];
-      const email = customData.email;
+      let email = customData.email;
       const plan =
         items[0]?.price?.custom_data?.plan || customData.plan || "starter";
       const customerId = data.customer_id as string | undefined;
       const subId = (data.subscription_id as string | undefined) || null;
 
-      if (!email || !customerId) {
+      if (!customerId) {
         // Transaction not finalized yet — the webhook will complete provisioning.
+        logger.info({ transactionId }, "checkout_confirm_pending_no_customer");
         return res.status(202).json({ provisioned: false, reason: "pending" });
       }
 
+      // If email wasn't stored in custom_data (e.g. user entered it directly
+      // in the Paddle overlay form), fall back to fetching the Paddle customer.
+      if (!email) {
+        try {
+          const custResp = (await paddleRequest(
+            "GET",
+            `/customers/${customerId}`,
+          )) as { data?: { email?: string } };
+          email = custResp.data?.email || "";
+        } catch {
+          /* non-fatal — webhook will provision if email is still missing */
+        }
+      }
+
+      if (!email) {
+        logger.info({ transactionId, customerId }, "checkout_confirm_pending_no_email");
+        return res.status(202).json({ provisioned: false, reason: "pending" });
+      }
+
+      // Check if an existing tenant already has this paddle_customer_id
+      // (idempotent — safe to call multiple times for same checkout).
       const tenantId = await provisionTenantFromPaddlePublicCheckout({
         email,
         plan,
@@ -760,10 +782,11 @@ app.post(
         businessName: customData.business_name || null,
         userName: customData.user_name || null,
       });
+      logger.info({ transactionId, tenantId, plan }, "checkout_confirm_provisioned");
       return res.json({ provisioned: true, tenantId });
     } catch (err) {
       logger.error(
-        { err: (err as Error).message },
+        { err: (err as Error).message, transactionId },
         "checkout_confirm_failed",
       );
       return res.status(500).json({ error: "Could not confirm checkout" });
