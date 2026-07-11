@@ -29,3 +29,9 @@ id = "WEfbliebmRFWNuYSX_7RV"
 uri = "file://docs/project-file-tree.md"
 type = "text"
 title = "Atelier OmniCore — Complete File Tree"
+
+[[outputs]]
+id = "LfmqNvYvb7myLao87BJ1U"
+uri = "file://docs/OmniCore-Client-Guide.pdf"
+type = "pdf"
+title = "OmniCore Client Guide (PDF)"
