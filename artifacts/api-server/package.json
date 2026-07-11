@@ -16,7 +16,7 @@
     "@replit/connectors-sdk": "^0.4.1",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
-    "archiver": "^8.0.0",
+    "archiver": "^6.0.2",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",

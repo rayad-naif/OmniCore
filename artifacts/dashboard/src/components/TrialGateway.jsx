@@ -14,7 +14,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
  *
  * Super-admins are exempt so they can always access any workspace.
  */
-export default function TrialGateway({ authFetch, agent, onNavigate }) {
+export default function TrialGateway({ authFetch, agent, onNavigate, onCheckout }) {
   const [lockState, setLockState]       = useState(null);
   const [graceDaysLeft, setGraceDays]   = useState(7);
   const [plan, setPlan]                 = useState(null);
@@ -53,12 +53,15 @@ export default function TrialGateway({ authFetch, agent, onNavigate }) {
 
   const goToBilling = useCallback(() => {
     setGoingTo(true);
-    onNavigate?.('billing');
-    if (lockState !== 'locked') {
+    if (lockState === 'locked' && onCheckout) {
+      onCheckout(plan);
+      setGoingTo(false);
+    } else {
+      onNavigate?.('billing');
       setTimeout(() => setDismissed(true), 200);
+      setGoingTo(false);
     }
-    setGoingTo(false);
-  }, [onNavigate, lockState]);
+  }, [onNavigate, onCheckout, lockState, plan]);
 
   if (agent?.isSuperAdmin) return null;
   if (!lockState) return null;

@@ -5315,7 +5315,38 @@ function Dashboard() {
       </div>
 
       {/* Trial / lock gateway overlay — renders above everything else */}
-      <TrialGateway authFetch={authFetch} agent={agent} onNavigate={setSection} />
+      <TrialGateway
+        authFetch={authFetch}
+        agent={agent}
+        onNavigate={setSection}
+        onCheckout={async (plan: string) => {
+          try {
+            const r = await authFetch(`${API}/billing/checkout`, {
+              method: 'POST',
+              body: JSON.stringify({ plan }),
+            })
+            if (!r.ok) { setSection('billing'); return }
+            const result = await r.json() as { url?: string; transactionId?: string; provider?: string }
+            const paddle = await ensurePaddle(null)
+            if (result.transactionId && paddle && result.provider === 'paddle') {
+              paddle.Checkout.open({
+                transactionId: result.transactionId,
+                settings: {
+                  successUrl: `${window.location.origin}/dashboard/`,
+                  displayMode: 'overlay',
+                  theme: 'light',
+                },
+              })
+            } else if (result.url) {
+              window.location.href = result.url
+            } else {
+              setSection('billing')
+            }
+          } catch {
+            setSection('billing')
+          }
+        }}
+      />
 
       {/* Floating WhatsApp button */}
       <a
