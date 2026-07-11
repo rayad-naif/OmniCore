@@ -98,6 +98,16 @@ Dashboard `TrialGateway.jsx` renders a fixed overlay (z-index 9999) showing grac
 **Why:** relying only on the webhook means onboarding silently breaks if the webhook is delayed/misconfigured. The confirm endpoint is safe unauthenticated because it re-fetches the real transaction from Paddle before doing anything.
 **How to apply:** provisioning must stay idempotent — it's guarded by a per-customer `pg_advisory_xact_lock(hashtext(paddleCustomerId))` inside a transaction so the webhook + confirm race can't create duplicate tenants; email/`applyPlanFeatures` run post-commit, outside the lock. There is no unique constraint on `tenants.paddle_customer_id` — the advisory lock is what enforces single creation.
 
+## Paddle.js overlay checkout (v2 npm package)
+
+`@paddle/paddle-js` is installed in both `artifacts/marketing-site` and `artifacts/dashboard`.
+- Marketing site: `src/lib/paddle.ts` — singleton `ensurePaddle()`, standard init (no customer).
+- Dashboard: `src/lib/paddle.ts` — singleton `ensurePaddle(customerId?)`, re-initializes with `pwCustomer` when a `ctm_` customer ID is available (Retain support).
+- Both sites open checkout via `paddle.Checkout.open({ transactionId })` — overlay, not redirect.
+- Backend (`billingProvider.js`) returns `{ url, transactionId, provider }` from both public and tenant Paddle checkouts. Stripe paths still redirect via `url`.
+- Fallback: if `transactionId` is absent or provider is not paddle, fall back to `window.location.href = url`.
+- `Paddle.Update()` is not available as a typed instance method — re-initialize instead when customer ID changes.
+
 ## Email template expiry text is hardcoded per-function
 
 `sendPasswordResetEmail` template says "expires in 1 hour"; `sendAgentInviteEmail` says "7 days". When sending a link, pick the function whose copy matches the token TTL — e.g. the super-admin manual send-setup route mints a 7-day token, so it uses `sendAgentInviteEmail`, not `sendPasswordResetEmail`.

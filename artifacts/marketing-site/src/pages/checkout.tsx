@@ -3,7 +3,8 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Check, Lock, ArrowLeft, Info } from "lucide-react";
+import { Check, Lock, ArrowLeft, Info, Loader2 } from "lucide-react";
+import { ensurePaddle } from "@/lib/paddle";
 
 const TRIAL_DAYS = 14;
 
@@ -53,13 +54,14 @@ export default function Checkout() {
   const [businessName, setBusinessName] = useState("");
   const [userName, setUserName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Redirect unknown plan slugs back to pricing
   useEffect(() => {
     if (!plan) {
       window.location.href = "/pricing";
     }
+    ensurePaddle();
   }, [plan]);
 
   if (!plan) return null;
@@ -83,11 +85,29 @@ export default function Checkout() {
           userName: userName.trim(),
         }),
       });
-      const data = await res.json() as { url?: string; error?: string };
-      if (!res.ok || !data.url) {
+      const data = await res.json() as { url?: string; transactionId?: string; provider?: string; error?: string };
+      if (!res.ok) {
         throw new Error(data.error || "Unable to start checkout. Please try again.");
       }
-      window.location.href = data.url;
+
+      const paddle = await ensurePaddle();
+
+      if (data.transactionId && paddle && data.provider === 'paddle') {
+        setOverlayOpen(true);
+        paddle.Checkout.open({
+          transactionId: data.transactionId,
+          settings: {
+            successUrl: `${window.location.origin}/checkout/success?plan=${planSlug}`,
+            displayMode: 'overlay',
+            theme: 'light',
+          },
+        });
+        setLoading(false);
+      } else if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error("Unable to start checkout. Please try again.");
+      }
     } catch (err) {
       setError((err as Error).message);
       setLoading(false);
@@ -163,87 +183,107 @@ export default function Checkout() {
 
           {/* Right: email form */}
           <div className="bg-white/60 backdrop-blur rounded-3xl border border-[#C9A450]/20 p-8 shadow-sm">
-            <h3 className="text-xl font-bold font-serif mb-2">Start your free trial</h3>
-            <p className="text-sm text-muted-foreground mb-6">
-              Enter your work email to continue to our secure checkout. Your card won't
-              be charged until after the {TRIAL_DAYS}-day trial.
-            </p>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="businessName" className="block text-sm font-medium mb-1.5">
-                  Business name
-                </label>
-                <input
-                  id="businessName"
-                  type="text"
-                  required
-                  autoFocus
-                  value={businessName}
-                  onChange={(e) => setBusinessName(e.target.value)}
-                  placeholder="Acme Corp"
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
-                />
-              </div>
-              <div>
-                <label htmlFor="userName" className="block text-sm font-medium mb-1.5">
-                  Your name
-                </label>
-                <input
-                  id="userName"
-                  type="text"
-                  required
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  placeholder="Jane Smith"
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
-                />
-              </div>
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium mb-1.5">
-                  Work email
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
-                />
-              </div>
-
-              {error && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                  {error}
+            {overlayOpen ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center gap-4">
+                <Loader2 className="w-8 h-8 animate-spin text-[#C9A450]" />
+                <p className="text-sm text-muted-foreground">
+                  Checkout is open in the overlay above.<br />
+                  Complete your payment details to start your trial.
                 </p>
-              )}
-
-              <Button
-                type="submit"
-                disabled={loading}
-                size="lg"
-                className="w-full rounded-full bg-[#C9A450] hover:bg-[#B8963E] text-white font-semibold disabled:opacity-60"
-              >
-                {loading ? "Redirecting to checkout…" : `Start ${TRIAL_DAYS}-Day Free Trial →`}
-              </Button>
-
-              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-1">
-                <Lock className="w-3 h-3" />
-                Secure checkout. We never store your card details.
+                <button
+                  onClick={() => setOverlayOpen(false)}
+                  className="text-xs text-[#C9A450] hover:underline mt-2"
+                >
+                  ← Go back and change details
+                </button>
               </div>
-            </form>
+            ) : (
+              <>
+                <h3 className="text-xl font-bold font-serif mb-2">Start your free trial</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Enter your details to open our secure checkout. Your card won't
+                  be charged until after the {TRIAL_DAYS}-day trial.
+                </p>
 
-            <div className="mt-8 pt-6 border-t text-sm text-muted-foreground space-y-2">
-              <p className="font-medium text-foreground">What happens next?</p>
-              <ol className="list-decimal list-inside space-y-1 text-xs">
-                <li>Our secure checkout page collects your payment details.</li>
-                <li>Your {TRIAL_DAYS}-day trial starts immediately — no charge yet.</li>
-                <li>You'll receive an email to set up your OmniCore workspace.</li>
-                <li>On day {TRIAL_DAYS + 1}, ${plan.monthlyUsd} is charged unless you cancel.</li>
-              </ol>
-            </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div>
+                    <label htmlFor="businessName" className="block text-sm font-medium mb-1.5">
+                      Business name
+                    </label>
+                    <input
+                      id="businessName"
+                      type="text"
+                      required
+                      autoFocus
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                      placeholder="Acme Corp"
+                      className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="userName" className="block text-sm font-medium mb-1.5">
+                      Your name
+                    </label>
+                    <input
+                      id="userName"
+                      type="text"
+                      required
+                      value={userName}
+                      onChange={(e) => setUserName(e.target.value)}
+                      placeholder="Jane Smith"
+                      className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium mb-1.5">
+                      Work email
+                    </label>
+                    <input
+                      id="email"
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      className="w-full px-4 py-2.5 rounded-xl border border-[#C9A450]/30 bg-white/70 text-sm outline-none focus:ring-2 focus:ring-[#C9A450]/40 focus:border-[#C9A450] transition"
+                    />
+                  </div>
+
+                  {error && (
+                    <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {error}
+                    </p>
+                  )}
+
+                  <Button
+                    type="submit"
+                    disabled={loading}
+                    size="lg"
+                    className="w-full rounded-full bg-[#C9A450] hover:bg-[#B8963E] text-white font-semibold disabled:opacity-60"
+                  >
+                    {loading
+                      ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Opening checkout…</>
+                      : `Start ${TRIAL_DAYS}-Day Free Trial →`}
+                  </Button>
+
+                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-1">
+                    <Lock className="w-3 h-3" />
+                    Secure checkout powered by Paddle. We never store your card details.
+                  </div>
+                </form>
+
+                <div className="mt-8 pt-6 border-t text-sm text-muted-foreground space-y-2">
+                  <p className="font-medium text-foreground">What happens next?</p>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>A secure Paddle checkout opens right on this page.</li>
+                    <li>Your {TRIAL_DAYS}-day trial starts immediately — no charge yet.</li>
+                    <li>You'll receive an email to set up your OmniCore workspace.</li>
+                    <li>On day {TRIAL_DAYS + 1}, ${plan.monthlyUsd} is charged unless you cancel.</li>
+                  </ol>
+                </div>
+              </>
+            )}
           </div>
         </motion.div>
 

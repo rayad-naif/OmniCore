@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { ensurePaddle } from './lib/paddle'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -317,11 +318,10 @@ function useApi() {
       if (!r.ok) throw new Error(`${r.status}`)
       return r.json() as Promise<SubscriptionInfo>
     },
-    createCheckout: async (plan: string): Promise<string> => {
+    createCheckout: async (plan: string): Promise<{ url: string; transactionId?: string; provider?: string }> => {
       const r = await authFetch(`${API}/checkout`, { method: 'POST', body: JSON.stringify({ plan }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to start checkout') }
-      const d = await r.json() as { url: string }
-      return d.url
+      return r.json() as Promise<{ url: string; transactionId?: string; provider?: string }>
     },
     getBillingPortal: async (): Promise<string> => {
       const r = await authFetch(`${API}/billing/portal`, { method: 'POST' })
@@ -2013,7 +2013,23 @@ function BillingSection() {
 
   const checkout = async (plan: string) => {
     setError(null); setBusy(plan)
-    try { const url = await api.createCheckout(plan); window.location.href = url }
+    try {
+      const result = await api.createCheckout(plan)
+      const paddle = await ensurePaddle(sub?.customerId ?? null)
+      if (result.transactionId && paddle && result.provider === 'paddle') {
+        paddle.Checkout.open({
+          transactionId: result.transactionId,
+          settings: {
+            successUrl: `${window.location.origin}/dashboard/?checkout=success`,
+            displayMode: 'overlay',
+            theme: 'light',
+          },
+        })
+        setBusy(null)
+      } else if (result.url) {
+        window.location.href = result.url
+      }
+    }
     catch (err) { setError((err as Error).message); setBusy(null) }
   }
 

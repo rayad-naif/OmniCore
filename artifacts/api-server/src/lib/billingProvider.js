@@ -131,7 +131,7 @@ async function _paddlePublicCheckout({ email, plan, businessName, userName, padd
     throw err;
   }
 
-  const { url } = await createCheckoutTransaction({
+  const { url, transactionId } = await createCheckoutTransaction({
     priceId,
     email,
     plan,
@@ -142,7 +142,7 @@ async function _paddlePublicCheckout({ email, plan, businessName, userName, padd
   });
 
   logger.info({ plan, provider: 'paddle' }, 'public_checkout_created');
-  return { url, provider: 'paddle' };
+  return { url, transactionId, provider: 'paddle' };
 }
 
 async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, baseUrl }) {
@@ -201,7 +201,7 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
     }
   }
 
-  const { url } = await createCheckoutTransaction({
+  const { url, transactionId } = await createCheckoutTransaction({
     priceId,
     email: agentEmail,
     plan,
@@ -209,7 +209,7 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
     cancelUrl: `${baseUrl}/dashboard/?checkout=cancelled`,
   });
 
-  return { url, provider: 'paddle' };
+  return { url, transactionId, provider: 'paddle' };
 }
 
 async function _paddlePortal({ tenant }) {
