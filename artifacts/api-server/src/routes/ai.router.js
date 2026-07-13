@@ -343,7 +343,7 @@ router.post('/knowledge-base/crawl', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid URL' });
     }
 
-    const maxPages = Math.min(Math.max(parseInt(String(max_pages)) || 100, 1), 500);
+    const maxPages = Math.min(Math.max(parseInt(String(max_pages)) || 100, 1), 5000);
     const maxDepth = Math.min(Math.max(parseInt(String(max_depth))  || 5,   1), 20);
 
     const jobId = crypto.randomUUID();

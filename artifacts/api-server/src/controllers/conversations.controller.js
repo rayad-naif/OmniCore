@@ -434,7 +434,7 @@ router.post('/:id/messages', async (req, res, next) => {
         [req.params.id]
       ).then(({ rows: vr }) => {
         if (vr[0]?.email) {
-          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email)
+          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email, attachments)
             .catch(() => {});
         }
       }).catch(() => {});

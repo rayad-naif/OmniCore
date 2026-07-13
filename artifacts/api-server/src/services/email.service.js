@@ -143,7 +143,7 @@ async function sendStatusChangeEmail(tenantId, conversationId, oldStatus, newSta
  * Notify visitor that an agent replied to their conversation / ticket.
  * Only sent when not an internal note.
  */
-async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageBody, visitorEmail) {
+async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageBody, visitorEmail, attachments = []) {
   if (!visitorEmail) return;
 
   let cfg;
@@ -158,12 +158,24 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
     : 'You received this because you have an open support ticket. Do not reply directly to this email.';
 
   const preview = stripHtml(messageBody).slice(0, 200);
+
+  // Build attachment links for non-data-URI files (data URIs are too large for email)
+  const fileAttachments = Array.isArray(attachments)
+    ? attachments.filter(a => a && a.url && !a.url.startsWith('data:'))
+    : [];
+  const attachmentHtml = fileAttachments.length > 0
+    ? `<div style="margin-top:16px;padding:12px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+        <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.04em;">Attachments</p>
+        ${fileAttachments.map(a => `<a href="${a.url}" style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;background:#e0f2fe;color:#0369a1;border-radius:4px;font-size:12px;text-decoration:none;">${a.name || 'File'}</a>`).join('')}
+      </div>`
+    : '';
+
   const html = brandedEmail({
     title:    `${agentName} replied to your ticket`,
     preview:  `"${preview}"`,
     bodyHtml: `<p style="font-size:13px;color:#64748b;">
       To continue the conversation, simply reply to this email or visit our support portal.
-    </p>`,
+    </p>${attachmentHtml}`,
     footer,
   });
 

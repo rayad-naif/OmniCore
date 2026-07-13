@@ -3698,12 +3698,24 @@ function SuperAdminsPanel({ api }: { api: ReturnType<typeof useApi> }) {
 }
 
 // ─── Toast Notification Stack ─────────────────────────────────────────────────
-interface InboxToast { id: string; convId: string; visitorName: string; preview: string; createdAt: number }
+interface InboxToast { id: string; convId: string; visitorName: string; preview: string; createdAt: number; kind?: 'pending' }
 
 function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDismiss: (id: string) => void; onOpen: (convId: string) => void }) {
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style={{ maxWidth: 320 }}>
-      {toasts.map(t => (
+    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style={{ maxWidth: 340 }}>
+      {toasts.map(t => t.kind === 'pending' ? (
+        <div key={t.id} className="pointer-events-auto flex items-start gap-3 bg-amber-950 border border-amber-700 shadow-2xl rounded-xl px-4 py-3" style={{ animation: 'slideInRight 0.25s ease-out' }}>
+          <div className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center text-white text-sm font-bold shrink-0 mt-0.5">⏳</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-amber-100 truncate">{t.visitorName}</p>
+            <p className="text-xs text-amber-300 truncate mt-0.5">{t.preview}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => { onOpen(t.convId); onDismiss(t.id) }} className="text-[10px] font-semibold text-amber-300 hover:text-amber-100 transition-colors px-1.5 py-1 rounded">View</button>
+            <button onClick={() => onDismiss(t.id)} className="text-amber-700 hover:text-amber-300 transition-colors p-1 rounded"><X size={11} /></button>
+          </div>
+        </div>
+      ) : (
         <div key={t.id} className="pointer-events-auto flex items-start gap-3 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl px-4 py-3" style={{ animation: 'slideInRight 0.2s ease-out' }}>
           <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">{t.visitorName[0]?.toUpperCase()}</div>
           <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-slate-100 truncate">{t.visitorName}</p><p className="text-xs text-slate-400 truncate mt-0.5">{t.preview}</p></div>
@@ -4004,8 +4016,8 @@ function AITrainingSection() {
             {/* Crawl settings */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">Max pages <span className="text-slate-400 font-normal">(1–500)</span></label>
-                <input type="number" min={1} max={500} value={crawlMaxPages} onChange={e => setCrawlMaxPages(Math.min(500, Math.max(1, parseInt(e.target.value) || 1)))} disabled={crawling} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 disabled:opacity-50" />
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">Max pages <span className="text-slate-400 font-normal">(1–5000)</span></label>
+                <input type="number" min={1} max={5000} value={crawlMaxPages} onChange={e => setCrawlMaxPages(Math.min(5000, Math.max(1, parseInt(e.target.value) || 1)))} disabled={crawling} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-400 disabled:opacity-50" />
                 <p className="text-[10px] text-slate-400 mt-0.5">~{Math.round(crawlMaxPages * 0.6 / 60)} min at 600 ms/page</p>
               </div>
               <div>
@@ -4815,7 +4827,7 @@ function CannedResponsesSection() {
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="p-8 max-w-3xl mx-auto w-full overflow-y-auto h-full">
       <h2 className="text-xl font-bold text-slate-900 mb-1 flex items-center gap-2">
         <Zap size={20} className="text-amber-500" /> Canned Responses
       </h2>
@@ -4887,8 +4899,9 @@ function CannedResponsesSection() {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSelectConv, agent, onLogout, can }: {
+function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketOpen, recentActivity, onSelectConv, agent, onLogout, can }: {
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
+  ticketUnread: number; ticketOpen: number
   recentActivity: Conversation[]; onSelectConv: (id: string) => void
   agent: { name: string; email: string; role: string; isSuperAdmin?: boolean } | null
   onLogout: () => Promise<void>
@@ -5006,6 +5019,12 @@ function Sidebar({ active, onNavigate, unread, unassigned, recentActivity, onSel
             {item.key === 'conversations' && unread > 0 && unassigned > 0 && (
               <span className="bg-amber-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unassigned}</span>
             )}
+            {item.key === 'tickets' && ticketUnread > 0 && (
+              <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{ticketUnread}</span>
+            )}
+            {item.key === 'tickets' && ticketOpen > 0 && ticketUnread === 0 && (
+              <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{ticketOpen}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -5089,6 +5108,28 @@ function Dashboard() {
       .catch(e => { setError(e.message); setLoading(false) })
   }, []) // eslint-disable-line
 
+  // Auto-refresh conversation list every 30 s — catches new tickets/conversations
+  // that arrived while the agent was idle or had a socket blip.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const list = await api.listConversations()
+        setConvs(prev => {
+          const prevMap = new Map(prev.map(c => [c.id, c]))
+          const merged = list.map((c: Conversation) => {
+            const existing = prevMap.get(c.id)
+            if (existing) return { ...c, unread: existing.unread ?? 0 }
+            return { ...c, unread: 0 }
+          })
+          const freshIds = new Set(list.map((c: Conversation) => c.id))
+          const local    = prev.filter(c => !freshIds.has(c.id))
+          return [...merged, ...local].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        })
+      } catch { /* non-fatal */ }
+    }, 30_000)
+    return () => clearInterval(interval)
+  }, []) // eslint-disable-line
+
   useEffect(() => {
     if (!accessToken) return
     const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], reconnectionAttempts: 5 })
@@ -5103,6 +5144,12 @@ function Dashboard() {
     socket.on('connect_error', () => setSocketOk(false))
     socket.on('conversation:created', (conv: Conversation) => {
       setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0 }, ...prev] })
+      if (conv.status === 'pending') {
+        const toastId = `new-pending-${conv.id}`
+        const t: InboxToast = { id: toastId, convId: conv.id, visitorName: conv.visitor_name, preview: 'New conversation — awaiting agent', createdAt: Date.now(), kind: 'pending' }
+        setToasts(prev => [...prev.slice(-4), t])
+        setTimeout(() => setToasts(prev => prev.filter(x => x.id !== toastId)), 3000)
+      }
     })
     socket.on('server:new_message', (msg: Message) => {
       if (msg.is_internal_note) return
@@ -5264,7 +5311,18 @@ function Dashboard() {
     const patch: Record<string, unknown> = { status }
     if (triggerCsat !== undefined) patch.trigger_csat = triggerCsat
     await api.patchConversation(activeId, patch)
-    setConvs(prev => prev.map(c => c.id === activeId ? { ...c, status } : c))
+    setConvs(prev => {
+      if (status === 'pending') {
+        const conv = prev.find(c => c.id === activeId)
+        if (conv) {
+          const toastId = `pending-${activeId}-${Date.now()}`
+          const t: InboxToast = { id: toastId, convId: activeId, visitorName: conv.visitor_name, preview: 'Chat transferred — awaiting agent pickup', createdAt: Date.now(), kind: 'pending' }
+          setToasts(ts => [...ts.slice(-4), t])
+          setTimeout(() => setToasts(ts => ts.filter(x => x.id !== toastId)), 3000)
+        }
+      }
+      return prev.map(c => c.id === activeId ? { ...c, status } : c)
+    })
   }, [activeId]) // eslint-disable-line
 
   const handleConvertToTicket = useCallback(async () => {
@@ -5304,8 +5362,10 @@ function Dashboard() {
     setActiveId(prev => (prev === id ? null : prev))
   }, [api]) // eslint-disable-line
 
-  const totalUnread   = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
+  const totalUnread     = convs.reduce((n, c) => n + (c.unread ?? 0), 0)
   const totalUnassigned = convs.filter(c => !c.assigned_agent_id && c.status !== 'closed' && !c.is_ticket).length
+  const ticketUnread    = convs.filter(c => c.is_ticket).reduce((n, c) => n + (c.unread ?? 0), 0)
+  const ticketOpen      = convs.filter(c => c.is_ticket && c.status !== 'closed' && c.status !== 'resolved').length
   const recentActivity  = convs
     .filter(c => !c.is_ticket && ((c.unread ?? 0) > 0 || (!c.assigned_agent_id && c.status !== 'closed')))
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -5320,10 +5380,10 @@ function Dashboard() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
-          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} /></div>
+          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} /></div>
         </div>
       )}
-      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} /></div>
+      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} /></div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">
