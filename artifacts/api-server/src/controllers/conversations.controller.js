@@ -403,7 +403,7 @@ router.post('/:id/messages', async (req, res, next) => {
     if (!hasBody && !hasAttachments) return res.status(400).json({ error: 'message body or attachment is required' });
 
     const { rows: convRows } = await pool.query(
-      `SELECT id, status, tenant_id, visitor_id, is_ticket FROM conversations WHERE id = $1 AND tenant_id = $2`,
+      `SELECT id, status, tenant_id, visitor_id, is_ticket, ticket_number, subject FROM conversations WHERE id = $1 AND tenant_id = $2`,
       [req.params.id, tenantId(req)]
     );
     if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
@@ -437,7 +437,7 @@ router.post('/:id/messages', async (req, res, next) => {
         [req.params.id]
       ).then(({ rows: vr }) => {
         if (vr[0]?.email) {
-          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email, attachments)
+          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email, attachments, convRows[0].ticket_number, convRows[0].subject)
             .catch(() => {});
         }
       }).catch(() => {});

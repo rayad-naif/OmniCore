@@ -172,7 +172,7 @@ async function sendStatusChangeEmail(tenantId, conversationId, oldStatus, newSta
  * Notify visitor that an agent replied to their conversation / ticket.
  * Only sent when not an internal note.
  */
-async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageBody, visitorEmail, attachments = []) {
+async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageBody, visitorEmail, attachments = [], ticketNumber = null, originalSubject = null) {
   if (!visitorEmail) return;
 
   let cfg;
@@ -271,9 +271,22 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
     footer,
   });
 
+  // Threading headers: every ticket gets its own Message-ID root so clients
+  // (Gmail, Outlook, Yahoo) thread replies *per ticket* instead of globally.
+  const rootMid = `<omnicore-${conversationId}@omnicore.app>`;
+  const msgMid  = `<omnicore-${conversationId}-${Date.now()}@omnicore.app>`;
+  const subject = ticketNumber
+    ? `Re: Ticket #${ticketNumber} — ${originalSubject || 'Your support ticket'} — ${agentName} replied`
+    : `Re: Your support ticket — ${agentName} replied`;
+
   const mailOpts = {
     from: fromAddress(cfg), to: visitorEmail,
-    subject: `Re: Your support ticket — ${agentName} replied`, html,
+    subject, html,
+    messageId: msgMid,
+    headers: {
+      'In-Reply-To': rootMid,
+      'References':  rootMid,
+    },
   };
   if (replyTo) mailOpts.replyTo = replyTo;
   if (mailerAttachments.length > 0) mailOpts.attachments = mailerAttachments;
