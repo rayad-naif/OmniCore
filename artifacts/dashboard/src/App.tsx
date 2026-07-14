@@ -5209,27 +5209,48 @@ function Dashboard() {
         if (existing.some(m => m.id === msg.id)) return prev
         return { ...prev, [conversationId]: [...existing, msg] }
       })
-      // Update the conversation's position + unread badge in the sidebar
-      setConvs(prev => prev.map(c => {
-        if (c.id !== conversationId) return c
-        const isActive = activeIdRef.current === c.id
-        return { ...c, updated_at: msg.created_at, unread: isActive ? (c.unread ?? 0) : (c.unread ?? 0) + 1 }
-      }))
-      // Show toast for agents not currently viewing this conversation
-      if (activeIdRef.current !== conversationId) {
-        setConvs(prev => {
-          const conv = prev.find(c => c.id === conversationId)
-          if (!conv) return prev
-          const toastId = `${msg.id}-vm-toast`
-          const toast: InboxToast = { id: toastId, convId: conversationId, visitorName: conv.visitor_name, preview: (msg.message_body || '').slice(0, 80), createdAt: Date.now() }
-          setToasts(t => [...t.slice(-4), toast])
-          setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
-          if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            new Notification(`New message from ${conv.visitor_name}`, { body: (msg.message_body || '').slice(0, 80), icon: '/favicon.ico' })
-          }
-          return prev
-        })
+
+      const fireToast = (convName: string, convId: string) => {
+        if (activeIdRef.current === convId) return
+        const toastId = `${msg.id}-vm-toast`
+        const toast: InboxToast = { id: toastId, convId, visitorName: convName, preview: (msg.message_body || '').slice(0, 80), createdAt: Date.now() }
+        setToasts(t => { if (t.some(x => x.id === toastId)) return t; return [...t.slice(-4), toast] })
+        setTimeout(() => setToasts(t => t.filter(x => x.id !== toastId)), 6000)
+        if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification(`New message from ${convName}`, { body: (msg.message_body || '').slice(0, 80), icon: '/favicon.ico' })
+        }
       }
+
+      // Update the conversation's position + unread badge in the sidebar.
+      // If the conversation isn't loaded yet (e.g. new inbound ticket email),
+      // fetch it and surface it immediately so the Tickets tab badge updates.
+      setConvs(prev => {
+        const existing = prev.find(c => c.id === conversationId)
+        if (!existing) {
+          // Fetch and inject — runs async outside the updater to avoid side-effect issues
+          api.getConversation(conversationId)
+            .then((fetched: Conversation) => {
+              setConvs(ps => {
+                if (ps.some(c => c.id === conversationId)) return ps
+                return [{ ...fetched, unread: 1 }, ...ps]
+              })
+              fireToast(fetched.visitor_name, conversationId)
+            })
+            .catch(() => {})
+          return prev
+        }
+        return prev.map(c => {
+          if (c.id !== conversationId) return c
+          const isActive = activeIdRef.current === c.id
+          return { ...c, updated_at: msg.created_at, unread: isActive ? (c.unread ?? 0) : (c.unread ?? 0) + 1 }
+        })
+      })
+      // Toast for known conversations — called directly, not from inside an updater
+      setConvs(prev => {
+        const conv = prev.find(c => c.id === conversationId)
+        if (conv) fireToast(conv.visitor_name, conversationId)
+        return prev
+      })
     })
     socket.on('visitor:online',  ({ conversationId }: { conversationId: string }) => {
       setVisitorOnline(prev => ({ ...prev, [conversationId]: true }))

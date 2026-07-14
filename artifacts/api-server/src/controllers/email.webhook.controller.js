@@ -386,12 +386,29 @@ async function handleInboundEmail(req, res) {
       }
 
       const { rows: convRows } = await pool.query(
-        `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject)
-         VALUES ($1, $2, $3, 'open', 'email', $4)
+        `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject, is_ticket)
+         VALUES ($1, $2, $3, 'open', 'email', $4, true)
          RETURNING id`,
         [tenant_id, brand_id, visitorId, subject || '(no subject)']
       );
       conversationId = convRows[0].id;
+
+      // Broadcast new ticket to all agents in this tenant so the Tickets tab
+      // updates immediately without waiting for the 30-second auto-refresh.
+      if (_io) {
+        const { rows: newConvRows } = await pool.query(
+          `SELECT c.*, COALESCE(v.display_name, v.email, 'Visitor') AS visitor_name,
+                  b.name AS brand_name
+           FROM conversations c
+           JOIN visitors v ON v.id = c.visitor_id
+           LEFT JOIN brands b ON b.id = c.brand_id
+           WHERE c.id = $1 LIMIT 1`,
+          [conversationId]
+        );
+        if (newConvRows.length) {
+          _io.to(`tenant:${tenant_id}`).emit('conversation:created', newConvRows[0]);
+        }
+      }
     }
 
     // 4. Strip quoted reply chain — prefer plain text, fall back to html-stripped
