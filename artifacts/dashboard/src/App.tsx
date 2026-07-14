@@ -5222,7 +5222,7 @@ function Dashboard() {
       }
     })
     socket.on('conversation:created', (conv: Conversation) => {
-      setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0 }, ...prev] })
+      setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0, ticket_number: conv.ticket_number ?? null }, ...prev] })
       if (conv.is_ticket) {
         const toastId = `new-ticket-${conv.id}`
         const t: InboxToast = { id: toastId, convId: conv.id, visitorName: conv.visitor_name, preview: `New ticket — ${conv.subject || '(no subject)'}`, createdAt: Date.now(), kind: 'ticket' }

@@ -615,9 +615,9 @@ router.post('/ticket', async (req, res, next) => {
 
     // Create ticket conversation (email channel so it shows as a ticket in inbox)
     const { rows: cr } = await pool.query(
-      `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject, priority, is_ticket)
-       VALUES ($1, $2, $3, 'open', 'email', $4, $5, true)
-       RETURNING id, status, subject, priority, created_at`,
+      `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject, priority, is_ticket, ticket_number)
+       VALUES ($1, $2, $3, 'open', 'email', $4, $5, true, nextval('conversations_ticket_number_seq'))
+       RETURNING id, status, subject, priority, created_at, ticket_number`,
       [tenantId, brandId, visitorId, subject.trim(), validPriority]
     );
     const conv = cr[0];
@@ -642,12 +642,12 @@ router.post('/ticket', async (req, res, next) => {
         agent_name: null, brand_name: bRows[0]?.brand_name || 'Support',
         created_at: conv.created_at, updated_at: conv.created_at,
         sla_breach_at: null, assigned_agent_id: null, unread: 0,
-        visitor_id: visitorId,
+        visitor_id: visitorId, ticket_number: conv.ticket_number ?? null,
       });
     } catch { /* non-fatal */ }
 
     logger.info({ conversationId: conv.id, brandId, tenantId }, 'widget_ticket_submitted');
-    return res.status(201).json({ ok: true, ticketId: conv.id, subject: conv.subject });
+    return res.status(201).json({ ok: true, ticketId: conv.id, subject: conv.subject, ticketNumber: conv.ticket_number });
   } catch (err) { next(err); }
 });
 
