@@ -3731,12 +3731,24 @@ function SuperAdminsPanel({ api }: { api: ReturnType<typeof useApi> }) {
 }
 
 // ─── Toast Notification Stack ─────────────────────────────────────────────────
-interface InboxToast { id: string; convId: string; visitorName: string; preview: string; createdAt: number; kind?: 'pending' }
+interface InboxToast { id: string; convId: string; visitorName: string; preview: string; createdAt: number; kind?: 'pending' | 'ticket' }
 
 function ToastStack({ toasts, onDismiss, onOpen }: { toasts: InboxToast[]; onDismiss: (id: string) => void; onOpen: (convId: string) => void }) {
   return (
     <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" style={{ maxWidth: 340 }}>
-      {toasts.map(t => t.kind === 'pending' ? (
+      {toasts.map(t => t.kind === 'ticket' ? (
+        <div key={t.id} className="pointer-events-auto flex items-start gap-3 bg-violet-950 border border-violet-700 shadow-2xl rounded-xl px-4 py-3" style={{ animation: 'slideInRight 0.25s ease-out' }}>
+          <div className="w-8 h-8 rounded-full bg-violet-500 flex items-center justify-center text-white text-sm font-bold shrink-0 mt-0.5">🎫</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-violet-100 truncate">{t.visitorName}</p>
+            <p className="text-xs text-violet-300 truncate mt-0.5">{t.preview}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => { onOpen(t.convId); onDismiss(t.id) }} className="text-[10px] font-semibold text-violet-300 hover:text-violet-100 transition-colors px-1.5 py-1 rounded">View</button>
+            <button onClick={() => onDismiss(t.id)} className="text-violet-700 hover:text-violet-300 transition-colors p-1 rounded"><X size={11} /></button>
+          </div>
+        </div>
+      ) : t.kind === 'pending' ? (
         <div key={t.id} className="pointer-events-auto flex items-start gap-3 bg-amber-950 border border-amber-700 shadow-2xl rounded-xl px-4 py-3" style={{ animation: 'slideInRight 0.25s ease-out' }}>
           <div className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center text-white text-sm font-bold shrink-0 mt-0.5">⏳</div>
           <div className="flex-1 min-w-0">
@@ -5177,7 +5189,12 @@ function Dashboard() {
     socket.on('connect_error', () => setSocketOk(false))
     socket.on('conversation:created', (conv: Conversation) => {
       setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0 }, ...prev] })
-      if (conv.status === 'pending') {
+      if (conv.is_ticket) {
+        const toastId = `new-ticket-${conv.id}`
+        const t: InboxToast = { id: toastId, convId: conv.id, visitorName: conv.visitor_name, preview: `New ticket — ${conv.subject || '(no subject)'}`, createdAt: Date.now(), kind: 'ticket' }
+        setToasts(prev => [...prev.slice(-4), t])
+        setTimeout(() => setToasts(prev => prev.filter(x => x.id !== toastId)), 6000)
+      } else if (conv.status === 'pending') {
         const toastId = `new-pending-${conv.id}`
         const t: InboxToast = { id: toastId, convId: conv.id, visitorName: conv.visitor_name, preview: 'New conversation — awaiting agent', createdAt: Date.now(), kind: 'pending' }
         setToasts(prev => [...prev.slice(-4), t])

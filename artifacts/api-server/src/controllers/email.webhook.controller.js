@@ -439,7 +439,8 @@ async function handleInboundEmail(req, res) {
       if (_io) {
         const { rows: newConvRows } = await pool.query(
           `SELECT c.*, COALESCE(v.display_name, v.email, 'Visitor') AS visitor_name,
-                  b.name AS brand_name
+                  v.email AS visitor_email,
+                  b.brand_name AS brand_name
            FROM conversations c
            JOIN visitors v ON v.id = c.visitor_id
            LEFT JOIN brands b ON b.id = c.brand_id

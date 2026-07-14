@@ -629,6 +629,23 @@ router.post('/ticket', async (req, res, next) => {
       [conv.id, visitorId, description.trim()]
     );
 
+    // Notify agents in real time so the ticket appears in the inbox with a toast.
+    try {
+      const { rows: bRows } = await pool.query('SELECT brand_name FROM brands WHERE id = $1', [brandId]);
+      const { rows: vRows } = await pool.query('SELECT display_name, email FROM visitors WHERE id = $1', [visitorId]);
+      broadcastToTenant(tenantId, 'conversation:created', {
+        id: conv.id,
+        status: conv.status, channel: 'email', priority: conv.priority,
+        subject: conv.subject, is_ticket: true,
+        visitor_name: vRows[0]?.display_name || visitorName || 'Visitor',
+        visitor_email: vRows[0]?.email || visitorEmail || null,
+        agent_name: null, brand_name: bRows[0]?.brand_name || 'Support',
+        created_at: conv.created_at, updated_at: conv.created_at,
+        sla_breach_at: null, assigned_agent_id: null, unread: 0,
+        visitor_id: visitorId,
+      });
+    } catch { /* non-fatal */ }
+
     logger.info({ conversationId: conv.id, brandId, tenantId }, 'widget_ticket_submitted');
     return res.status(201).json({ ok: true, ticketId: conv.id, subject: conv.subject });
   } catch (err) { next(err); }
