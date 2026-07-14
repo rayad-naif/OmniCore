@@ -5153,40 +5153,74 @@ function Dashboard() {
       .catch(e => { setError(e.message); setLoading(false) })
   }, []) // eslint-disable-line
 
+  // Refresh + merge the conversation list — used by the 30 s auto-refresh and
+  // by the socket reconnect handler to catch anything missed while offline.
+  const refreshConvs = useCallback(async () => {
+    try {
+      const list = await api.listConversations()
+      setConvs(prev => {
+        const prevMap = new Map(prev.map(c => [c.id, c]))
+        const merged = list.map((c: Conversation) => {
+          const existing = prevMap.get(c.id)
+          if (existing) return { ...c, unread: existing.unread ?? 0 }
+          return { ...c, unread: 0 }
+        })
+        const freshIds = new Set(list.map((c: Conversation) => c.id))
+        const local    = prev.filter(c => !freshIds.has(c.id))
+        return [...merged, ...local].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      })
+    } catch { /* non-fatal */ }
+  }, []) // eslint-disable-line
+  const refreshConvsRef = useRef(refreshConvs)
+  refreshConvsRef.current = refreshConvs
+
   // Auto-refresh conversation list every 30 s — catches new tickets/conversations
   // that arrived while the agent was idle or had a socket blip.
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const list = await api.listConversations()
-        setConvs(prev => {
-          const prevMap = new Map(prev.map(c => [c.id, c]))
-          const merged = list.map((c: Conversation) => {
-            const existing = prevMap.get(c.id)
-            if (existing) return { ...c, unread: existing.unread ?? 0 }
-            return { ...c, unread: 0 }
-          })
-          const freshIds = new Set(list.map((c: Conversation) => c.id))
-          const local    = prev.filter(c => !freshIds.has(c.id))
-          return [...merged, ...local].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-        })
-      } catch { /* non-fatal */ }
-    }, 30_000)
+    const interval = setInterval(() => { void refreshConvsRef.current() }, 30_000)
     return () => clearInterval(interval)
-  }, []) // eslint-disable-line
+  }, [])
+
+  const accessTokenRef = useRef(accessToken)
+  accessTokenRef.current = accessToken
 
   useEffect(() => {
     if (!accessToken) return
-    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], reconnectionAttempts: 5 })
+    // Retry forever (default) — a capped attempt count made the socket give up
+    // permanently when the API server restarted, silently killing all real-time
+    // updates (toasts, live messages) until the next token refresh remount.
+    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'] })
     socketRef.current = socket
+    // Keep auth fresh on every reconnect attempt so a retry that happens after
+    // a token refresh doesn't fail with AUTH_FAILED on the stale token.
+    socket.io.on('reconnect_attempt', () => {
+      (socket.auth as { agentToken?: string | null }).agentToken = accessTokenRef.current
+    })
     socket.on('connect', () => {
       setSocketOk(true)
       // Re-join the active conversation room after every (re)connect so
       // server:new_message keeps arriving even after a network blip.
       if (activeIdRef.current) socket.emit('join:conversation', { conversationId: activeIdRef.current })
+      // Catch up on anything that arrived while the socket was down.
+      void refreshConvsRef.current()
     })
     socket.on('disconnect',    () => setSocketOk(false))
-    socket.on('connect_error', () => setSocketOk(false))
+    // A middleware rejection (e.g. AUTH_FAILED on an expired token) stops
+    // socket.io's automatic retries (socket.active === false). Manually retry
+    // with the freshest token so real-time updates always come back.
+    let disposed = false
+    let authRetryTimer: ReturnType<typeof setTimeout> | undefined
+    socket.on('connect_error', () => {
+      setSocketOk(false)
+      if (!socket.active && !disposed) {
+        clearTimeout(authRetryTimer)
+        authRetryTimer = setTimeout(() => {
+          if (disposed) return
+          ;(socket.auth as { agentToken?: string | null }).agentToken = accessTokenRef.current
+          socket.connect()
+        }, 3000)
+      }
+    })
     socket.on('conversation:created', (conv: Conversation) => {
       setConvs(prev => { if (prev.some(c => c.id === conv.id)) return prev; return [{ ...conv, unread: 0 }, ...prev] })
       if (conv.is_ticket) {
@@ -5311,7 +5345,7 @@ function Dashboard() {
     socket.on('visitor:read_receipt', ({ conversationId, readAt }: { conversationId: string; readAt: string }) => {
       setVisitorReadAt(prev => ({ ...prev, [conversationId]: readAt }))
     })
-    return () => { socket.disconnect(); socketRef.current = null }
+    return () => { disposed = true; clearTimeout(authRetryTimer); socket.disconnect(); socketRef.current = null }
   }, [accessToken])
 
   useEffect(() => {

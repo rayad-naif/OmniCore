@@ -5,7 +5,7 @@ description: z-index constraint for floating/fixed UI in the agent dashboard so 
 
 # Dashboard overlay layering
 
-The dashboard's `TrialGateway` (artifacts/dashboard/src/components/TrialGateway.tsx) renders a full-screen blocking overlay at `zIndex: 9999`, mounted near the end of the `Dashboard()` component in App.tsx (after most content).
+The dashboard's `TrialGateway` (artifacts/dashboard/src/components/TrialGateway.jsx) renders a full-screen blocking overlay at `zIndex: 9999`, mounted near the end of the `Dashboard()` component in App.tsx (after most content).
 
 **Rule:** Any new floating/fixed element added to the dashboard shell (e.g. the WhatsApp contact button) must use a standard UI layer such as Tailwind `z-50`, NOT `z-[9999]`.
 
