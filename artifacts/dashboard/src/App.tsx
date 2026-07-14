@@ -1584,7 +1584,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   conv: Conversation; messages: Message[]
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status, triggerCsat?: boolean) => void
-  onConvertToTicket: () => Promise<void>
+  onConvertToTicket: (triggerCsat: boolean) => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
   onDeleteMessage?: (msgId: string) => Promise<void>
@@ -1645,6 +1645,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
   const nextStatus: Partial<Record<Status, Status>> = { open: 'closed', pending: 'open', ai_handling: 'open', closed: 'open', submitted: 'in_progress', in_progress: 'resolved', waiting_on_customer: 'in_progress', resolved: 'closed' }
   const statusActionLabel: Partial<Record<Status, string>> = { open: 'Close', pending: 'Reopen', ai_handling: 'Take over', closed: 'Reopen', submitted: 'Start', in_progress: 'Resolve', waiting_on_customer: 'Resume', resolved: 'Close' }
   const [csatDialog, setCsatDialog] = useState(false)
+  const [ticketDialog, setTicketDialog] = useState(false)
 
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full bg-slate-50">
@@ -1670,7 +1671,7 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           {!conv.is_ticket && (
-            <button onClick={onConvertToTicket} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all">
+            <button onClick={() => setTicketDialog(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-all">
               <Tag size={12} />Ticket
             </button>
           )}
@@ -1708,6 +1709,25 @@ function ChatPanel({ conv, messages, onSend, onStatusChange, onConvertToTicket, 
                   >Just Close</button>
                 </div>
                 <button onClick={() => setCsatDialog(false)} className="mt-3 w-full text-xs text-slate-400 hover:text-slate-600 text-center">Cancel</button>
+              </div>
+            </div>
+          )}
+          {ticketDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setTicketDialog(false)}>
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-xs w-full mx-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-semibold text-slate-900 mb-1">Convert to ticket</h3>
+                <p className="text-xs text-slate-500 mb-5">This closes the live chat and moves the conversation to email. Send a satisfaction survey to the visitor first?</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setTicketDialog(false); onConvertToTicket(true) }}
+                    className="flex-1 py-2 text-xs font-semibold text-white bg-sky-600 rounded-lg hover:bg-sky-700 transition-colors"
+                  >Send Survey &amp; Convert</button>
+                  <button
+                    onClick={() => { setTicketDialog(false); onConvertToTicket(false) }}
+                    className="flex-1 py-2 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+                  >Just Convert</button>
+                </div>
+                <button onClick={() => setTicketDialog(false)} className="mt-3 w-full text-xs text-slate-400 hover:text-slate-600 text-center">Cancel</button>
               </div>
             </div>
           )}
@@ -4380,7 +4400,7 @@ function TicketsSection({ tickets, activeId, agents, brands, messages, visitorPa
   onSelect: (id: string) => void
   onSend: (body: string, isInternalNote?: boolean, attachments?: Attachment[]) => Promise<void>
   onStatusChange: (status: Status, triggerCsat?: boolean) => void
-  onConvertToTicket: () => Promise<void>
+  onConvertToTicket: (triggerCsat: boolean) => Promise<void>
   onAssign: (agentId: string | null) => Promise<void>
   onEditMessage?: (msgId: string, newBody: string) => Promise<void>
   onDeleteMessage?: (msgId: string) => Promise<void>
@@ -5346,9 +5366,9 @@ function Dashboard() {
     })
   }, [activeId]) // eslint-disable-line
 
-  const handleConvertToTicket = useCallback(async () => {
+  const handleConvertToTicket = useCallback(async (triggerCsat = false) => {
     if (!activeId) return
-    const updated = await api.patchConversation(activeId, { is_ticket: true })
+    const updated = await api.patchConversation(activeId, { is_ticket: true, trigger_csat: triggerCsat })
     setConvs(prev => prev.map(c => c.id === activeId ? { ...c, is_ticket: true, ticket_number: updated.ticket_number } : c))
   }, [activeId]) // eslint-disable-line
 

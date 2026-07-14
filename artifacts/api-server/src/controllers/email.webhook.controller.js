@@ -6,7 +6,7 @@
  *
  * POST /api/webhooks/inbound-mail
  *
- * Compatible with SendGrid Inbound Parse and Resend Inbound webhook formats.
+ * Compatible with SendGrid Inbound Parse, Mailgun, and Resend Inbound webhook formats.
  * Flow:
  *  1. Verify webhook signature (SendGrid DKIM check or shared secret)
  *  2. Extract routing prefix from the To: address (e.g. support@[prefix].iratelier.com)
@@ -14,12 +14,29 @@
  *  4. Strip quoted reply chains with the QuoteStripper
  *  5. Append a new Message row to the conversation
  *  6. Emit a Socket.io event to the conversation room (if the io instance is set)
+ *
+ * Multer memory storage is applied conditionally: it only parses multipart/form-data
+ * requests (SendGrid, Mailgun) and passes through for application/json (Resend).
  */
 
 const crypto = require('crypto');
+const multer = require('multer');
 const { Router } = require('express');
 const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
+
+// Multer with memory storage — file buffers available at req.files
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Apply multer only when Content-Type is multipart/form-data (SendGrid, Mailgun).
+// JSON webhooks (Resend) are already parsed by express.json() upstream.
+const multipartMiddleware = (req, res, next) => {
+  const ct = req.headers['content-type'] || '';
+  if (ct.includes('multipart/form-data')) {
+    return upload.any()(req, res, next);
+  }
+  next();
+};
 
 const router = Router();
 
@@ -210,32 +227,51 @@ function normalisePayload(body) {
 
 // ---------------------------------------------------------------------------
 // File attachment extractor
-// Pulls actual file attachments (not threading metadata) out of the raw
-// webhook payload. Returns an array of { url, name, type } objects.
-// Currently supports Resend (JSON format with base64 content).
-// SendGrid and Mailgun send attachments as multipart form-data parts which
-// require a multipart parser (multer/busboy) — not yet supported here.
+// Pulls actual file attachments out of the webhook payload.
+// Supports:
+//   • Resend    — JSON body with base64 content in body.attachments[]
+//   • SendGrid  — multipart/form-data; files in req.files; metadata in
+//                 body['attachment-info'] (JSON string)
+//   • Mailgun   — multipart/form-data; files in req.files as attachment-N
+// Returns an array of { url, name, type } objects (data URIs for binary).
 // ---------------------------------------------------------------------------
-function extractFileAttachments(body) {
+function extractFileAttachments(body, files = []) {
   const results = [];
 
-  // Resend: body.attachments = [{ filename, content (base64), content_type }]
+  // ── Resend JSON format ────────────────────────────────────────────────────
   if (Array.isArray(body.attachments)) {
     for (const att of body.attachments) {
       if (!att || !att.filename) continue;
       const mimeType = att.content_type || att.type || 'application/octet-stream';
-      // Resend provides base64 content; store as a data URI so it's self-contained
       if (att.content) {
         const base64 = typeof att.content === 'string' ? att.content : Buffer.from(att.content).toString('base64');
-        results.push({
-          url:  `data:${mimeType};base64,${base64}`,
-          name: att.filename,
-          type: mimeType,
-        });
+        results.push({ url: `data:${mimeType};base64,${base64}`, name: att.filename, type: mimeType });
       } else if (att.url) {
-        // Some providers include a direct URL
         results.push({ url: att.url, name: att.filename, type: mimeType });
       }
+    }
+  }
+
+  // ── SendGrid / Mailgun multipart files (via multer req.files) ─────────────
+  if (Array.isArray(files) && files.length > 0) {
+    // SendGrid provides an 'attachment-info' text field with metadata per file
+    let sgMeta = {};
+    try {
+      if (body['attachment-info']) sgMeta = JSON.parse(body['attachment-info']);
+    } catch { /* ignore bad JSON */ }
+
+    for (const file of files) {
+      // Skip metadata-only text fields and empty buffers
+      if (!file.buffer || file.size === 0) continue;
+      // attachment-info is a text part, not a real file — multer shouldn't pick
+      // it up as a file but guard anyway
+      if (file.fieldname === 'attachment-info') continue;
+
+      const meta     = sgMeta[file.fieldname] || {};
+      const mimeType = file.mimetype || meta['mime-type'] || 'application/octet-stream';
+      const filename = file.originalname || meta.filename || meta.name || file.fieldname;
+      const base64   = file.buffer.toString('base64');
+      results.push({ url: `data:${mimeType};base64,${base64}`, name: filename, type: mimeType });
     }
   }
 
@@ -295,7 +331,7 @@ async function handleInboundEmail(req, res) {
         return;
       }
 
-      const fileAttachments = extractFileAttachments(req.body);
+      const fileAttachments = extractFileAttachments(req.body, req.files || []);
       const threadMeta = { email_message_id: parseMessageId(messageId) };
       const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
       const { rows: newMsg } = await pool.query(
@@ -421,7 +457,7 @@ async function handleInboundEmail(req, res) {
     }
 
     // 5. Persist the message (store the email Message-ID for thread linking + any file attachments)
-    const fileAttachments = extractFileAttachments(req.body);
+    const fileAttachments = extractFileAttachments(req.body, req.files || []);
     const threadMeta = { email_message_id: parseMessageId(messageId) };
     const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
 
@@ -453,7 +489,7 @@ async function handleInboundEmail(req, res) {
   }
 }
 
-router.post('/inbound-mail',  handleInboundEmail);
-router.post('/email/inbound', handleInboundEmail);
+router.post('/inbound-mail',  multipartMiddleware, handleInboundEmail);
+router.post('/email/inbound', multipartMiddleware, handleInboundEmail);
 
 module.exports = { router, setIo, stripQuotes };

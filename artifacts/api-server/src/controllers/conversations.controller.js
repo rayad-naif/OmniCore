@@ -320,7 +320,7 @@ router.patch('/:id', async (req, res, next) => {
       if (oldVisitorId) {
         const ticketClosePayload = {
           conversationId: req.params.id,
-          trigger_csat: false,
+          trigger_csat: Boolean(trigger_csat),
           converted_to_ticket: true,
         };
         broadcastToVisitor(oldVisitorId, 'conversation:closed', ticketClosePayload);

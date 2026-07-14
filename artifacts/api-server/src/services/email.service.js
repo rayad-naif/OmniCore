@@ -159,14 +159,60 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
 
   const preview = stripHtml(messageBody).slice(0, 200);
 
-  // Build attachment links for non-data-URI files (data URIs are too large for email)
-  const fileAttachments = Array.isArray(attachments)
-    ? attachments.filter(a => a && a.url && !a.url.startsWith('data:'))
-    : [];
-  const attachmentHtml = fileAttachments.length > 0
+  // Classify attachments into three buckets:
+  //   inlineImages  — data-URI images → embedded as CID inline attachments
+  //   fileAttach    — data-URI non-images → regular downloadable attachment
+  //   urlLinks      — hosted-URL files → clickable link in the HTML
+  const inlineImages  = [];
+  const fileAttach    = [];
+  const urlLinks      = [];
+  const mailerAttachments = [];
+
+  for (const a of (Array.isArray(attachments) ? attachments : [])) {
+    if (!a || !a.url) continue;
+    const dataMatch = a.url.match(/^data:([^;]+);base64,(.+)$/s);
+    if (dataMatch) {
+      const [, mimeType, b64] = dataMatch;
+      if (mimeType.startsWith('image/')) {
+        const cid = `img-${Math.random().toString(36).slice(2)}@omnicore`;
+        inlineImages.push({ cid, mimeType, name: a.name || `image.${mimeType.split('/')[1] || 'png'}` });
+        mailerAttachments.push({
+          filename:    a.name || `image.${mimeType.split('/')[1] || 'png'}`,
+          content:     Buffer.from(b64, 'base64'),
+          contentType: mimeType,
+          cid,
+        });
+      } else {
+        const filename = a.name || 'attachment';
+        fileAttach.push(filename);
+        mailerAttachments.push({
+          filename,
+          content:     Buffer.from(b64, 'base64'),
+          contentType: mimeType,
+        });
+      }
+    } else {
+      urlLinks.push(a);
+    }
+  }
+
+  // Inline images rendered as <img> blocks
+  const inlineImgHtml = inlineImages.map(im =>
+    `<div style="margin:8px 0;"><img src="cid:${im.cid}" alt="${im.name}" style="max-width:100%;border-radius:6px;display:block;" /></div>`
+  ).join('');
+
+  // Non-image data-URI files — show file count notice
+  const fileAttachHtml = fileAttach.length > 0
+    ? `<div style="margin-top:12px;padding:10px 14px;background:#f1f5f9;border-radius:6px;font-size:12px;color:#475569;">
+        📎 ${fileAttach.length} file${fileAttach.length > 1 ? 's' : ''} attached: ${fileAttach.join(', ')}
+      </div>`
+    : '';
+
+  // Hosted-URL files — clickable links
+  const urlLinksHtml = urlLinks.length > 0
     ? `<div style="margin-top:16px;padding:12px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
         <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.04em;">Attachments</p>
-        ${fileAttachments.map(a => `<a href="${a.url}" style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;background:#e0f2fe;color:#0369a1;border-radius:4px;font-size:12px;text-decoration:none;">${a.name || 'File'}</a>`).join('')}
+        ${urlLinks.map(a => `<a href="${a.url}" style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;background:#e0f2fe;color:#0369a1;border-radius:4px;font-size:12px;text-decoration:none;">${a.name || 'File'}</a>`).join('')}
       </div>`
     : '';
 
@@ -175,7 +221,7 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
     preview:  `"${preview}"`,
     bodyHtml: `<p style="font-size:13px;color:#64748b;">
       To continue the conversation, simply reply to this email or visit our support portal.
-    </p>${attachmentHtml}`,
+    </p>${inlineImgHtml}${fileAttachHtml}${urlLinksHtml}`,
     footer,
   });
 
@@ -184,10 +230,11 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
     subject: `Re: Your support ticket — ${agentName} replied`, html,
   };
   if (replyTo) mailOpts.replyTo = replyTo;
+  if (mailerAttachments.length > 0) mailOpts.attachments = mailerAttachments;
 
   try {
     await buildTransporter(cfg).sendMail(mailOpts);
-    logger.info({ tenantId, conversationId, agentName, visitorEmail }, 'agent_reply_email_sent');
+    logger.info({ tenantId, conversationId, agentName, visitorEmail, attachmentCount: mailerAttachments.length }, 'agent_reply_email_sent');
   } catch (err) {
     logger.warn({ err, tenantId, conversationId }, 'agent_reply_email_failed');
   }
