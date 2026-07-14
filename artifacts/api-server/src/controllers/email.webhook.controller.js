@@ -323,15 +323,17 @@ async function handleInboundEmail(req, res) {
       }
       const { id: conversationId, tenant_id, brand_id } = convCheck[0];
 
-      // Strip quotes and persist
+      // Strip quotes and persist. An email with only an image/file and no text
+      // still counts — use a placeholder body so the attachment isn't dropped.
       const rawText   = text || (html || '').replace(/<[^>]+>/g, ' ');
-      const cleanBody = stripQuotes(rawText);
-      if (!cleanBody) {
+      let cleanBody   = stripQuotes(rawText);
+      const fileAttachments = extractFileAttachments(req.body, req.files || []);
+      if (!cleanBody && fileAttachments.length === 0) {
         logger.warn({ conversationId }, 'email_webhook_empty_body_after_strip');
         return;
       }
+      if (!cleanBody) cleanBody = '📎 Attachment';
 
-      const fileAttachments = extractFileAttachments(req.body, req.files || []);
       const threadMeta = { email_message_id: parseMessageId(messageId) };
       const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
       const { rows: newMsg } = await pool.query(
@@ -447,17 +449,20 @@ async function handleInboundEmail(req, res) {
       }
     }
 
-    // 4. Strip quoted reply chain — prefer plain text, fall back to html-stripped
+    // 4. Strip quoted reply chain — prefer plain text, fall back to html-stripped.
+    // An email carrying only an attachment (no text) still counts — use a
+    // placeholder body so the attachment isn't dropped.
     const rawText    = text || html.replace(/<[^>]+>/g, ' ');
-    const cleanBody  = stripQuotes(rawText);
+    let cleanBody    = stripQuotes(rawText);
+    const fileAttachments = extractFileAttachments(req.body, req.files || []);
 
-    if (!cleanBody) {
-      console.warn('[email:webhook] message body empty after quote stripping — skipping');
+    if (!cleanBody && fileAttachments.length === 0) {
+      logger.warn('email_webhook_empty_body_after_strip');
       return;
     }
+    if (!cleanBody) cleanBody = '📎 Attachment';
 
     // 5. Persist the message (store the email Message-ID for thread linking + any file attachments)
-    const fileAttachments = extractFileAttachments(req.body, req.files || []);
     const threadMeta = { email_message_id: parseMessageId(messageId) };
     const attachmentsJson = JSON.stringify([threadMeta, ...fileAttachments]);
 

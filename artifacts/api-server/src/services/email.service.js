@@ -18,8 +18,37 @@
  */
 
 const nodemailer = require('nodemailer');
+const fs         = require('fs');
+const path       = require('path');
 const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
+const { R2_ENABLED, getPresignedGetUrl } = require('../lib/r2');
+
+// Uploaded widget/dashboard files live here (same dir widget.controller uses)
+const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
+
+/**
+ * Load the binary content of an uploaded file referenced by a local
+ * `/api/widget/files/<name>` URL. Tries local disk first, then R2.
+ * Returns a Buffer or null if the file cannot be resolved.
+ */
+async function loadUploadedFileContent(url) {
+  const m = String(url).match(/^\/api\/widget\/files\/([^/?#]+)$/);
+  if (!m) return null;
+  const name = path.basename(decodeURIComponent(m[1]));
+  try {
+    const filePath = path.join(UPLOADS_DIR, name);
+    if (fs.existsSync(filePath)) return fs.readFileSync(filePath);
+    if (R2_ENABLED) {
+      const signedUrl = await getPresignedGetUrl(name, 300);
+      const resp = await fetch(signedUrl);
+      if (resp.ok) return Buffer.from(await resp.arrayBuffer());
+    }
+  } catch (err) {
+    logger.warn({ err, name }, 'email_attachment_file_load_failed');
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -168,32 +197,49 @@ async function sendAgentReplyEmail(tenantId, conversationId, agentName, messageB
   const urlLinks      = [];
   const mailerAttachments = [];
 
+  const addBuffer = (buf, mimeType, name) => {
+    if (mimeType.startsWith('image/')) {
+      const cid = `img-${Math.random().toString(36).slice(2)}@omnicore`;
+      const filename = name || `image.${mimeType.split('/')[1] || 'png'}`;
+      inlineImages.push({ cid, mimeType, name: filename });
+      mailerAttachments.push({ filename, content: buf, contentType: mimeType, cid });
+    } else {
+      const filename = name || 'attachment';
+      fileAttach.push(filename);
+      mailerAttachments.push({ filename, content: buf, contentType: mimeType });
+    }
+  };
+
   for (const a of (Array.isArray(attachments) ? attachments : [])) {
     if (!a || !a.url) continue;
     const dataMatch = a.url.match(/^data:([^;]+);base64,(.+)$/s);
     if (dataMatch) {
       const [, mimeType, b64] = dataMatch;
-      if (mimeType.startsWith('image/')) {
-        const cid = `img-${Math.random().toString(36).slice(2)}@omnicore`;
-        inlineImages.push({ cid, mimeType, name: a.name || `image.${mimeType.split('/')[1] || 'png'}` });
-        mailerAttachments.push({
-          filename:    a.name || `image.${mimeType.split('/')[1] || 'png'}`,
-          content:     Buffer.from(b64, 'base64'),
-          contentType: mimeType,
-          cid,
-        });
-      } else {
-        const filename = a.name || 'attachment';
-        fileAttach.push(filename);
-        mailerAttachments.push({
-          filename,
-          content:     Buffer.from(b64, 'base64'),
-          contentType: mimeType,
-        });
-      }
-    } else {
-      urlLinks.push(a);
+      addBuffer(Buffer.from(b64, 'base64'), mimeType, a.name);
+      continue;
     }
+    // Locally uploaded files (`/api/widget/files/<name>`) — load the binary
+    // content and embed directly; a relative URL is dead inside an email.
+    if (a.url.startsWith('/api/widget/files/')) {
+      const buf = await loadUploadedFileContent(a.url);
+      if (buf) {
+        addBuffer(buf, a.type || 'application/octet-stream', a.name);
+        continue;
+      }
+    }
+    // Other relative URLs: make them absolute using the public domain so the
+    // link works from the recipient's inbox. Absolute URLs pass through as-is.
+    if (a.url.startsWith('/')) {
+      const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0].trim();
+      if (domain) {
+        urlLinks.push({ ...a, url: `https://${domain}${a.url}` });
+        continue;
+      }
+      // No public domain known and file couldn't be loaded — skip dead link
+      logger.warn({ url: a.url }, 'email_attachment_unresolvable_relative_url');
+      continue;
+    }
+    urlLinks.push(a);
   }
 
   // Inline images rendered as <img> blocks
