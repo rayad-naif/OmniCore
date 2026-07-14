@@ -2,6 +2,7 @@
 - [Widget embed backward-compat](widget-embed-compat.md) — widget.js is cached on 3rd-party sites; keep widget endpoint responses shape-tolerant
 - [Deploy static web (vite) artifacts](deploy-static-web-artifacts.md) — vite web artifacts must use `serve = "static"`; a custom `npx serve` run command fails publish (port never opens)
 - [Paddle billing integration](paddle-integration.md) — dual-provider (Stripe + Paddle) arch, env vars, webhook path, seed script, no SDK (fetch-based)
-- [Static SPA 404 & crawlability](static-spa-404-crawlability.md) — removing the /* rewrite is how you get real 404s (no status codes in rewrites); prerendered noindex 404 must be mirrored client-side or hydration overwrites it
+- [Static SPA 404 & crawlability](static-spa-404-crawlability.md) — real 404s require removing the /* rewrite; mirror the noindex 404 client-side or hydration overwrites it
+- [Socket.io client behind proxy](socketio-client-behind-proxy.md) — Engine.IO's built-in `/socket.io.js` serving hangs behind the path proxy; serve client-dist via an Express route
 - [Vite image preload injection](vite-image-preload-injection.md) — Vite preloads every statically-imported image in the eager graph; can't lazy routes (sync SSR prerender); serve below-fold art from public/ to drop preloads
 - [Dashboard overlay layering](dashboard-overlay-layering.md) — TrialGateway lock overlay sits at zIndex 9999; new floating/fixed dashboard UI must use a lower z-index (z-50) or it covers the blocking overlay

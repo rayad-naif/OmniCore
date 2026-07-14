@@ -271,6 +271,9 @@ router.patch('/:id', async (req, res, next) => {
       if (!fields.includes('status')) {
         setClauses += `, status = 'submitted'`;
       }
+      // Persist the CSAT request so the widget can recover the survey via
+      // polling / session reload even if the live socket event is missed.
+      setClauses += `, csat_requested = ${Boolean(trigger_csat) ? 'true' : 'false'}`;
     }
 
     // Persist whether a CSAT survey was requested at close time so the widget

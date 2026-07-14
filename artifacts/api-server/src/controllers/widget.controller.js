@@ -135,6 +135,25 @@ router.post('/session', async (req, res, next) => {
           });
         }
 
+        // If the very last conversation was converted to a ticket with a CSAT
+        // survey the visitor hasn't answered yet, surface it so the widget can
+        // re-show the survey on reload (recovers a missed live event).
+        const { rows: lastRows } = await pool.query(
+          `SELECT id, csat_requested, csat_score, is_ticket FROM conversations
+           WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [visitorId]
+        );
+        if (lastRows[0]?.is_ticket === true && lastRows[0].csat_requested === true && lastRows[0].csat_score === null) {
+          return res.json({
+            sessionToken,
+            conversationId: lastRows[0].id,
+            messages: [],
+            brandName,
+            visitorName: visData[0]?.display_name || visitorName || null,
+            csatPending: true,
+          });
+        }
+
         // Find the most recent NON-TICKET conversation so we can detect closures.
         // Tickets are email conversations and must never be reloaded into the widget.
         let { rows: cRows } = await pool.query(
@@ -442,6 +461,37 @@ router.post('/csat/dismiss', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /api/widget/socket.io.js ─────────────────────────────────────────────
+// Serves the socket.io client bundle. The engine-level static file serving at
+// /api/socket.io/socket.io.js does not respond behind the path proxy, so the
+// widget loads the client from this plain Express route instead.
+let _sioClientJs = null;
+router.get('/socket.io.js', (req, res) => {
+  try {
+    if (!_sioClientJs) {
+      const candidates = [
+        path.join(process.cwd(), 'node_modules/socket.io/client-dist/socket.io.min.js'),
+        path.join(process.cwd(), '../../node_modules/socket.io/client-dist/socket.io.min.js'),
+        path.join(__dirname, '../../node_modules/socket.io/client-dist/socket.io.min.js'),
+      ];
+      for (const p of candidates) {
+        try {
+          if (fs.existsSync(p)) { _sioClientJs = fs.readFileSync(p, 'utf8'); break; }
+        } catch { /* try next */ }
+      }
+    }
+    if (!_sioClientJs) {
+      logger.error('socket.io client bundle not found on disk');
+      return res.status(404).type('application/javascript').send('// socket.io client not found');
+    }
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(_sioClientJs);
+  } catch (err) {
+    return res.status(500).type('application/javascript').send('// failed to load socket.io client');
+  }
+});
+
 // ── GET /api/widget/messages ──────────────────────────────────────────────────
 // Polling fallback — returns messages for a visitor's conversation.
 // Used by the widget every 5 s when the socket may have dropped.
@@ -457,8 +507,12 @@ router.get('/messages', async (req, res, next) => {
     );
     if (!vRows[0]) return res.status(401).json({ error: 'Invalid session' });
 
+    // Note: tickets are NOT excluded here. When an agent converts a live chat
+    // to a ticket the widget keeps polling this conversation id — returning a
+    // 'closed' state (rather than 403) lets the polling fallback surface the
+    // CSAT survey / closed notice even if the live socket event was missed.
     const { rows: cRows } = await pool.query(
-      'SELECT id, status, csat_requested, csat_score FROM conversations WHERE id = $1 AND visitor_id = $2 AND is_ticket = false',
+      'SELECT id, status, csat_requested, csat_score, is_ticket FROM conversations WHERE id = $1 AND visitor_id = $2',
       [cid, vRows[0].id]
     );
     if (!cRows[0]) return res.status(403).json({ error: 'Forbidden' });
@@ -480,11 +534,13 @@ router.get('/messages', async (req, res, next) => {
     // Return conversation state alongside messages so the widget's polling
     // fallback can surface a close / CSAT survey even when the live socket
     // event was missed (otherwise the survey only shows on the next action).
+    const isTicket = cRows[0].is_ticket === true;
     return res.json({
       messages,
-      status: cRows[0].status,
+      status: isTicket ? 'closed' : cRows[0].status,
       csatRequested: cRows[0].csat_requested === true,
       csatScore: cRows[0].csat_score,
+      convertedToTicket: isTicket,
     });
   } catch (err) { next(err); }
 });
@@ -1358,8 +1414,10 @@ function startSession(forceNew){
 
 function initSio(){
   if(state.socket)return;
-  var s=ce('script');s.src=API_ORIGIN+'/api/socket.io/socket.io.js';
+  var s=ce('script');s.src=API_BASE+'/widget/socket.io.js';
+  s.onerror=function(){try{s.parentNode.removeChild(s);}catch(e){}setTimeout(initSio,5000);};
   s.onload=function(){
+    if(!w.io){setTimeout(initSio,5000);return;}
     var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],reconnectionDelay:1500});
     state.socket=sk;
     sk.on('connect',function(){

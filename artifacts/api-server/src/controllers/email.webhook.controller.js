@@ -69,6 +69,9 @@ function stripQuotes(rawText) {
   for (const pattern of QUOTE_PATTERNS) {
     text = text.replace(pattern, '');
   }
+  // Gmail's plain-text part renders inline images as "[image: filename.png]".
+  // The actual image arrives as a real attachment, so drop the placeholder.
+  text = text.replace(/\[image:[^\]\n]*\]/gi, '');
   return text.trim();
 }
 

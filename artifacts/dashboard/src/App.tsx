@@ -1319,7 +1319,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
   const [sending, setSending]       = useState(false)
   const [isNote, setIsNote]         = useState(false)
   const [rephrasing, setRephrase]   = useState(false)
-  const [pendingFile, setPending]   = useState<{ name: string; type: string; dataUrl: string } | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<{ name: string; type: string; dataUrl: string }[]>([])
   const [editorHasContent, setEditorHasContent] = useState(false)
   const fileInputRef                = useRef<HTMLInputElement>(null)
   const api = useApi()
@@ -1409,25 +1409,33 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     return false
   }
 
-  const canSend = !isClosed && !sending && (pendingFile !== null || editorHasContent)
+  const canSend = !isClosed && !sending && (pendingFiles.length > 0 || editorHasContent)
 
   const handleSend = async () => {
-    if (isClosed || sending || (!pendingFile && (!editor || editor.isEmpty))) return
+    if (isClosed || sending || (pendingFiles.length === 0 && (!editor || editor.isEmpty))) return
     const body = editor ? editor.getHTML() : ''
-    const captured = pendingFile
-    editor?.commands.clearContent(true)
-    setPending(null)
+    const captured = pendingFiles
     setSending(true)
     try {
-      let attachments: Attachment[] = []
-      if (captured) {
-        const comma  = captured.dataUrl.indexOf(',')
-        const b64    = comma >= 0 ? captured.dataUrl.slice(comma + 1) : captured.dataUrl
-        const att    = await api.uploadFile(captured.name, captured.type, b64)
-        attachments  = [att]
+      const attachments: Attachment[] = []
+      for (const f of captured) {
+        const comma = f.dataUrl.indexOf(',')
+        const b64   = comma >= 0 ? f.dataUrl.slice(comma + 1) : f.dataUrl
+        try {
+          const att = await api.uploadFile(f.name, f.type, b64)
+          attachments.push(att)
+        } catch {
+          alert(`Failed to upload "${f.name}" — message not sent. Remove it or try again.`)
+          setSending(false)
+          return
+        }
       }
       await onSend(body, isNote, attachments)
-    } catch { /* ignore */ } finally { setSending(false) }
+      // Clear the draft only after everything succeeded so a failed
+      // upload/send doesn't lose the agent's message.
+      editor?.commands.clearContent(true)
+      setPendingFiles([])
+    } catch { /* keep draft so the agent can retry */ } finally { setSending(false) }
     editor?.commands.focus()
   }
 
@@ -1442,13 +1450,16 @@ function EmailComposeBox({ conv, onSend, disabled }: {
     finally { setRephrase(false); editor.commands.focus() }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (file.size > 10 * 1024 * 1024) { alert('File too large — max 10 MB'); return }
+  const addPendingFile = (file: File, name?: string) => {
+    if (file.size > 10 * 1024 * 1024) { alert(`${name || file.name}: file too large — max 10 MB`); return }
     const reader = new FileReader()
-    reader.onload = ev => setPending({ name: file.name, type: file.type, dataUrl: ev.target!.result as string })
+    reader.onload = ev => setPendingFiles(prev => [...prev, { name: name || file.name, type: file.type, dataUrl: ev.target!.result as string }])
     reader.readAsDataURL(file)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    files.forEach(f => addPendingFile(f))
     e.target.value = ''
   }
 
@@ -1460,9 +1471,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
         const file = items[i].getAsFile()
         if (!file) continue
         e.preventDefault()
-        const reader = new FileReader()
-        reader.onload = ev => setPending({ name: `paste-${Date.now()}.png`, type: file.type, dataUrl: ev.target!.result as string })
-        reader.readAsDataURL(file)
+        addPendingFile(file, `paste-${Date.now()}.png`)
         break
       }
     }
@@ -1520,20 +1529,24 @@ function EmailComposeBox({ conv, onSend, disabled }: {
           <EditorContent editor={editor} />
         </div>
       </div>
-      {/* Pending file preview */}
-      {pendingFile && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-sky-50 border-t border-sky-100">
-          {pendingFile.type.startsWith('image/') ? (
-            <img src={pendingFile.dataUrl} alt="preview" className="w-8 h-8 rounded object-cover shrink-0 border border-sky-200" />
-          ) : (
-            <Paperclip size={14} className="text-sky-500 shrink-0" />
-          )}
-          <span className="text-xs text-sky-700 flex-1 truncate font-medium">{pendingFile.name}</span>
-          <button onClick={() => setPending(null)} className="text-sky-400 hover:text-sky-600 font-bold text-base leading-none">×</button>
+      {/* Pending files preview */}
+      {pendingFiles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 bg-sky-50 border-t border-sky-100">
+          {pendingFiles.map((f, idx) => (
+            <div key={idx} className="flex items-center gap-1.5 bg-white border border-sky-200 rounded-lg pl-1.5 pr-2 py-1 max-w-[200px]">
+              {f.type.startsWith('image/') ? (
+                <img src={f.dataUrl} alt="preview" className="w-7 h-7 rounded object-cover shrink-0 border border-sky-100" />
+              ) : (
+                <Paperclip size={13} className="text-sky-500 shrink-0" />
+              )}
+              <span className="text-xs text-sky-700 truncate font-medium">{f.name}</span>
+              <button onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))} className="text-sky-400 hover:text-sky-600 font-bold text-sm leading-none shrink-0">×</button>
+            </div>
+          ))}
         </div>
       )}
       {/* Hidden file input */}
-      <input ref={fileInputRef} type="file" className="hidden"
+      <input ref={fileInputRef} type="file" className="hidden" multiple
         accept="image/*,.pdf,.csv,.doc,.docx,.xls,.xlsx,.txt"
         onChange={handleFileChange} />
       {/* Formatting toolbar */}
@@ -1554,7 +1567,7 @@ function EmailComposeBox({ conv, onSend, disabled }: {
           <div className="w-px h-4 bg-slate-200 mx-1" />
           <button onClick={() => fileInputRef.current?.click()} disabled={isClosed}
             title="Attach file (or paste image)"
-            className={`p-1.5 rounded-lg transition-colors ${pendingFile ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+            className={`p-1.5 rounded-lg transition-colors ${pendingFiles.length > 0 ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'} disabled:opacity-30 disabled:cursor-not-allowed`}>
             <Paperclip size={13} />
           </button>
           <div className="w-px h-4 bg-slate-200 mx-1" />
