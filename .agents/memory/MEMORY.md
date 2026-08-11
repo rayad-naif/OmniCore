@@ -7,3 +7,4 @@
 - [Vite image preload injection](vite-image-preload-injection.md) — Vite preloads every statically-imported image in the eager graph; can't lazy routes (sync SSR prerender); serve below-fold art from public/ to drop preloads
 - [Dashboard overlay layering](dashboard-overlay-layering.md) — TrialGateway lock overlay sits at zIndex 9999; new floating/fixed dashboard UI must use a lower z-index (z-50) or it covers the blocking overlay
 - [Socket reconnect resilience](socket-reconnect-resilience.md) — never cap socket.io reconnectionAttempts with short-lived JWT auth; refresh socket.auth on retry or real-time updates die silently after server restarts
+- [Cookie Secure self-hosted](cookie-secure-self-hosted.md) — set COOKIE_SECURE=false on plain-HTTP deployments; pm2 delete+start required to re-read .env (restart --update-env is insufficient)
