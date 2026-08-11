@@ -25,6 +25,10 @@ const crypto = require('crypto');
 let _ReplitConnectorsClass = null;
 
 async function getConnectorClient() {
+  // Only use Replit Connectors when running inside a Repl (REPL_ID is set by
+  // the Replit runtime). On self-hosted deployments fall back to PADDLE_API_KEY.
+  if (!process.env.REPL_ID) return null;
+
   if (!_ReplitConnectorsClass) {
     try {
       const mod = await import('@replit/connectors-sdk');
