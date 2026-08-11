@@ -47,3 +47,14 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Build outputs
+artifacts/*/dist/
+artifacts/*/.tsbuildinfo
+*.tsbuildinfo
+lib/**/*.js
+lib/**/*.d.ts
+lib/**/*.js.map
+
+# Replit cache
+.cache/

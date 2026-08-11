@@ -24,9 +24,13 @@ const ACCESS_TTL  = '15m';
 const REFRESH_TTL = '7d';
 const COOKIE_NAME = 'omnicore_rt';
 
+// COOKIE_SECURE can be explicitly set to 'false' for self-hosted HTTP deployments.
+// Defaults to true in production (HTTPS). Always false in development.
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure:   process.env.NODE_ENV === 'production',
+  secure:   process.env.COOKIE_SECURE !== undefined
+              ? process.env.COOKIE_SECURE === 'true'
+              : process.env.NODE_ENV === 'production',
   sameSite: 'lax',
   path:     '/api/auth',
   maxAge:   7 * 24 * 60 * 60 * 1000,
