@@ -43,6 +43,8 @@ GEMINI_API_KEY = "AQ.Ab8RN6JfE7Oec86Asy9YfH4QrD-EyibuQJhf3mlCpzBYR-MaLQ"
 SUPER_ADMIN_EMAIL = "atelier@irofficial.com"
 BILLING_PROVIDER = "paddle"
 PADDLE_ENVIRONMENT = "production"
+PADDLE_GROWTH_PRICE_ID = "pri_01kx952rvcjj9mv8q7tpn08cec"
+PADDLE_STARTER_PRICE_ID = "pri_01kwf270vz11366ajjdd5mz2mv"
 
 [userenv.production]
 PUBLIC_APP_URL = "https://omnicore.irofficial.com"

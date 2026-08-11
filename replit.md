@@ -7,11 +7,11 @@ Multi-tenant SaaS omnichannel helpdesk and AI customer support platform. Agents 
 - `pnpm --filter @workspace/api-server run dev` — API server on port 8080
 - `pnpm --filter @workspace/dashboard run dev` — React dashboard on port 5174
 - `pnpm run typecheck` — full typecheck across all packages
-- Required env: `DATABASE_URL` ✓, `JWT_SECRET` ✓, `SESSION_SECRET` ✓
-- **Missing (Paddle billing):** `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_STARTER_PRICE_ID`, `PADDLE_GROWTH_PRICE_ID`
-  - Get `PADDLE_API_KEY` from Paddle dashboard → Developer → Authentication
-  - After setting `PADDLE_API_KEY`, run: `pnpm --filter @workspace/scripts run seed-paddle` to create products and get price IDs
-  - `PADDLE_WEBHOOK_SECRET` comes from your Paddle webhook endpoint config
+- Required env: all set ✓
+  - `DATABASE_URL`, `JWT_SECRET`, `SESSION_SECRET`, `GEMINI_API_KEY` ✓
+  - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET` ✓ (secrets)
+  - `PADDLE_STARTER_PRICE_ID=pri_01kwf270vz11366ajjdd5mz2mv`, `PADDLE_GROWTH_PRICE_ID=pri_01kx952rvcjj9mv8q7tpn08cec` ✓
+  - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT` ✓ (secrets)
 
 ## Stack
 
