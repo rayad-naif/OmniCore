@@ -1,0 +1,148 @@
+To get your domain (`omnicore.irofficial.com`) working securely over HTTPS (`https://`) while pointing to your Oracle Cloud instance (`80.225.249.112`), you need to set up a web server (like Nginx) to act as a reverse proxy, point your DNS correctly, and install a free SSL certificate using Let's Encrypt.
+
+Here is the step-by-step guide to fixing this:
+
+---
+
+### Step 1: Update Your DNS Records
+
+Right now, your domain needs to point directly to your Oracle server's public IP address.
+
+1. Log in to the domain registrar where you bought `irofficial.com` (or Cloudflare/DNS manager).
+2. Go to the DNS settings for `irofficial.com`.
+3. Create or update an **A Record**:
+* **Name / Host:** `omnicore`
+* **Value / Points to:** `80.225.249.112`
+* **TTL:** Auto (or 300)
+
+
+4. Save the changes. *(Note: DNS changes can take anywhere from 5 minutes to a couple of hours to propagate globally).*
+
+---
+
+### Step 2: Open Ports 80 and 443 in Oracle Cloud
+
+Oracle Cloud blocks incoming web traffic by default. You need to open both HTTP (80) and HTTPS (443) in two places:
+
+**A. Oracle Cloud Console (VCN Security Lists):**
+
+1. Go to your Oracle Cloud Dashboard -> **Networking** -> **Virtual Cloud Networks**.
+2. Click your VCN, then click your **Default Security List**.
+3. Click **Add Ingress Rules**:
+* **Source CIDR:** `0.0.0.0/0`
+* **IP Protocol:** `TCP`
+* **Source Port Range:** (leave blank)
+* **Destination Port Range:** `80, 443`
+
+
+4. Click **Add Ingress Rules**.
+
+**B. Your Server’s Internal Firewall (SSH into your server):**
+Log into your Oracle instance via terminal and run these commands (assuming Ubuntu/Debian):
+
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw reload
+
+```
+
+*(If you are using Oracle Linux with `firewalld`:)*
+
+```bash
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --reload
+
+```
+
+---
+
+### Step 3: Install Nginx and Certbot
+
+Connect to your Oracle server via SSH and install Nginx (to handle web traffic) and Certbot (to get the SSL certificate).
+
+```bash
+sudo apt update
+sudo apt install nginx certbot python3-certbot-nginx -y
+
+```
+
+*(If using Oracle Linux, use `sudo dnf install nginx certbot python3-certbot-nginx` instead).*
+
+---
+
+### Step 4: Configure Nginx as a Reverse Proxy
+
+Right now, your app is likely running on a local port (for example, `3000`, `5000`, or `8080`). Nginx needs to intercept traffic from the outside world and forward it to your app.
+
+1. Create a new Nginx configuration file for your domain:
+```bash
+sudo nano /etc/nginx/sites-available/omnicore
+
+```
+
+
+2. Paste the following configuration (replace `3000` with whatever internal port your application is actually running on):
+```nginx
+server {
+    listen 80;
+    server_name omnicore.irofficial.com;
+
+    location / {
+        proxy_pass http://localhost:3000; # CHANGE 3000 to your app's port
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+
+```
+
+
+3. Save and exit (`Ctrl+O`, then `Enter`, then `Ctrl+X`).
+4. Enable the configuration and test it:
+```bash
+sudo ln -s /etc/nginx/sites-available/omnicore /etc/nginx/sites-enabled/
+sudo nginx -t
+
+```
+
+
+5. Restart Nginx:
+```bash
+sudo systemctl restart nginx
+
+```
+
+
+
+---
+
+### Step 5: Install the SSL Certificate (Let's Encrypt)
+
+Now that Nginx is managing your domain on Port 80, Certbot can automatically generate a free SSL certificate and configure HTTPS for you.
+
+Run the following command:
+
+```bash
+sudo certbot --nginx -d omnicore.irofficial.com
+
+```
+
+* Enter your email address when prompted.
+* Agree to the terms of service.
+* When asked if you want to redirect HTTP traffic to HTTPS, choose **2 (Redirect)** to ensure all visitors are forced onto the secure version.
+
+---
+
+### Step 6: Test Your Site
+
+Once Certbot finishes successfully:
+
+1. Open your browser.
+2. Go to **`[https://omnicore.irofficial.com](https://omnicore.irofficial.com)`**.
+
+You should now see your application loading securely with the padlock icon in the address bar, completely resolving the SSL version mismatch and the connection errors.
