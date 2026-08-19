@@ -716,6 +716,14 @@ function startPolling(){
       var hadNew=false;
       msgs.forEach(function(msg){
         if(msg.is_internal_note)return;
+         // The REST send adds an optimistic visitor bubble immediately. If
+         // polling wins the race against the socket echo, reconcile that
+         // bubble instead of rendering the persisted message a second time.
+         if(msg.sender_type==='visitor'&&pendingMessages.has(msg.message_body)){
+           pendingMessages.delete(msg.message_body);
+           reconcileOptimisticMessage(msg);
+           return;
+         }
         if(state.messages.some(function(m){return m.id===msg.id;}))return;
         state.messages.push(msg);
         appendMsg(msg,true);
