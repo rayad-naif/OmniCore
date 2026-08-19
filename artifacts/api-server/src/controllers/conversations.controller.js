@@ -65,6 +65,13 @@ pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS referrer_url TEXT
 pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS csat_requested BOOLEAN NOT NULL DEFAULT false`)
   .catch(() => {});
 
+// Read receipts used by the widget and dashboard. Keep this migration here as
+// well as in operational deployment scripts so existing databases self-heal.
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_last_read_at TIMESTAMPTZ`)
+  .catch(err => logger.warn({ err: err.message }, 'visitor_last_read_at_migration_warning'));
+pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS agent_last_read_at TIMESTAMPTZ`)
+  .catch(err => logger.warn({ err: err.message }, 'agent_last_read_at_migration_warning'));
+
 // Extend the status check constraint to include ticket statuses
 pool.query(`
   ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_status_check;
