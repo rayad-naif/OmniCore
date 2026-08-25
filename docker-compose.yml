@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_DB: omnicore
+      POSTGRES_USER: omnicore
+      POSTGRES_PASSWORD: omnicore_local_only
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./artifacts/api-server/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnicore -d omnicore"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      DATABASE_URL: postgres://omnicore:omnicore_local_only@postgres:5432/omnicore
+      JWT_SECRET: development-only-change-before-deployment
+      GEMINI_API_KEY: local-placeholder
+      PUBLIC_APP_URL: http://localhost:${DASHBOARD_PORT:-15173}
+      ALLOWED_ORIGINS: http://localhost:${DASHBOARD_PORT:-15173}
+      COOKIE_SECURE: "false"
+      PORT: 8080
+    ports:
+      - "${API_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/api/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+      args:
+        VITE_API_URL: http://localhost:${API_PORT:-18080}/api
+        VITE_PADDLE_CLIENT_TOKEN: ${VITE_PADDLE_CLIENT_TOKEN:-}
+    ports:
+      - "${DASHBOARD_PORT:-15173}:5173"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  postgres_data:
