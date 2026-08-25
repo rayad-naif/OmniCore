@@ -38,14 +38,29 @@ app.use(helmet());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
-  : "*";
+  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : ["*"];
 
 app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  }),
+  (req, res, next) => {
+    // The embeddable widget is intentionally usable from customer websites
+    // that are not known at API deployment time. Dashboard/API browser calls
+    // remain restricted by ALLOWED_ORIGINS.
+    const isWidgetRequest = req.path.startsWith("/widget");
+    const origin = isWidgetRequest || allowedOrigins.includes("*")
+      ? (requestOrigin: string | undefined, callback: (err: Error | null, origin?: boolean | string) => void) => {
+          // Reflect the caller instead of returning "*" because credentials
+          // are enabled for Socket.io's polling transport.
+          return callback(null, requestOrigin || true);
+        }
+      : (requestOrigin: string | undefined, callback: (err: Error | null, origin?: boolean | string) => void) => {
+          if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+            return callback(null, requestOrigin || true);
+          }
+          return callback(null, false);
+        };
+    cors({ origin, credentials: true })(req, res, next);
+  },
 );
 
 // ── Structured request logging ────────────────────────────────────────────────
