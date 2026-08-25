@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { isValidHex, isValidOrigin } from '../lib/brandValidation';
 
 /**
  * BrandSettings.jsx
@@ -18,13 +19,7 @@ import { useAuth } from '../context/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const EMAIL_SUFFIX = '@inbound.omnicore.app';
-const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-const URL_RE = /^https?:\/\/.+/;
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function isValidHex(v) { return HEX_RE.test(v); }
-function isValidOrigin(v) { return URL_RE.test(v.trim()); }
-
 function hexToRgb(hex) {
   const full = hex.length === 4
     ? '#' + [...hex.slice(1)].map(c => c + c).join('')

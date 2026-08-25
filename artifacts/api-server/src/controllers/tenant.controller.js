@@ -24,6 +24,7 @@ const { requireAuth, requireRole, requirePermissionByMethod } = require('../midd
 const { pool }     = require('../lib/db');
 const logger       = require('../utils/logger');
 const { sendSmtpTestEmail } = require('../services/email.service');
+const { validateTenantProvisionInput } = require('../lib/requestValidation');
 
 const router = Router();
 router.use(requireAuth);
@@ -143,11 +144,9 @@ router.post('/', requireSuperAdmin, async (req, res, next) => {
  */
 router.post('/provision', requireSuperAdmin, async (req, res, next) => {
   const bcrypt = require('bcryptjs');
-  const { company_name, admin_name, admin_email, admin_password = 'Welcome1!' } = req.body || {};
-
-  if (!company_name?.trim()) return res.status(400).json({ error: 'company_name is required' });
-  if (!admin_name?.trim())   return res.status(400).json({ error: 'admin_name is required' });
-  if (!admin_email?.trim())  return res.status(400).json({ error: 'admin_email is required' });
+  const input = validateTenantProvisionInput(req.body);
+  if (!input.ok) return res.status(400).json({ error: input.error });
+  const { companyName: company_name, adminName: admin_name, adminEmail: admin_email, adminPassword: admin_password } = input.value;
 
   const client = await pool.connect();
   try {
@@ -178,7 +177,7 @@ router.post('/provision', requireSuperAdmin, async (req, res, next) => {
 
     await client.query('COMMIT');
     logger.info({ tenantId: tenant.id, agentId: agent.id }, 'tenant_provisioned');
-    return res.status(201).json({ tenant, agent, temp_password: admin_password });
+    return res.status(201).json({ tenant, agent });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);

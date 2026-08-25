@@ -1,6 +1,6 @@
 import { initializePaddle, type Paddle } from '@paddle/paddle-js';
 
-const PADDLE_TOKEN = 'live_6838d19e875acfc8ce29fd0d7d3';
+const PADDLE_TOKEN = import.meta.env.VITE_PADDLE_CLIENT_TOKEN;
 
 let _paddle: Paddle | undefined;
 let _initPromise: Promise<Paddle | undefined> | null = null;
@@ -11,6 +11,7 @@ export function getPaddle(): Paddle | undefined {
 }
 
 export async function ensurePaddle(paddleCustomerId?: string | null): Promise<Paddle | undefined> {
+  if (!PADDLE_TOKEN) return undefined;
   const ctmId = (paddleCustomerId?.startsWith('ctm_') ? paddleCustomerId : null) ?? null;
 
   if (_paddle) {

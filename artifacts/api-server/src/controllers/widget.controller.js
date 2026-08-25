@@ -23,6 +23,7 @@ const logger                = require('../utils/logger');
 const { broadcastToTenant, broadcastToConversation, getIo } = require('../services/socket.service');
 const { maybeAutoReply } = require('../services/ai.service');
 const { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl } = require('../lib/r2');
+const { validateWidgetSessionInput } = require('../lib/requestValidation');
 
 const router = Router();
 
@@ -74,8 +75,10 @@ router.get('/brand-logo', (_req, res) => {
 // ── POST /api/widget/session ──────────────────────────────────────────────────
 router.post('/session', async (req, res, next) => {
   try {
-    const { brandId, sessionToken, visitorName, visitorEmail, timezone, forceNew, referrerUrl } = req.body || {};
-    if (!brandId) return res.status(400).json({ error: 'brandId is required' });
+    const input = validateWidgetSessionInput(req.body);
+    if (!input.ok) return res.status(400).json({ error: input.error });
+    const { brandId } = input.value;
+    const { sessionToken, visitorName, visitorEmail, timezone, forceNew, referrerUrl } = req.body || {};
 
     // ── Returning visitor ──────────────────────────────────────────────────────
     if (sessionToken) {
