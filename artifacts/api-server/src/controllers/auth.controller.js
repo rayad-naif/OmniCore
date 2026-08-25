@@ -17,6 +17,7 @@ const { pool }   = require('../lib/db');
 const logger     = require('../utils/logger');
 const { sendPasswordResetEmail } = require('../services/email.service');
 const { effectivePermissions } = require('../lib/permissions');
+const { validateLoginInput } = require('../lib/requestValidation');
 
 const router = Router();
 
@@ -85,10 +86,9 @@ function safeAgent(row) {
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!email?.trim() || !password) {
-      return res.status(400).json({ error: 'email and password are required' });
-    }
+    const input = validateLoginInput(req.body);
+    if (!input.ok) return res.status(400).json({ error: input.error });
+    const { email, password } = input.value;
 
     const { rows } = await pool.query(
       `SELECT id, tenant_id, name, email, role, password_hash, is_active, permissions_json
