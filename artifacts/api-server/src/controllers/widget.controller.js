@@ -23,6 +23,7 @@ const logger                = require('../utils/logger');
 const { broadcastToTenant, broadcastToConversation, getIo } = require('../services/socket.service');
 const { maybeAutoReply } = require('../services/ai.service');
 const { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl } = require('../lib/r2');
+const { validateWidgetSessionInput } = require('../lib/requestValidation');
 
 const router = Router();
 
@@ -74,8 +75,10 @@ router.get('/brand-logo', (_req, res) => {
 // ── POST /api/widget/session ──────────────────────────────────────────────────
 router.post('/session', async (req, res, next) => {
   try {
-    const { brandId, sessionToken, visitorName, visitorEmail, timezone, forceNew, referrerUrl } = req.body || {};
-    if (!brandId) return res.status(400).json({ error: 'brandId is required' });
+    const input = validateWidgetSessionInput(req.body);
+    if (!input.ok) return res.status(400).json({ error: input.error });
+    const { brandId } = input.value;
+    const { sessionToken, visitorName, visitorEmail, timezone, forceNew, referrerUrl } = req.body || {};
 
     // ── Returning visitor ──────────────────────────────────────────────────────
     if (sessionToken) {
@@ -691,6 +694,16 @@ var pendingMessages=new Set();
 var msgQueue=[];
 var isSending=false;
 var pendingFile=null;
+function reconcileOptimisticMessage(msg){
+  for(var i=0;i<state.messages.length;i++){
+    var current=state.messages[i];
+    if(current&&String(current.id).indexOf('opt_')===0&&current.sender_type==='visitor'&&current.message_body===msg.message_body){
+      state.messages[i]=msg;
+      return true;
+    }
+  }
+  return false;
+}
 var els={};
 var _pollTimer=null;
 var _lastMsgTime=null;
@@ -706,6 +719,14 @@ function startPolling(){
       var hadNew=false;
       msgs.forEach(function(msg){
         if(msg.is_internal_note)return;
+         // The REST send adds an optimistic visitor bubble immediately. If
+         // polling wins the race against the socket echo, reconcile that
+         // bubble instead of rendering the persisted message a second time.
+         if(msg.sender_type==='visitor'&&pendingMessages.has(msg.message_body)){
+           pendingMessages.delete(msg.message_body);
+           reconcileOptimisticMessage(msg);
+           return;
+         }
         if(state.messages.some(function(m){return m.id===msg.id;}))return;
         state.messages.push(msg);
         appendMsg(msg,true);
@@ -1451,8 +1472,8 @@ function initSio(){
       if(msg.id&&state.messages.some(function(m){return m.id===msg.id;}))return;
       if(msg.sender_type==='visitor'&&pendingMessages.has(msg.message_body)){
         pendingMessages.delete(msg.message_body);
-        state.messages.push(msg);
-        return;
+         reconcileOptimisticMessage(msg);
+         return;
       }
       state.messages.push(msg);
       appendMsg(msg,true);
@@ -1577,9 +1598,12 @@ function send(){
   sendRest(sentBody,[],function(msg){
     isSending=false;els.snd.disabled=false;
     if(msg){
-      // Store real server ID — if the echo already cleared pendingMessages the
-      // ID dedup in server:new_message will catch any late-arriving duplicates.
-      state.messages.push(msg);
+          // Replace the optimistic bubble with the persisted message. The
+          // socket echo may have arrived first, so also avoid adding a second
+          // copy when the REST response is already in state.
+          var replaced=reconcileOptimisticMessage(msg);
+          var already=state.messages.some(function(m){return m.id===msg.id;});
+          if(!replaced&&!already)state.messages.push(msg);
       pendingMessages.delete(sentBody); // clean up if REST callback beat the echo
     }
   });
