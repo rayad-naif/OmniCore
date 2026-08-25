@@ -34,18 +34,17 @@ cp .env.example .env
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | ✅ | Postgres connection string (`postgres://...`) |
-| `SESSION_SECRET` | ✅ | Random 32+ char string for JWT signing |
+| `JWT_SECRET` | ✅ | Random 64+ character signing secret for access and refresh JWTs |
+| `SESSION_SECRET` | optional | Session middleware secret when that middleware is enabled |
 | `GEMINI_API_KEY` | ✅ | Google AI Studio key for Gemini 1.5 Flash |
 | `R2_ACCOUNT_ID` | ⚠️ | Cloudflare account ID (logo upload + PDF export) |
 | `R2_ACCESS_KEY_ID` | ⚠️ | Cloudflare R2 access key |
 | `R2_SECRET_ACCESS_KEY` | ⚠️ | Cloudflare R2 secret |
 | `R2_BUCKET_NAME` | ⚠️ | R2 bucket name |
-| `LEMONSQUEEZY_API_KEY` | ⚠️ | Lemon Squeezy API key (billing) |
-| `LEMONSQUEEZY_STORE_ID` | ⚠️ | Numeric LS store ID |
-| `LEMONSQUEEZY_WEBHOOK_SECRET` | ⚠️ | LS webhook signing secret |
-| `LS_STARTER_VARIANT_ID` | ⚠️ | LS variant ID for Starter plan |
-| `LS_PRO_VARIANT_ID` | ⚠️ | LS variant ID for Pro plan |
-| `FRONTEND_URL` | ⚠️ | Dashboard base URL (e.g. `https://app.omnicore.app`) |
+| `PADDLE_API_KEY` | ⚠️ | Paddle server API key |
+| `PADDLE_WEBHOOK_SECRET` | ⚠️ | Paddle webhook signing secret |
+| `VITE_PADDLE_CLIENT_TOKEN` | ⚠️ | Public Paddle.js token, set at Vite build time |
+| `PUBLIC_APP_URL` | ⚠️ | Canonical application URL (e.g. `https://app.omnicore.app`) |
 | `ALLOWED_ORIGINS` | ⚠️ | Comma-separated CORS origins |
 | `REDIS_URL` | optional | Redis for BullMQ job queues (crawler, email) |
 
@@ -100,6 +99,19 @@ Served at `/` (or the path configured in `artifact.toml`).
 pnpm run dev
 ```
 
+### Clean-clone startup
+
+For an isolated API, dashboard, PostgreSQL 15, and pgvector stack, use:
+
+```bash
+docker compose up --build
+```
+
+See [local development and clean-clone verification](docs/local-development.md)
+for the local ports, reset instructions, and the native development path.
+Set `VITE_PADDLE_CLIENT_TOKEN` in `.env` before building when Paddle checkout is
+needed; it is a public browser token rather than a server secret.
+
 ---
 
 ### 5. Production build
@@ -110,6 +122,11 @@ pnpm run typecheck
 
 # Build all packages
 pnpm run build
+
+# Run the quality gates used by CI
+pnpm run format:check
+pnpm test
+pnpm audit --prod --audit-level=high
 ```
 
 ---
@@ -128,7 +145,7 @@ pnpm --filter @workspace/api-spec run codegen
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/healthz` | Health check + DB ping |
+| `GET` | `/api/healthz` | Unauthenticated process health check |
 | `POST` | `/api/auth/login` | Agent login → JWT + refresh cookie |
 | `POST` | `/api/auth/refresh` | Silent token refresh |
 | `GET` | `/api/conversations` | Paginated ticket list |
@@ -141,11 +158,11 @@ pnpm --filter @workspace/api-spec run codegen
 | `POST` | `/api/knowledge-articles/:id/vectorise` | Embed article into pgvector |
 | `POST` | `/api/crawler/start` | Start web crawler (SSE progress) |
 | `GET` | `/api/crawler/job/:jobId` | Poll BullMQ job status |
-| `POST` | `/api/checkout` | Create Lemon Squeezy checkout |
+| `POST` | `/api/checkout` | Create configured billing-provider checkout |
 | `POST` | `/api/billing/portal` | Customer portal URL |
 | `GET` | `/api/billing/subscription` | Current plan + status |
 | `GET` | `/api/billing/usage` | Period usage meters |
-| `POST` | `/api/webhooks/lemonsqueezy` | LS webhook receiver (HMAC-signed) |
+| `POST` | `/api/paddle/webhook` | Paddle webhook receiver (signature-verified) |
 | `PATCH` | `/api/brands/:id` | Update brand settings |
 | `POST` | `/api/brands/:id/logo-upload-url` | R2 presigned PUT for logo |
 
