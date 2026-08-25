@@ -4,9 +4,12 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "build": "PORT=${PORT:-5173} BASE_PATH=${BASE_PATH:-/} pnpm run typecheck && PORT=${PORT:-5173} BASE_PATH=${BASE_PATH:-/} pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "test": "vitest run",
+    "format:check": "prettier --check package.json .prettierrc.json vitest.config.ts artifacts/api-server/src/lib/requestValidation.js artifacts/api-server/src/lib/requestValidation.test.ts artifacts/dashboard/src/lib/brandValidation.ts artifacts/dashboard/src/lib/brandValidation.test.ts artifacts/dashboard/src/lib/checkout.ts artifacts/dashboard/src/lib/checkout.test.ts",
+    "lint": "pnpm run format:check"
   },
   "private": true,
   "devDependencies": {
@@ -15,6 +18,19 @@
   },
   "dependencies": {
     "stripe": "^22.3.0",
-    "stripe-replit-sync": "^1.0.0"
+    "stripe-replit-sync": "^1.0.0",
+    "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "^2.1.3",
+      "body-parser": "^2.3.0",
+      "esbuild": "^0.28.1",
+      "nanoid": "^3.3.18",
+      "postcss": "^8.5.18",
+      "socket.io-parser": "^4.2.7",
+      "undici": "^7.29.0",
+      "ws": "^8.21.0"
+    }
   }
 }
