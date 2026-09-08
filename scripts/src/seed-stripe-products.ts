@@ -1,4 +1,4 @@
-import { getUncachableStripeClient } from "./stripeClient";
+import { getUncachableStripeClient } from './stripeClient';
 
 /**
  * Seeds Atelier OmniCore's self-serve plans in Stripe.
@@ -27,37 +27,37 @@ interface PlanSpec {
 
 const PLANS: PlanSpec[] = [
   {
-    plan: "starter",
-    name: "OmniCore Starter",
+    plan: 'starter',
+    name: 'OmniCore Starter',
     description:
-      "For small teams getting started with omnichannel support. Includes live chat widget, email integration, and basic reporting.",
+      'For small teams getting started with omnichannel support. Includes live chat widget, email integration, and basic reporting.',
     unitAmount: 2900,
     trialDays: 14,
     metadata: {
-      plan: "starter",
-      self_serve: "true",
-      max_brands_allowed: "1",
-      max_agents_allowed: "3",
-      conversation_limit: "500",
-      ai_feature_enabled: "false",
-      smtp_feature_enabled: "false",
+      plan: 'starter',
+      self_serve: 'true',
+      max_brands_allowed: '1',
+      max_agents_allowed: '3',
+      conversation_limit: '500',
+      ai_feature_enabled: 'false',
+      smtp_feature_enabled: 'false',
     },
   },
   {
-    plan: "growth",
-    name: "OmniCore Growth",
+    plan: 'growth',
+    name: 'OmniCore Growth',
     description:
-      "For scaling teams that need AI deflection and powerful automations. Includes unlimited agents, AI bot deflection, advanced reporting, and custom branding.",
+      'For scaling teams that need AI deflection and powerful automations. Includes unlimited agents, AI bot deflection, advanced reporting, and custom branding.',
     unitAmount: 7900,
     trialDays: 14,
     metadata: {
-      plan: "growth",
-      self_serve: "true",
-      max_brands_allowed: "10",
-      max_agents_allowed: "999",
-      conversation_limit: "10000",
-      ai_feature_enabled: "true",
-      smtp_feature_enabled: "true",
+      plan: 'growth',
+      self_serve: 'true',
+      max_brands_allowed: '10',
+      max_agents_allowed: '999',
+      conversation_limit: '10000',
+      ai_feature_enabled: 'true',
+      smtp_feature_enabled: 'true',
     },
   },
 ];
@@ -102,8 +102,8 @@ async function seed() {
     const hasPrice = prices.data.some(
       (p) =>
         p.unit_amount === spec.unitAmount &&
-        p.currency === "usd" &&
-        p.recurring?.interval === "month",
+        p.currency === 'usd' &&
+        p.recurring?.interval === 'month',
     );
 
     if (hasPrice) {
@@ -114,8 +114,8 @@ async function seed() {
       const price = await stripe.prices.create({
         product: productId,
         unit_amount: spec.unitAmount,
-        currency: "usd",
-        recurring: { interval: "month" },
+        currency: 'usd',
+        recurring: { interval: 'month' },
         metadata: { plan: spec.plan },
       });
       console.log(
@@ -125,13 +125,13 @@ async function seed() {
   }
 
   console.log(
-    "\n✓ Stripe plans seeded. The managed webhook will sync them to Postgres.",
+    '\n✓ Stripe plans seeded. The managed webhook will sync them to Postgres.',
   );
-  console.log("  Starter: $29.00/month | Growth: $79.00/month");
-  console.log("  Both plans include a 14-day free trial.");
+  console.log('  Starter: $29.00/month | Growth: $79.00/month');
+  console.log('  Both plans include a 14-day free trial.');
 }
 
 seed().catch((err) => {
-  console.error("Error seeding Stripe products:", err?.message ?? err);
+  console.error('Error seeding Stripe products:', err?.message ?? err);
   process.exit(1);
 });

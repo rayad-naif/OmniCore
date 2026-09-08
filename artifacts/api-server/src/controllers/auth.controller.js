@@ -10,18 +10,18 @@
  */
 
 const { Router } = require('express');
-const jwt        = require('jsonwebtoken');
-const bcrypt     = require('bcryptjs');
-const crypto     = require('crypto');
-const { pool }   = require('../lib/db');
-const logger     = require('../utils/logger');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { pool } = require('../lib/db');
+const logger = require('../utils/logger');
 const { sendPasswordResetEmail } = require('../services/email.service');
 const { effectivePermissions } = require('../lib/permissions');
 const { validateLoginInput } = require('../lib/requestValidation');
 
 const router = Router();
 
-const ACCESS_TTL  = '15m';
+const ACCESS_TTL = '15m';
 const REFRESH_TTL = '7d';
 const COOKIE_NAME = 'omnicore_rt';
 
@@ -29,12 +29,13 @@ const COOKIE_NAME = 'omnicore_rt';
 // Defaults to true in production (HTTPS). Always false in development.
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure:   process.env.COOKIE_SECURE !== undefined
-              ? process.env.COOKIE_SECURE === 'true'
-              : process.env.NODE_ENV === 'production',
+  secure:
+    process.env.COOKIE_SECURE !== undefined
+      ? process.env.COOKIE_SECURE === 'true'
+      : process.env.NODE_ENV === 'production',
   sameSite: 'lax',
-  path:     '/api/auth',
-  maxAge:   7 * 24 * 60 * 60 * 1000,
+  path: '/api/auth',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
 function getSecret() {
@@ -46,37 +47,41 @@ function getSecret() {
 function signAccess(agent) {
   return jwt.sign(
     {
-      tenantId:     agent.tenant_id,
-      role:         agent.role,
-      email:        agent.email,
-      name:         agent.name,
-      permissions:  agent.permissions_json || {},
-      isSuperAdmin: !!(process.env.SUPER_ADMIN_EMAIL && agent.email === process.env.SUPER_ADMIN_EMAIL),
+      tenantId: agent.tenant_id,
+      role: agent.role,
+      email: agent.email,
+      name: agent.name,
+      permissions: agent.permissions_json || {},
+      isSuperAdmin: !!(
+        process.env.SUPER_ADMIN_EMAIL &&
+        agent.email === process.env.SUPER_ADMIN_EMAIL
+      ),
     },
     getSecret(),
-    { subject: String(agent.id), expiresIn: ACCESS_TTL }
+    { subject: String(agent.id), expiresIn: ACCESS_TTL },
   );
 }
 
 function signRefresh(agentId, tenantId) {
-  return jwt.sign(
-    { tenantId, type: 'refresh' },
-    getSecret(),
-    { subject: String(agentId), expiresIn: REFRESH_TTL }
-  );
+  return jwt.sign({ tenantId, type: 'refresh' }, getSecret(), {
+    subject: String(agentId),
+    expiresIn: REFRESH_TTL,
+  });
 }
 
 function safeAgent(row) {
-  const isSuperAdmin = !!(process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL);
+  const isSuperAdmin = !!(
+    process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL
+  );
   return {
-    id:           row.id,
-    tenantId:     row.tenant_id,
-    role:         row.role,
-    email:        row.email,
-    name:         row.name,
+    id: row.id,
+    tenantId: row.tenant_id,
+    role: row.role,
+    email: row.email,
+    name: row.name,
     isSuperAdmin,
     // Effective (resolved) permissions for UI gating. Admins/super admins → full.
-    permissions:  effectivePermissions({
+    permissions: effectivePermissions({
       role: isSuperAdmin ? 'admin' : row.role,
       permissions: row.permissions_json || {},
     }),
@@ -93,21 +98,25 @@ router.post('/login', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT id, tenant_id, name, email, role, password_hash, is_active, permissions_json
        FROM agents WHERE email = $1 LIMIT 1`,
-      [email.trim().toLowerCase()]
+      [email.trim().toLowerCase()],
     );
 
     const agent = rows[0];
     if (!agent) return res.status(401).json({ error: 'Invalid credentials' });
-    if (!agent.is_active) return res.status(403).json({ error: 'Account is deactivated' });
+    if (!agent.is_active)
+      return res.status(403).json({ error: 'Account is deactivated' });
 
     const valid = await bcrypt.compare(password, agent.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const accessToken  = signAccess(agent);
+    const accessToken = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
 
     res.cookie(COOKIE_NAME, refreshToken, COOKIE_OPTS);
-    logger.info({ agentId: agent.id, tenantId: agent.tenant_id }, 'agent_login');
+    logger.info(
+      { agentId: agent.id, tenantId: agent.tenant_id },
+      'agent_login',
+    );
     return res.json({ accessToken, agent: safeAgent(agent) });
   } catch (err) {
     logger.error({ err }, 'login_error');
@@ -126,7 +135,9 @@ router.post('/refresh', async (req, res) => {
       payload = jwt.verify(token, getSecret());
     } catch {
       res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTS, maxAge: 0 });
-      return res.status(401).json({ error: 'Refresh token expired or invalid' });
+      return res
+        .status(401)
+        .json({ error: 'Refresh token expired or invalid' });
     }
 
     if (payload.type !== 'refresh') {
@@ -136,7 +147,7 @@ router.post('/refresh', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT id, tenant_id, name, email, role, is_active, permissions_json
        FROM agents WHERE id = $1 LIMIT 1`,
-      [payload.sub]
+      [payload.sub],
     );
 
     const agent = rows[0];
@@ -145,7 +156,7 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Agent not found or deactivated' });
     }
 
-    const accessToken  = signAccess(agent);
+    const accessToken = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
     res.cookie(COOKIE_NAME, refreshToken, COOKIE_OPTS);
     return res.json({ accessToken, agent: safeAgent(agent) });
@@ -175,12 +186,15 @@ router.post('/forgot-password', async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT id, tenant_id, name, email FROM agents WHERE email = $1 AND is_active = TRUE LIMIT 1`,
-      [email.trim().toLowerCase()]
+      [email.trim().toLowerCase()],
     );
 
     // Always return 200 to avoid email enumeration
     if (!rows.length) {
-      return res.json({ ok: true, message: 'If that email exists, a reset link has been sent.' });
+      return res.json({
+        ok: true,
+        message: 'If that email exists, a reset link has been sent.',
+      });
     }
 
     const agent = rows[0];
@@ -189,7 +203,7 @@ router.post('/forgot-password', async (req, res) => {
     await pool.query(
       `UPDATE password_reset_tokens SET used_at = NOW()
        WHERE agent_id = $1 AND used_at IS NULL`,
-      [agent.id]
+      [agent.id],
     );
 
     // Generate secure random token
@@ -199,7 +213,7 @@ router.post('/forgot-password', async (req, res) => {
     await pool.query(
       `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
        VALUES ($1, $2, $3)`,
-      [agent.id, rawToken, expiresAt]
+      [agent.id, rawToken, expiresAt],
     );
 
     // Build reset link on the public domain (PUBLIC_APP_URL, then REPLIT_DOMAINS).
@@ -208,7 +222,12 @@ router.post('/forgot-password', async (req, res) => {
     const resetLink = `${appOrigin}/dashboard/?reset_token=${rawToken}`;
 
     // Send reset email via platform SMTP (falling back to tenant SMTP).
-    const emailSent = await sendPasswordResetEmail(agent.tenant_id, agent.email, agent.name, resetLink);
+    const emailSent = await sendPasswordResetEmail(
+      agent.tenant_id,
+      agent.email,
+      agent.name,
+      resetLink,
+    );
 
     logger.info({ agentId: agent.id }, 'forgot_password_requested');
 
@@ -234,7 +253,9 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'token and password are required' });
     }
     if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      return res
+        .status(400)
+        .json({ error: 'Password must be at least 8 characters' });
     }
 
     const { rows } = await pool.query(
@@ -242,7 +263,7 @@ router.post('/reset-password', async (req, res) => {
        FROM password_reset_tokens prt
        JOIN agents a ON a.id = prt.agent_id
        WHERE prt.token = $1 AND prt.used_at IS NULL`,
-      [token.trim()]
+      [token.trim()],
     );
 
     if (!rows.length) {
@@ -251,16 +272,27 @@ router.post('/reset-password', async (req, res) => {
 
     const row = rows[0];
     if (new Date(row.expires_at) < new Date()) {
-      return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
+      return res
+        .status(400)
+        .json({ error: 'Reset link has expired. Please request a new one.' });
     }
 
     const hash = await bcrypt.hash(password, 12);
 
-    await pool.query(`UPDATE agents SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hash, row.agent_id]);
-    await pool.query(`UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`, [row.id]);
+    await pool.query(
+      `UPDATE agents SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hash, row.agent_id],
+    );
+    await pool.query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
+      [row.id],
+    );
 
     logger.info({ agentId: row.agent_id }, 'password_reset_success');
-    return res.json({ ok: true, message: 'Password updated. You can now sign in.' });
+    return res.json({
+      ok: true,
+      message: 'Password updated. You can now sign in.',
+    });
   } catch (err) {
     logger.error({ err }, 'reset_password_error');
     return res.status(500).json({ error: 'Internal server error' });

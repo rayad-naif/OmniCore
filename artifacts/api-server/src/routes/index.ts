@@ -1,5 +1,5 @@
-import { Router, type IRouter } from "express";
-import healthRouter from "./health";
+import { Router, type IRouter } from 'express';
+import healthRouter from './health';
 
 /**
  * CJS controller/router imports.
@@ -9,42 +9,44 @@ import healthRouter from "./health";
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const authRouter: IRouter = require("../controllers/auth.controller");
+const authRouter: IRouter = require('../controllers/auth.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const signupRouter: IRouter = require("../controllers/signup.controller");
+const signupRouter: IRouter = require('../controllers/signup.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const tenantRouter: IRouter = require("../controllers/tenant.controller");
+const tenantRouter: IRouter = require('../controllers/tenant.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const conversationsRouter: IRouter = require("../controllers/conversations.controller");
+const conversationsRouter: IRouter = require('../controllers/conversations.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const aiRouter: IRouter = require("../routes/ai.router");
+const aiRouter: IRouter = require('../routes/ai.router');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const billingRouter: IRouter = require("../routes/billing.router");
+const billingRouter: IRouter = require('../routes/billing.router');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const widgetRouter: IRouter = require("../controllers/widget.controller");
+const widgetRouter: IRouter = require('../controllers/widget.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const agentsRouter: IRouter = require("../controllers/agents.controller");
+const agentsRouter: IRouter = require('../controllers/agents.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const superAdminRouter: IRouter = require("../controllers/super-admin.controller");
+const superAdminRouter: IRouter = require('../controllers/super-admin.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const contactsRouter: IRouter = require("../controllers/contacts.controller");
+const contactsRouter: IRouter = require('../controllers/contacts.controller');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const cannedResponsesRouter: IRouter = require("../controllers/canned-responses.controller");
+const cannedResponsesRouter: IRouter = require('../controllers/canned-responses.controller');
 
 // Email webhook — exposes `router` and `setIo` to allow socket injection
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const emailWebhook: { router: IRouter; setIo: (io: unknown) => void } =
-  require("../controllers/email.webhook.controller");
+const emailWebhook: {
+  router: IRouter;
+  setIo: (io: unknown) => void;
+} = require('../controllers/email.webhook.controller');
 
 const router: IRouter = Router();
 
@@ -52,29 +54,29 @@ const router: IRouter = Router();
 router.use(healthRouter);
 
 // ── Auth (no token required) ─────────────────────────────────────────────────
-router.use("/auth", authRouter);
+router.use('/auth', authRouter);
 
 // ── Signup (unauthenticated, public) ─────────────────────────────────────────
-router.use("/auth/signup", signupRouter);
+router.use('/auth/signup', signupRouter);
 
 // ── Widget — unauthenticated, CORS * (embedded on customer sites) ─────────────
-router.use("/widget", widgetRouter);
+router.use('/widget', widgetRouter);
 
 // ── Core domain routes (requireAuth enforced inside each sub-router) ──────────
-router.use("/tenants",       tenantRouter);
-router.use("/conversations", conversationsRouter);
-router.use("/ai",            aiRouter);
-router.use("/agents",        agentsRouter);
-router.use("/super-admin",   superAdminRouter);
-router.use("/contacts",           contactsRouter);
-router.use("/canned-responses",   cannedResponsesRouter);
+router.use('/tenants', tenantRouter);
+router.use('/conversations', conversationsRouter);
+router.use('/ai', aiRouter);
+router.use('/agents', agentsRouter);
+router.use('/super-admin', superAdminRouter);
+router.use('/contacts', contactsRouter);
+router.use('/canned-responses', cannedResponsesRouter);
 
 // ── Billing + checkout + LS webhook (mounted at /api level) ──────────────────
 // billing.router.js handles: /checkout, /billing/*, /webhooks/lemonsqueezy
-router.use("/", billingRouter);
+router.use('/', billingRouter);
 
 // ── Inbound email webhook ─────────────────────────────────────────────────────
-router.use("/webhooks", emailWebhook.router);
+router.use('/webhooks', emailWebhook.router);
 
 export { emailWebhook };
 export default router;

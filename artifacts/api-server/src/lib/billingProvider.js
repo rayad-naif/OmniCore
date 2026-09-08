@@ -35,7 +35,14 @@ function getActiveProvider() {
 
 // ─── Stripe helpers ───────────────────────────────────────────────────────────
 
-async function _stripePublicCheckout({ email, plan, businessName, userName, stripepriceId, baseUrl }) {
+async function _stripePublicCheckout({
+  email,
+  plan,
+  businessName,
+  userName,
+  stripepriceId,
+  baseUrl,
+}) {
   const { getUncachableStripeClient } = require('./stripeClient');
   const stripe = await getUncachableStripeClient();
 
@@ -66,7 +73,13 @@ async function _stripePublicCheckout({ email, plan, businessName, userName, stri
   return { url: session.url, provider: 'stripe' };
 }
 
-async function _stripeTenantCheckout({ tenant, agentEmail, plan, stripepriceId, baseUrl }) {
+async function _stripeTenantCheckout({
+  tenant,
+  agentEmail,
+  plan,
+  stripepriceId,
+  baseUrl,
+}) {
   const { pool } = require('./db');
   const { getUncachableStripeClient } = require('./stripeClient');
   const stripe = await getUncachableStripeClient();
@@ -118,8 +131,18 @@ async function _stripePortal({ tenant, baseUrl }) {
 
 // ─── Paddle helpers ───────────────────────────────────────────────────────────
 
-async function _paddlePublicCheckout({ email, plan, businessName, userName, paddlePriceId, baseUrl }) {
-  const { createCheckoutTransaction, getPaddlePriceId } = require('./paddleClient');
+async function _paddlePublicCheckout({
+  email,
+  plan,
+  businessName,
+  userName,
+  paddlePriceId,
+  baseUrl,
+}) {
+  const {
+    createCheckoutTransaction,
+    getPaddlePriceId,
+  } = require('./paddleClient');
 
   const priceId = paddlePriceId || getPaddlePriceId(plan);
   if (!priceId) {
@@ -143,8 +166,18 @@ async function _paddlePublicCheckout({ email, plan, businessName, userName, padd
   return { url, transactionId, provider: 'paddle' };
 }
 
-async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, baseUrl }) {
-  const { createCheckoutTransaction, getPaddlePriceId, paddleRequest } = require('./paddleClient');
+async function _paddleTenantCheckout({
+  tenant,
+  agentEmail,
+  plan,
+  paddlePriceId,
+  baseUrl,
+}) {
+  const {
+    createCheckoutTransaction,
+    getPaddlePriceId,
+    paddleRequest,
+  } = require('./paddleClient');
   const { pool } = require('./db');
 
   const priceId = paddlePriceId || getPaddlePriceId(plan);
@@ -173,9 +206,11 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
     } catch (createErr) {
       // Paddle returns "customer email conflicts with customer of id ctm_xxx"
       // when the email is already registered. Extract the existing ID.
-      const conflictId =
-        (createErr.paddleError?.detail || createErr.message || '')
-          .match(/ctm_\w+/)?.[0];
+      const conflictId = (
+        createErr.paddleError?.detail ||
+        createErr.message ||
+        ''
+      ).match(/ctm_\w+/)?.[0];
       if (conflictId) {
         paddleCustomerId = conflictId;
       } else if (agentEmail) {
@@ -186,7 +221,9 @@ async function _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, 
             `/customers?email=${encodeURIComponent(agentEmail)}&per_page=1`,
           );
           paddleCustomerId = listResp.data?.[0]?.id || null;
-        } catch { /* ignore nested failure */ }
+        } catch {
+          /* ignore nested failure */
+        }
       }
       if (!paddleCustomerId) throw createErr; // genuine error, rethrow
     }
@@ -235,12 +272,34 @@ async function _paddlePortal({ tenant }) {
  * @param {string} opts.baseUrl
  * @returns {Promise<{url: string, provider: string}>}
  */
-async function createPublicCheckoutUrl({ email, plan, businessName, userName, stripepriceId, paddlePriceId, baseUrl }) {
+async function createPublicCheckoutUrl({
+  email,
+  plan,
+  businessName,
+  userName,
+  stripepriceId,
+  paddlePriceId,
+  baseUrl,
+}) {
   const provider = getActiveProvider();
   if (provider === 'paddle') {
-    return _paddlePublicCheckout({ email, plan, businessName, userName, paddlePriceId, baseUrl });
+    return _paddlePublicCheckout({
+      email,
+      plan,
+      businessName,
+      userName,
+      paddlePriceId,
+      baseUrl,
+    });
   }
-  return _stripePublicCheckout({ email, plan, businessName, userName, stripepriceId, baseUrl });
+  return _stripePublicCheckout({
+    email,
+    plan,
+    businessName,
+    userName,
+    stripepriceId,
+    baseUrl,
+  });
 }
 
 /**
@@ -248,12 +307,31 @@ async function createPublicCheckoutUrl({ email, plan, businessName, userName, st
  * Routes to the provider that already has a customer record for this tenant,
  * falling back to the active provider.
  */
-async function createTenantCheckoutUrl({ tenant, agentEmail, plan, stripepriceId, paddlePriceId, baseUrl }) {
+async function createTenantCheckoutUrl({
+  tenant,
+  agentEmail,
+  plan,
+  stripepriceId,
+  paddlePriceId,
+  baseUrl,
+}) {
   // Prefer the provider that already has a record for this tenant.
   if (tenant.paddle_customer_id || getActiveProvider() === 'paddle') {
-    return _paddleTenantCheckout({ tenant, agentEmail, plan, paddlePriceId, baseUrl });
+    return _paddleTenantCheckout({
+      tenant,
+      agentEmail,
+      plan,
+      paddlePriceId,
+      baseUrl,
+    });
   }
-  return _stripeTenantCheckout({ tenant, agentEmail, plan, stripepriceId, baseUrl });
+  return _stripeTenantCheckout({
+    tenant,
+    agentEmail,
+    plan,
+    stripepriceId,
+    baseUrl,
+  });
 }
 
 /**

@@ -21,27 +21,27 @@
 
 'use strict';
 
-const { Readable }       = require('node:stream');
+const { Readable } = require('node:stream');
 const { buffer: toBuffer } = require('node:stream/consumers');
-const PDFDocument        = require('pdfkit');
+const PDFDocument = require('pdfkit');
 const {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { pool }  = require('../lib/db');
-const logger    = require('../utils/logger');
+const { pool } = require('../lib/db');
+const logger = require('../utils/logger');
 
 // ─── R2 / S3 client ───────────────────────────────────────────────────────────
 function getR2Client() {
   const endpoint = process.env.R2_ENDPOINT;
   if (!endpoint) throw new Error('R2_ENDPOINT not set');
   return new S3Client({
-    region:   'auto',
+    region: 'auto',
     endpoint,
     credentials: {
-      accessKeyId:     process.env.R2_ACCESS_KEY_ID     || '',
+      accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
     },
     forcePathStyle: false,
@@ -50,40 +50,43 @@ function getR2Client() {
 
 // ─── Colour palette ───────────────────────────────────────────────────────────
 const COLORS = {
-  brand:      '#6366f1',  // violet-600
-  agentBg:    '#6366f1',
-  visitorBg:  '#f1f5f9',  // slate-100
-  noteBg:     '#fef3c7',  // amber-100
+  brand: '#6366f1', // violet-600
+  agentBg: '#6366f1',
+  visitorBg: '#f1f5f9', // slate-100
+  noteBg: '#fef3c7', // amber-100
   noteBorder: '#f59e0b',
-  systemText: '#94a3b8',  // slate-400
-  bodyText:   '#1e293b',  // slate-900
-  mutedText:  '#64748b',  // slate-500
-  white:      '#ffffff',
-  pageBg:     '#f8fafc',  // slate-50
-  divider:    '#e2e8f0',  // slate-200
+  systemText: '#94a3b8', // slate-400
+  bodyText: '#1e293b', // slate-900
+  mutedText: '#64748b', // slate-500
+  white: '#ffffff',
+  pageBg: '#f8fafc', // slate-50
+  divider: '#e2e8f0', // slate-200
 };
 
 const FONT_REGULAR = 'Helvetica';
-const FONT_BOLD    = 'Helvetica-Bold';
+const FONT_BOLD = 'Helvetica-Bold';
 const FONT_OBLIQUE = 'Helvetica-Oblique';
-const PAGE_W       = 595.28;   // A4 pt
-const MARGIN       = 48;
-const CONTENT_W    = PAGE_W - MARGIN * 2;
+const PAGE_W = 595.28; // A4 pt
+const MARGIN = 48;
+const CONTENT_W = PAGE_W - MARGIN * 2;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtDateTime(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour:  '2-digit', minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
 function senderLabel(msg) {
-  if (msg.is_internal_note)            return 'Internal Note';
-  if (msg.sender_type === 'agent')     return msg.sender_name || 'Agent';
-  if (msg.sender_type === 'ai_bot')    return 'AI Bot';
-  if (msg.sender_type === 'system')    return 'System';
+  if (msg.is_internal_note) return 'Internal Note';
+  if (msg.sender_type === 'agent') return msg.sender_name || 'Agent';
+  if (msg.sender_type === 'ai_bot') return 'AI Bot';
+  if (msg.sender_type === 'system') return 'System';
   return msg.visitor_email || msg.visitor_name || 'Visitor';
 }
 
@@ -98,10 +101,10 @@ function stripHtml(html) {
     .replace(/<\/p>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&')
-    .replace(/&lt;/g,  '<')
-    .replace(/&gt;/g,  '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g,  "'")
+    .replace(/&#39;/g, "'")
     .trim();
 }
 
@@ -115,20 +118,20 @@ function stripHtml(html) {
 async function buildPdf(conversation, messages, brand) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      size:    'A4',
+      size: 'A4',
       margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN },
       info: {
-        Title:   `Conversation #${conversation.id}`,
-        Author:  brand.name || 'OmniCore',
+        Title: `Conversation #${conversation.id}`,
+        Author: brand.name || 'OmniCore',
         Subject: 'Support Conversation Transcript',
         Creator: 'Atelier OmniCore',
       },
     });
 
     const chunks = [];
-    doc.on('data',  c  => chunks.push(c));
-    doc.on('end',   ()  => resolve(Buffer.concat(chunks)));
-    doc.on('error', err => reject(err));
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', (err) => reject(err));
 
     // ── Page background ──────────────────────────────────────────────────────
     doc.rect(0, 0, PAGE_W, doc.page.height).fill(COLORS.pageBg);
@@ -137,92 +140,131 @@ async function buildPdf(conversation, messages, brand) {
     const headerH = 72;
     doc.rect(0, 0, PAGE_W, headerH).fill(COLORS.brand);
 
-    doc.fillColor(COLORS.white)
-      .font(FONT_BOLD).fontSize(16)
+    doc
+      .fillColor(COLORS.white)
+      .font(FONT_BOLD)
+      .fontSize(16)
       .text(brand.name || 'OmniCore', MARGIN, 20, { width: CONTENT_W / 2 });
 
-    doc.font(FONT_REGULAR).fontSize(9)
+    doc
+      .font(FONT_REGULAR)
+      .fontSize(9)
       .text('Conversation Transcript', MARGIN, 40, { width: CONTENT_W / 2 });
 
-    doc.font(FONT_REGULAR).fontSize(8)
-      .text(`Exported ${fmtDateTime(new Date().toISOString())}`, MARGIN + CONTENT_W / 2, 40, {
-        width: CONTENT_W / 2, align: 'right',
-      });
+    doc
+      .font(FONT_REGULAR)
+      .fontSize(8)
+      .text(
+        `Exported ${fmtDateTime(new Date().toISOString())}`,
+        MARGIN + CONTENT_W / 2,
+        40,
+        {
+          width: CONTENT_W / 2,
+          align: 'right',
+        },
+      );
 
     // ── Metadata block ───────────────────────────────────────────────────────
     let y = headerH + 20;
 
-    doc.rect(MARGIN, y, CONTENT_W, 70)
+    doc
+      .rect(MARGIN, y, CONTENT_W, 70)
       .fill(COLORS.white)
       .stroke(COLORS.divider);
 
     y += 10;
-    const metaLeft  = MARGIN + 12;
+    const metaLeft = MARGIN + 12;
     const metaRight = PAGE_W / 2 + 12;
-    const metaRows  = [
+    const metaRows = [
       ['Conversation ID', `#${conversation.id}`],
-      ['Status',          conversation.status?.replace('_', ' ') || '—'],
-      ['Channel',         conversation.channel || '—'],
+      ['Status', conversation.status?.replace('_', ' ') || '—'],
+      ['Channel', conversation.channel || '—'],
     ];
     const metaRows2 = [
-      ['Visitor',     conversation.visitor_email || conversation.visitor_name || 'Anonymous'],
-      ['Opened',      fmtDateTime(conversation.created_at)],
-      ['Resolved',    fmtDateTime(conversation.resolved_at)],
+      [
+        'Visitor',
+        conversation.visitor_email || conversation.visitor_name || 'Anonymous',
+      ],
+      ['Opened', fmtDateTime(conversation.created_at)],
+      ['Resolved', fmtDateTime(conversation.resolved_at)],
     ];
 
     metaRows.forEach(([label, value], i) => {
       const rowY = y + i * 16;
-      doc.fillColor(COLORS.mutedText).font(FONT_BOLD).fontSize(7)
+      doc
+        .fillColor(COLORS.mutedText)
+        .font(FONT_BOLD)
+        .fontSize(7)
         .text(label.toUpperCase(), metaLeft, rowY, { width: 80 });
-      doc.fillColor(COLORS.bodyText).font(FONT_REGULAR).fontSize(8)
+      doc
+        .fillColor(COLORS.bodyText)
+        .font(FONT_REGULAR)
+        .fontSize(8)
         .text(value, metaLeft + 85, rowY, { width: CONTENT_W / 2 - 85 });
     });
     metaRows2.forEach(([label, value], i) => {
       const rowY = y + i * 16;
-      doc.fillColor(COLORS.mutedText).font(FONT_BOLD).fontSize(7)
+      doc
+        .fillColor(COLORS.mutedText)
+        .font(FONT_BOLD)
+        .fontSize(7)
         .text(label.toUpperCase(), metaRight, rowY, { width: 80 });
-      doc.fillColor(COLORS.bodyText).font(FONT_REGULAR).fontSize(8)
+      doc
+        .fillColor(COLORS.bodyText)
+        .font(FONT_REGULAR)
+        .fontSize(8)
         .text(value, metaRight + 85, rowY, { width: CONTENT_W / 2 - 85 });
     });
 
     y = headerH + 20 + 70 + 16;
 
     // ── Section heading ──────────────────────────────────────────────────────
-    doc.fillColor(COLORS.mutedText).font(FONT_BOLD).fontSize(7)
+    doc
+      .fillColor(COLORS.mutedText)
+      .font(FONT_BOLD)
+      .fontSize(7)
       .text('MESSAGES', MARGIN, y);
     y += 14;
 
-    doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y)
+    doc
+      .moveTo(MARGIN, y)
+      .lineTo(MARGIN + CONTENT_W, y)
       .stroke(COLORS.divider);
     y += 10;
 
     // ── Messages ─────────────────────────────────────────────────────────────
     const BUBBLE_RADIUS = 6;
-    const BUBBLE_PAD    = 10;
-    const MAX_BUBBLE_W  = CONTENT_W * 0.72;
+    const BUBBLE_PAD = 10;
+    const MAX_BUBBLE_W = CONTENT_W * 0.72;
 
     for (const msg of messages) {
       const isVisitor = msg.sender_type === 'visitor';
-      const isNote    = !!msg.is_internal_note;
-      const isSystem  = msg.sender_type === 'system';
-      const bodyText  = stripHtml(msg.message_body || '');
+      const isNote = !!msg.is_internal_note;
+      const isSystem = msg.sender_type === 'system';
+      const bodyText = stripHtml(msg.message_body || '');
 
       if (!bodyText && !isSystem) continue;
 
       if (isSystem) {
         // System message — centred, muted
-        doc.fillColor(COLORS.systemText).font(FONT_OBLIQUE).fontSize(8)
+        doc
+          .fillColor(COLORS.systemText)
+          .font(FONT_OBLIQUE)
+          .fontSize(8)
           .text(bodyText, MARGIN, y, { width: CONTENT_W, align: 'center' });
         y += doc.heightOfString(bodyText, { width: CONTENT_W }) + 8;
         continue;
       }
 
       // Measure text height
-      const textW      = MAX_BUBBLE_W - BUBBLE_PAD * 2;
-      const labelH     = 10;
-      const textH      = doc.font(FONT_REGULAR).fontSize(9).heightOfString(bodyText, { width: textW });
-      const timeH      = 8;
-      const bubbleH    = labelH + textH + timeH + BUBBLE_PAD * 2;
+      const textW = MAX_BUBBLE_W - BUBBLE_PAD * 2;
+      const labelH = 10;
+      const textH = doc
+        .font(FONT_REGULAR)
+        .fontSize(9)
+        .heightOfString(bodyText, { width: textW });
+      const timeH = 8;
+      const bubbleH = labelH + textH + timeH + BUBBLE_PAD * 2;
 
       // Check page break
       if (y + bubbleH > doc.page.height - MARGIN) {
@@ -233,16 +275,17 @@ async function buildPdf(conversation, messages, brand) {
       }
 
       // Bubble position
-      const bubbleX = isVisitor
-        ? MARGIN
-        : MARGIN + CONTENT_W - MAX_BUBBLE_W;
+      const bubbleX = isVisitor ? MARGIN : MARGIN + CONTENT_W - MAX_BUBBLE_W;
 
-      const bgColor = isNote   ? COLORS.noteBg
-                    : isVisitor ? COLORS.visitorBg
-                    : COLORS.agentBg;
+      const bgColor = isNote
+        ? COLORS.noteBg
+        : isVisitor
+          ? COLORS.visitorBg
+          : COLORS.agentBg;
 
       // Draw bubble background
-      doc.roundedRect(bubbleX, y, MAX_BUBBLE_W, bubbleH, BUBBLE_RADIUS)
+      doc
+        .roundedRect(bubbleX, y, MAX_BUBBLE_W, bubbleH, BUBBLE_RADIUS)
         .fill(bgColor);
 
       // Note left border stripe
@@ -251,34 +294,69 @@ async function buildPdf(conversation, messages, brand) {
       }
 
       // Sender label
-      const labelColor = isNote ? '#92400e' : isVisitor ? COLORS.mutedText : COLORS.white;
-      doc.fillColor(labelColor).font(FONT_BOLD).fontSize(7)
-        .text(senderLabel(msg), bubbleX + BUBBLE_PAD, y + BUBBLE_PAD, { width: textW });
+      const labelColor = isNote
+        ? '#92400e'
+        : isVisitor
+          ? COLORS.mutedText
+          : COLORS.white;
+      doc
+        .fillColor(labelColor)
+        .font(FONT_BOLD)
+        .fontSize(7)
+        .text(senderLabel(msg), bubbleX + BUBBLE_PAD, y + BUBBLE_PAD, {
+          width: textW,
+        });
 
       // Body text
-      const textColor = isNote ? '#78350f' : isVisitor ? COLORS.bodyText : COLORS.white;
-      doc.fillColor(textColor).font(FONT_REGULAR).fontSize(9)
-        .text(bodyText, bubbleX + BUBBLE_PAD, y + BUBBLE_PAD + labelH, { width: textW });
+      const textColor = isNote
+        ? '#78350f'
+        : isVisitor
+          ? COLORS.bodyText
+          : COLORS.white;
+      doc
+        .fillColor(textColor)
+        .font(FONT_REGULAR)
+        .fontSize(9)
+        .text(bodyText, bubbleX + BUBBLE_PAD, y + BUBBLE_PAD + labelH, {
+          width: textW,
+        });
 
       // Timestamp
-      const timeColor = isNote ? '#a16207' : isVisitor ? COLORS.systemText : 'rgba(255,255,255,0.6)';
-      doc.fillColor(timeColor).font(FONT_REGULAR).fontSize(7)
-        .text(fmtDateTime(msg.created_at),
+      const timeColor = isNote
+        ? '#a16207'
+        : isVisitor
+          ? COLORS.systemText
+          : 'rgba(255,255,255,0.6)';
+      doc
+        .fillColor(timeColor)
+        .font(FONT_REGULAR)
+        .fontSize(7)
+        .text(
+          fmtDateTime(msg.created_at),
           bubbleX + BUBBLE_PAD,
           y + BUBBLE_PAD + labelH + textH + 2,
-          { width: textW, align: 'right' });
+          { width: textW, align: 'right' },
+        );
 
       y += bubbleH + 8;
     }
 
     // ── Footer on last page ───────────────────────────────────────────────────
     y += 16;
-    doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y).stroke(COLORS.divider);
+    doc
+      .moveTo(MARGIN, y)
+      .lineTo(MARGIN + CONTENT_W, y)
+      .stroke(COLORS.divider);
     y += 8;
-    doc.fillColor(COLORS.systemText).font(FONT_REGULAR).fontSize(7)
+    doc
+      .fillColor(COLORS.systemText)
+      .font(FONT_REGULAR)
+      .fontSize(7)
       .text(
         `Generated by Atelier OmniCore · ${fmtDateTime(new Date().toISOString())} · ${messages.length} message${messages.length !== 1 ? 's' : ''}`,
-        MARGIN, y, { width: CONTENT_W, align: 'center' }
+        MARGIN,
+        y,
+        { width: CONTENT_W, align: 'center' },
       );
 
     doc.end();
@@ -288,14 +366,16 @@ async function buildPdf(conversation, messages, brand) {
 // ─── Upload to R2 ─────────────────────────────────────────────────────────────
 async function uploadToR2(pdfBuffer, key) {
   const client = getR2Client();
-  await client.send(new PutObjectCommand({
-    Bucket:      process.env.R2_BUCKET_NAME,
-    Key:         key,
-    Body:        pdfBuffer,
-    ContentType: 'application/pdf',
-    // Auto-delete after 1 hour (requires lifecycle rules on the bucket, but metadata here for ref)
-    Metadata: { 'omnicore-export': 'true', 'ttl': '3600' },
-  }));
+  await client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+      Body: pdfBuffer,
+      ContentType: 'application/pdf',
+      // Auto-delete after 1 hour (requires lifecycle rules on the bucket, but metadata here for ref)
+      Metadata: { 'omnicore-export': 'true', ttl: '3600' },
+    }),
+  );
 }
 
 // ─── Generate presigned GET URL (15 min) ─────────────────────────────────────
@@ -305,10 +385,10 @@ async function presignGetUrl(key, ttlSeconds = 900) {
     client,
     new GetObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
-      Key:    key,
+      Key: key,
       ResponseContentDisposition: `attachment; filename="${key.split('/').pop()}"`,
     }),
-    { expiresIn: ttlSeconds }
+    { expiresIn: ttlSeconds },
   );
 }
 
@@ -327,9 +407,10 @@ async function exportConversation(conversationId, tenantId) {
      FROM conversations c
      LEFT JOIN brands b ON b.id = c.brand_id
      WHERE c.id = $1 AND c.tenant_id = $2`,
-    [conversationId, tenantId]
+    [conversationId, tenantId],
   );
-  if (!convRows[0]) throw Object.assign(new Error('Conversation not found'), { status: 404 });
+  if (!convRows[0])
+    throw Object.assign(new Error('Conversation not found'), { status: 404 });
   const conversation = convRows[0];
 
   // 2. Load messages
@@ -339,7 +420,7 @@ async function exportConversation(conversationId, tenantId) {
      LEFT JOIN agents a ON a.id = m.sender_id
      WHERE m.conversation_id = $1
      ORDER BY m.created_at ASC`,
-    [conversationId]
+    [conversationId],
   );
 
   // 3. Build PDF
@@ -348,8 +429,8 @@ async function exportConversation(conversationId, tenantId) {
 
   // 4. Upload to R2
   const timestamp = Date.now();
-  const filename  = `transcript-${conversationId}-${timestamp}.pdf`;
-  const key       = `exports/tenant-${tenantId}/${filename}`;
+  const filename = `transcript-${conversationId}-${timestamp}.pdf`;
+  const key = `exports/tenant-${tenantId}/${filename}`;
   await uploadToR2(pdfBuffer, key);
 
   // 5. Presign download URL (15 min)
@@ -370,7 +451,7 @@ async function exportConversation(conversationId, tenantId) {
  */
 async function handleExportRequest(req, res) {
   const conversationId = req.params.id;
-  const tenantId       = req.agent?.tenantId;
+  const tenantId = req.agent?.tenantId;
 
   if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -401,22 +482,26 @@ async function streamPdfDirect(req, res, conversationId, tenantId) {
       `SELECT c.*, b.brand_name FROM conversations c
        LEFT JOIN brands b ON b.tenant_id = c.tenant_id
        WHERE c.id = $1 AND c.tenant_id = $2`,
-      [conversationId, tenantId]
+      [conversationId, tenantId],
     );
-    if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    if (!convRows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
 
     const { rows: messages } = await pool.query(
       `SELECT m.*, a.name AS sender_name FROM messages m
        LEFT JOIN agents a ON a.id = m.sender_id
        WHERE m.conversation_id = $1 ORDER BY m.created_at ASC`,
-      [conversationId]
+      [conversationId],
     );
 
     const brand = { name: convRows[0].brand_name || 'OmniCore' };
     const pdfBuffer = await buildPdf(convRows[0], messages, brand);
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="transcript-${conversationId}.pdf"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="transcript-${conversationId}.pdf"`,
+    );
     res.setHeader('Content-Length', pdfBuffer.length);
     return res.send(pdfBuffer);
   } catch (err) {

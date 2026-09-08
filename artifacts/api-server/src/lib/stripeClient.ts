@@ -1,5 +1,5 @@
-import Stripe from "stripe";
-import { StripeSync } from "stripe-replit-sync";
+import Stripe from 'stripe';
+import { StripeSync } from 'stripe-replit-sync';
 
 /**
  * Fetches Stripe credentials from the Replit connection API.
@@ -11,22 +11,22 @@ async function getStripeCredentials(): Promise<{
 }> {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
-    ? "repl " + process.env.REPL_IDENTITY
+    ? 'repl ' + process.env.REPL_IDENTITY
     : process.env.WEB_REPL_RENEWAL
-      ? "depl " + process.env.WEB_REPL_RENEWAL
+      ? 'depl ' + process.env.WEB_REPL_RENEWAL
       : null;
 
   if (!hostname || !xReplitToken) {
     throw new Error(
-      "Missing Replit environment variables. " +
-        "Ensure the Stripe integration is connected via the Integrations tab.",
+      'Missing Replit environment variables. ' +
+        'Ensure the Stripe integration is connected via the Integrations tab.',
     );
   }
 
   const resp = await fetch(
     `https://${hostname}/api/v2/connection?include_secrets=true&connector_names=stripe`,
     {
-      headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken },
+      headers: { Accept: 'application/json', X_REPLIT_TOKEN: xReplitToken },
       signal: AbortSignal.timeout(10_000),
     },
   );
@@ -44,8 +44,8 @@ async function getStripeCredentials(): Promise<{
 
   if (!settings?.secret) {
     throw new Error(
-      "Stripe integration not connected or missing secret key. " +
-        "Connect Stripe via the Integrations tab first.",
+      'Stripe integration not connected or missing secret key. ' +
+        'Connect Stripe via the Integrations tab first.',
     );
   }
 
@@ -71,13 +71,13 @@ export async function getUncachableStripeClient(): Promise<Stripe> {
 export async function getStripeSync(): Promise<StripeSync> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL environment variable is required");
+    throw new Error('DATABASE_URL environment variable is required');
   }
 
   const { secretKey, webhookSecret } = await getStripeCredentials();
   return new StripeSync({
     poolConfig: { connectionString: databaseUrl },
     stripeSecretKey: secretKey,
-    stripeWebhookSecret: webhookSecret ?? "",
+    stripeWebhookSecret: webhookSecret ?? '',
   });
 }

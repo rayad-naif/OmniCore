@@ -5,18 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from '@tanstack/react-query';
 import type {
   QueryFunction,
   QueryKey,
   UseQueryOptions,
   UseQueryResult,
-} from "@tanstack/react-query";
+} from '@tanstack/react-query';
 
-import type { HealthStatus } from "./api.schemas";
+import type { HealthStatus } from './api.schemas';
 
-import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import { customFetch } from '../custom-fetch';
+import type { ErrorType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -37,7 +37,7 @@ export const healthCheck = async (
 ): Promise<HealthStatus> => {
   return customFetch<HealthStatus>(getHealthCheckUrl(), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 

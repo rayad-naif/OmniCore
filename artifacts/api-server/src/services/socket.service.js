@@ -5,8 +5,8 @@
  * Atelier OmniCore — Real-Time Socket Architecture
  */
 
-const { Server }   = require('socket.io');
-const { pool }     = require('../lib/db');
+const { Server } = require('socket.io');
+const { pool } = require('../lib/db');
 const { sendNewVisitorMessageEmail } = require('./email.service');
 
 // ---------------------------------------------------------------------------
@@ -15,13 +15,20 @@ const { sendNewVisitorMessageEmail } = require('./email.service');
 async function maybeGenerateSubject(conversationId, firstMessageBody) {
   try {
     const { rows } = await pool.query(
-      `SELECT subject FROM conversations WHERE id = $1`, [conversationId]
+      `SELECT subject FROM conversations WHERE id = $1`,
+      [conversationId],
     );
     if (!rows[0] || rows[0].subject) return; // already has a subject
 
     let subject = `Re: ${firstMessageBody.slice(0, 80)}`;
 
-    const genAI = (() => { try { return require('./ai.service'); } catch { return null; } })();
+    const genAI = (() => {
+      try {
+        return require('./ai.service');
+      } catch {
+        return null;
+      }
+    })();
     if (genAI?.rephraseText && process.env.GEMINI_API_KEY) {
       try {
         const raw = await genAI.rephraseText({
@@ -29,21 +36,25 @@ async function maybeGenerateSubject(conversationId, firstMessageBody) {
           tone: 'concise',
         });
         if (raw?.trim()) subject = `Re: ${raw.trim()}`;
-      } catch { /* use fallback */ }
+      } catch {
+        /* use fallback */
+      }
     }
 
     await pool.query(
       `UPDATE conversations SET subject = $1, updated_at = NOW() WHERE id = $2`,
-      [subject, conversationId]
+      [subject, conversationId],
     );
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 }
 
 // ---------------------------------------------------------------------------
 // In-memory typing registry  { conversationId -> { agentId, displayName, expiresAt } }
 // ---------------------------------------------------------------------------
 const typingRegistry = new Map();
-const TYPING_TTL_MS  = 5_000;
+const TYPING_TTL_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // In-memory agent presence registry  { agentId -> active socket count }
@@ -61,7 +72,9 @@ function markAgentOffline(agentId) {
   else onlineAgents.set(agentId, n);
 }
 /** Returns an array of agent IDs that currently have at least one live socket. */
-function getOnlineAgentIds() { return Array.from(onlineAgents.keys()); }
+function getOnlineAgentIds() {
+  return Array.from(onlineAgents.keys());
+}
 
 // ---------------------------------------------------------------------------
 // Module-level io reference so broadcast helpers can be called externally
@@ -107,22 +120,22 @@ async function authMiddleware(socket, next) {
     if (agentToken) {
       const payload = verifyAgentJwt(agentToken);
       socket.data.actorType = 'agent';
-      socket.data.agentId   = payload.sub;
-      socket.data.tenantId  = payload.tenantId;
-      socket.data.name      = payload.name;
+      socket.data.agentId = payload.sub;
+      socket.data.tenantId = payload.tenantId;
+      socket.data.name = payload.name;
       return next();
     }
 
     if (sessionToken) {
       const { rows } = await pool.query(
         `SELECT id, tenant_id, brand_id FROM visitors WHERE session_token = $1`,
-        [sessionToken]
+        [sessionToken],
       );
       if (!rows.length) return next(new Error('VISITOR_NOT_FOUND'));
       socket.data.actorType = 'visitor';
       socket.data.visitorId = rows[0].id;
-      socket.data.tenantId  = rows[0].tenant_id;
-      socket.data.brandId   = rows[0].brand_id;
+      socket.data.tenantId = rows[0].tenant_id;
+      socket.data.brandId = rows[0].brand_id;
       return next();
     }
 
@@ -136,7 +149,7 @@ async function authMiddleware(socket, next) {
 // JWT verification
 // ---------------------------------------------------------------------------
 function verifyAgentJwt(token) {
-  const jwt    = require('jsonwebtoken');
+  const jwt = require('jsonwebtoken');
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not configured');
   return jwt.verify(token, secret);
@@ -145,17 +158,32 @@ function verifyAgentJwt(token) {
 // ---------------------------------------------------------------------------
 // Helper: persist a message row and return it
 // ---------------------------------------------------------------------------
-async function persistMessage({ conversationId, senderType, senderId, body, attachments = [], isInternalNote = false }) {
-  const attJson = Array.isArray(attachments) && attachments.length > 0
-    ? JSON.stringify(attachments)
-    : '[]';
+async function persistMessage({
+  conversationId,
+  senderType,
+  senderId,
+  body,
+  attachments = [],
+  isInternalNote = false,
+}) {
+  const attJson =
+    Array.isArray(attachments) && attachments.length > 0
+      ? JSON.stringify(attachments)
+      : '[]';
   const { rows } = await pool.query(
     `INSERT INTO messages
        (conversation_id, sender_type, sender_id, message_body, attachments_json, is_internal_note)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, conversation_id, sender_type, sender_id,
                message_body, attachments_json, is_internal_note, created_at`,
-    [conversationId, senderType, senderId, body, attJson, Boolean(isInternalNote)]
+    [
+      conversationId,
+      senderType,
+      senderId,
+      body,
+      attJson,
+      Boolean(isInternalNote),
+    ],
   );
   return rows[0];
 }
@@ -166,7 +194,7 @@ async function persistMessage({ conversationId, senderType, senderId, body, atta
 async function touchConversation(conversationId) {
   await pool.query(
     `UPDATE conversations SET updated_at = NOW() WHERE id = $1`,
-    [conversationId]
+    [conversationId],
   );
 }
 
@@ -177,7 +205,7 @@ async function resolveConversation(conversationId, tenantId) {
   const { rows } = await pool.query(
     `SELECT id, status, assigned_agent_id, tenant_id, brand_id, visitor_id
      FROM conversations WHERE id = $1 AND tenant_id = $2`,
-    [conversationId, tenantId]
+    [conversationId, tenantId],
   );
   return rows[0] || null;
 }
@@ -190,7 +218,9 @@ function scheduleTypingExpiry(io, conversationId) {
     const entry = typingRegistry.get(conversationId);
     if (entry && Date.now() >= entry.expiresAt) {
       typingRegistry.delete(conversationId);
-      io.to(`conv:${conversationId}`).emit('agent:typing_stopped', { conversationId });
+      io.to(`conv:${conversationId}`).emit('agent:typing_stopped', {
+        conversationId,
+      });
     }
   }, TYPING_TTL_MS + 100);
 }
@@ -202,10 +232,10 @@ function attachSocketServer(httpServer) {
   const io = new Server(httpServer, {
     path: '/api/socket.io',
     cors: {
-      origin: true,   // reflect request origin — required for credentials with socket.io
+      origin: true, // reflect request origin — required for credentials with socket.io
       credentials: true,
     },
-    pingTimeout:  8_000,
+    pingTimeout: 8_000,
     pingInterval: 5_000,
   });
 
@@ -246,7 +276,9 @@ function attachSocketServer(httpServer) {
 
         // Notify agents in this conv that visitor came online
         if (actorType === 'visitor') {
-          socket.to(`conv:${conversationId}`).emit('visitor:online', { conversationId });
+          socket
+            .to(`conv:${conversationId}`)
+            .emit('visitor:online', { conversationId });
         }
 
         ack?.({ ok: true, conversationId });
@@ -267,12 +299,12 @@ function attachSocketServer(httpServer) {
 
         const conv = await resolveConversation(conversationId, tenantId);
         if (!conv) return ack?.({ error: 'CONVERSATION_NOT_FOUND' });
-        if (conv.status === 'closed') return ack?.({ error: 'CONVERSATION_CLOSED' });
+        if (conv.status === 'closed')
+          return ack?.({ error: 'CONVERSATION_CLOSED' });
 
         const senderType = actorType === 'agent' ? 'agent' : 'visitor';
-        const senderId   = actorType === 'agent'
-          ? socket.data.agentId
-          : socket.data.visitorId;
+        const senderId =
+          actorType === 'agent' ? socket.data.agentId : socket.data.visitorId;
 
         const message = await persistMessage({
           conversationId,
@@ -280,26 +312,32 @@ function attachSocketServer(httpServer) {
           senderId,
           body: hasBody ? body.trim() : '',
           attachments,
-          isInternalNote: actorType === 'agent' ? Boolean(isInternalNote) : false,
+          isInternalNote:
+            actorType === 'agent' ? Boolean(isInternalNote) : false,
         });
 
         await touchConversation(conversationId);
 
         if (actorType === 'agent') {
           typingRegistry.delete(conversationId);
-          io.to(`conv:${conversationId}`).emit('agent:typing_stopped', { conversationId });
+          io.to(`conv:${conversationId}`).emit('agent:typing_stopped', {
+            conversationId,
+          });
         }
 
         // Resolve sender display name for UI rendering
-        let senderName = actorType === 'agent' ? (socket.data.name || 'Agent') : 'Visitor';
+        let senderName =
+          actorType === 'agent' ? socket.data.name || 'Agent' : 'Visitor';
         if (actorType === 'visitor') {
           try {
             const { rows: vr } = await pool.query(
               `SELECT display_name, email FROM visitors WHERE id = $1`,
-              [socket.data.visitorId]
+              [socket.data.visitorId],
             );
             senderName = vr[0]?.display_name || vr[0]?.email || 'Visitor';
-          } catch { /* non-fatal */ }
+          } catch {
+            /* non-fatal */
+          }
         }
         const enriched = { ...message, sender_name: senderName };
 
@@ -310,9 +348,14 @@ function attachSocketServer(httpServer) {
           // Broadcast to conv room (excludes agent sender — they have optimistic UI).
           // Also emit directly to visitor's personal room so the widget receives it
           // even if it missed the conv room join (reconnect race condition).
-          socket.broadcast.to(`conv:${conversationId}`).emit('server:new_message', enriched);
+          socket.broadcast
+            .to(`conv:${conversationId}`)
+            .emit('server:new_message', enriched);
           if (conv.visitor_id) {
-            io.to(`vis:${conv.visitor_id}`).emit('server:new_message', enriched);
+            io.to(`vis:${conv.visitor_id}`).emit(
+              'server:new_message',
+              enriched,
+            );
           }
         } else {
           io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
@@ -337,13 +380,23 @@ function attachSocketServer(httpServer) {
           // ai_handling status). Shared with the REST widget handler.
           if (msgBody) {
             const { maybeAutoReply } = require('./ai.service');
-            maybeAutoReply({ conversationId, tenantId, userMessage: msgBody, io })
-              .catch(() => { /* non-fatal: handled internally */ });
+            maybeAutoReply({
+              conversationId,
+              tenantId,
+              userMessage: msgBody,
+              io,
+            }).catch(() => {
+              /* non-fatal: handled internally */
+            });
           }
 
           // Non-blocking: email the tenant's notification_email address
-          sendNewVisitorMessageEmail(tenantId, conversationId, senderName, hasBody ? body.trim() : '')
-            .catch(() => {});
+          sendNewVisitorMessageEmail(
+            tenantId,
+            conversationId,
+            senderName,
+            hasBody ? body.trim() : '',
+          ).catch(() => {});
         }
 
         ack?.({ ok: true, messageId: message.id });
@@ -364,21 +417,21 @@ function attachSocketServer(httpServer) {
         if (existing && existing.agentId !== socket.data.agentId) {
           socket.emit('agent:typing_collision', {
             conversationId,
-            agentId:     existing.agentId,
+            agentId: existing.agentId,
             displayName: existing.displayName,
           });
           return;
         }
 
         typingRegistry.set(conversationId, {
-          agentId:     socket.data.agentId,
+          agentId: socket.data.agentId,
           displayName: socket.data.name || 'Agent',
-          expiresAt:   Date.now() + TYPING_TTL_MS,
+          expiresAt: Date.now() + TYPING_TTL_MS,
         });
 
         socket.to(room).emit('agent:is_typing', {
           conversationId,
-          agentId:     socket.data.agentId,
+          agentId: socket.data.agentId,
           displayName: socket.data.name || 'Agent',
         });
 
@@ -400,12 +453,15 @@ function attachSocketServer(httpServer) {
         const readAt = new Date().toISOString();
         await pool.query(
           `UPDATE conversations SET visitor_last_read_at = $1 WHERE id = $2`,
-          [readAt, conversationId]
+          [readAt, conversationId],
         );
         socket.to(`conv:${conversationId}`).emit('visitor:read_receipt', {
-          conversationId, readAt,
+          conversationId,
+          readAt,
         });
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     });
 
     // ── visitor:is_typing ───────────────────────────────────────────────────
@@ -433,11 +489,16 @@ function attachSocketServer(httpServer) {
       if (actorType !== 'visitor') return;
       if (!conversationId || !url) return;
       socket.to(`conv:${conversationId}`).emit('visitor:page_change', {
-        conversationId, url,
+        conversationId,
+        url,
       });
       // Persist so the dashboard shows the current page even if no agent was
       // in the room when this event fired.
-      pool.query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [url, conversationId])
+      pool
+        .query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [
+          url,
+          conversationId,
+        ])
         .catch(() => {});
     });
 
@@ -454,7 +515,11 @@ function attachSocketServer(httpServer) {
 
         // Persist the latest full URL for the dashboard "Current Page" field.
         if (url) {
-          pool.query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [url, conversationId])
+          pool
+            .query(`UPDATE conversations SET current_url = $1 WHERE id = $2`, [
+              url,
+              conversationId,
+            ])
             .catch(() => {});
         }
 
@@ -465,7 +530,7 @@ function attachSocketServer(httpServer) {
            VALUES ($1, 'system', $2, false, '[]')
            RETURNING id, conversation_id, sender_type, message_body, is_internal_note,
                      attachments_json, created_at`,
-          [conversationId, content]
+          [conversationId, content],
         );
         const msg = { ...rows[0], sender_name: 'System' };
 
@@ -475,24 +540,36 @@ function attachSocketServer(httpServer) {
         // Update visitor last_seen_at
         await pool.query(
           `UPDATE visitors SET last_seen_at = NOW() WHERE id = $1`,
-          [socket.data.visitorId]
+          [socket.data.visitorId],
         );
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     });
 
     // ── client:telemetry_update ─────────────────────────────────────────────
-    socket.on('client:telemetry_update', async ({ conversationId, event, meta }) => {
-      try {
-        if (!conversationId || !event) return;
-        socket.to(`conv:${conversationId}`).emit('server:telemetry', {
-          conversationId, actorType, event, meta, ts: new Date().toISOString(),
-        });
-      } catch { /* ignore */ }
-    });
+    socket.on(
+      'client:telemetry_update',
+      async ({ conversationId, event, meta }) => {
+        try {
+          if (!conversationId || !event) return;
+          socket.to(`conv:${conversationId}`).emit('server:telemetry', {
+            conversationId,
+            actorType,
+            event,
+            meta,
+            ts: new Date().toISOString(),
+          });
+        } catch {
+          /* ignore */
+        }
+      },
+    );
 
     // ── Offline queue drain ─────────────────────────────────────────────────
     socket.on('client:drain_queue', async ({ messages }, ack) => {
-      if (!Array.isArray(messages) || !messages.length) return ack?.({ ok: true, saved: 0 });
+      if (!Array.isArray(messages) || !messages.length)
+        return ack?.({ ok: true, saved: 0 });
 
       const results = [];
       for (const item of messages) {
@@ -501,16 +578,21 @@ function attachSocketServer(httpServer) {
           if (!conv || conv.status === 'closed') continue;
 
           const senderType = actorType === 'agent' ? 'agent' : 'visitor';
-          const senderId   = actorType === 'agent' ? socket.data.agentId : socket.data.visitorId;
+          const senderId =
+            actorType === 'agent' ? socket.data.agentId : socket.data.visitorId;
 
           const msg = await persistMessage({
             conversationId: item.conversationId,
-            senderType, senderId, body: item.body.trim(),
+            senderType,
+            senderId,
+            body: item.body.trim(),
           });
           await touchConversation(item.conversationId);
           io.to(`conv:${item.conversationId}`).emit('server:new_message', msg);
           results.push(msg.id);
-        } catch { /* skip malformed items */ }
+        } catch {
+          /* skip malformed items */
+        }
       }
       ack?.({ ok: true, saved: results.length, messageIds: results });
     });
@@ -524,7 +606,9 @@ function attachSocketServer(httpServer) {
           const entry = typingRegistry.get(convId);
           if (entry?.agentId === socket.data.agentId) {
             typingRegistry.delete(convId);
-            io.to(`conv:${convId}`).emit('agent:typing_stopped', { conversationId: convId });
+            io.to(`conv:${convId}`).emit('agent:typing_stopped', {
+              conversationId: convId,
+            });
           }
         }
       }
@@ -533,9 +617,13 @@ function attachSocketServer(httpServer) {
         if (convId) {
           // Notify agents in conv room + all agents in tenant room so the
           // "online" badge clears even if the agent hasn't opened this conv.
-          io.to(`conv:${convId}`).emit('visitor:offline', { conversationId: convId });
+          io.to(`conv:${convId}`).emit('visitor:offline', {
+            conversationId: convId,
+          });
           if (tenantId) {
-            io.to(`tenant:${tenantId}`).emit('visitor:offline', { conversationId: convId });
+            io.to(`tenant:${tenantId}`).emit('visitor:offline', {
+              conversationId: convId,
+            });
           }
         }
       }
@@ -546,6 +634,15 @@ function attachSocketServer(httpServer) {
 }
 
 /** Returns the live Socket.io server instance (or null before init). */
-function getIo() { return _io; }
+function getIo() {
+  return _io;
+}
 
-module.exports = { attachSocketServer, broadcastToTenant, broadcastToConversation, broadcastToVisitor, getIo, getOnlineAgentIds };
+module.exports = {
+  attachSocketServer,
+  broadcastToTenant,
+  broadcastToConversation,
+  broadcastToVisitor,
+  getIo,
+  getOnlineAgentIds,
+};

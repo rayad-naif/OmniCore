@@ -34,13 +34,26 @@ with `DASHBOARD_PORT`, `API_PORT`, and `POSTGRES_PORT` if needed.
    `JWT_SECRET`, and `GEMINI_API_KEY`.
    Set `VITE_PADDLE_CLIENT_TOKEN` when testing Paddle checkout; Vite reads the
    root `.env` for both frontend artifacts.
-3. Install dependencies with `pnpm install --frozen-lockfile`.
-4. Run the API and dashboard in separate terminals:
+3. Install dependencies with `pnpm install --frozen-lockfile`. This repository
+   pins pnpm 10.26.1 in `package.json` and supports Node.js 24.
+4. Run the API and dashboard in separate terminals from the repository root.
+   The API is a Node process, so explicitly export the copied root `.env`
+   before starting it:
 
    ```bash
+   # Terminal 1
+   set -a
+   . ./.env
+   set +a
    pnpm --filter @workspace/api-server run dev
+
+   # Terminal 2
    pnpm --filter @workspace/dashboard run dev
    ```
+
+   The API listens on `http://localhost:5000`; the dashboard listens on
+   `http://localhost:5174/dashboard/`. Keep `VITE_API_URL=/api` so Vite proxies
+   API and Socket.io traffic to port 5000 during native development.
 
 ## Quality commands
 
@@ -48,11 +61,13 @@ Run these before opening a pull request:
 
 ```bash
 pnpm run format:check
+pnpm run lint
 pnpm run typecheck
-pnpm test
+pnpm run test:coverage
 pnpm run build
 pnpm audit --prod --audit-level=high
 ```
 
-GitHub Actions runs the same frozen-install, formatting, typecheck, test, build,
-and production-dependency audit checks on pushes to `main` and pull requests.
+GitHub Actions runs the same frozen-install, lint, formatting, typecheck,
+coverage, build, and production-dependency audit checks on pushes to `main` and
+pull requests.

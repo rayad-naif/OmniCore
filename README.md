@@ -9,10 +9,10 @@ Agents manage tickets across web chat, email, and future channels in a unified i
 
 ### 1. Prerequisites
 
-| Tool | Version |
-|------|---------|
-| Node.js | 24 LTS |
-| pnpm | 9+ |
+| Tool       | Version                       |
+| ---------- | ----------------------------- |
+| Node.js    | 24 LTS                        |
+| pnpm       | 10.26.x                       |
 | PostgreSQL | 15+ with `pgvector` extension |
 
 Install dependencies from the repo root:
@@ -31,22 +31,22 @@ Copy the example and fill in your values:
 cp .env.example .env
 ```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | ✅ | Postgres connection string (`postgres://...`) |
-| `JWT_SECRET` | ✅ | Random 64+ character signing secret for access and refresh JWTs |
-| `SESSION_SECRET` | optional | Session middleware secret when that middleware is enabled |
-| `GEMINI_API_KEY` | ✅ | Google AI Studio key for Gemini 1.5 Flash |
-| `R2_ACCOUNT_ID` | ⚠️ | Cloudflare account ID (logo upload + PDF export) |
-| `R2_ACCESS_KEY_ID` | ⚠️ | Cloudflare R2 access key |
-| `R2_SECRET_ACCESS_KEY` | ⚠️ | Cloudflare R2 secret |
-| `R2_BUCKET_NAME` | ⚠️ | R2 bucket name |
-| `PADDLE_API_KEY` | ⚠️ | Paddle server API key |
-| `PADDLE_WEBHOOK_SECRET` | ⚠️ | Paddle webhook signing secret |
-| `VITE_PADDLE_CLIENT_TOKEN` | ⚠️ | Public Paddle.js token, set at Vite build time |
-| `PUBLIC_APP_URL` | ⚠️ | Canonical application URL (e.g. `https://app.omnicore.app`) |
-| `ALLOWED_ORIGINS` | ⚠️ | Comma-separated CORS origins |
-| `REDIS_URL` | optional | Redis for BullMQ job queues (crawler, email) |
+| Variable                   | Required | Description                                                     |
+| -------------------------- | -------- | --------------------------------------------------------------- |
+| `DATABASE_URL`             | ✅       | Postgres connection string (`postgres://...`)                   |
+| `JWT_SECRET`               | ✅       | Random 64+ character signing secret for access and refresh JWTs |
+| `SESSION_SECRET`           | optional | Session middleware secret when that middleware is enabled       |
+| `GEMINI_API_KEY`           | ✅       | Google AI Studio key for Gemini 1.5 Flash                       |
+| `R2_ACCOUNT_ID`            | ⚠️       | Cloudflare account ID (logo upload + PDF export)                |
+| `R2_ACCESS_KEY_ID`         | ⚠️       | Cloudflare R2 access key                                        |
+| `R2_SECRET_ACCESS_KEY`     | ⚠️       | Cloudflare R2 secret                                            |
+| `R2_BUCKET_NAME`           | ⚠️       | R2 bucket name                                                  |
+| `PADDLE_API_KEY`           | ⚠️       | Paddle server API key                                           |
+| `PADDLE_WEBHOOK_SECRET`    | ⚠️       | Paddle webhook signing secret                                   |
+| `VITE_PADDLE_CLIENT_TOKEN` | ⚠️       | Public Paddle.js token, set at Vite build time                  |
+| `PUBLIC_APP_URL`           | ⚠️       | Canonical application URL (e.g. `https://app.omnicore.app`)     |
+| `ALLOWED_ORIGINS`          | ⚠️       | Comma-separated CORS origins                                    |
+| `REDIS_URL`                | optional | Redis for BullMQ job queues (crawler, email)                    |
 
 > ⚠️ = required for that feature; app runs without it but the feature will degrade gracefully.
 
@@ -80,24 +80,29 @@ Each artifact runs on its own port, managed by Replit Workflows. The shared prox
 #### API server (Express 5 · port 5000)
 
 ```bash
+set -a
+. ./.env
+set +a
 pnpm --filter @workspace/api-server run dev
 ```
 
-Serves all routes under `/api`. Socket.io attaches to the same HTTP server.
+Run those commands from the repository root. They export the root `.env` into
+the API process before it starts. The server listens on `PORT` (`5000` in
+`.env.example`), serves all routes under `/api`, and attaches Socket.io to the
+same HTTP server.
 
-#### Dashboard (React + Vite)
+#### Dashboard (React + Vite · port 5174)
 
 ```bash
 pnpm --filter @workspace/dashboard run dev
 ```
 
-Served at `/` (or the path configured in `artifact.toml`).
+Served at `http://localhost:5174/dashboard/`. The dashboard reads
+`VITE_API_URL` (default `/api`); its Vite development server proxies that path,
+including Socket.io upgrades, to the API at `http://localhost:5000`.
 
-#### Run both together (if using concurrently)
-
-```bash
-pnpm run dev
-```
+Run the API and dashboard in separate terminals. Replit Workflows can manage
+both processes during hosted development.
 
 ### Clean-clone startup
 
@@ -125,7 +130,8 @@ pnpm run build
 
 # Run the quality gates used by CI
 pnpm run format:check
-pnpm test
+pnpm run lint
+pnpm run test:coverage
 pnpm audit --prod --audit-level=high
 ```
 
@@ -143,28 +149,28 @@ pnpm --filter @workspace/api-spec run codegen
 
 ### 7. Key routes
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/healthz` | Unauthenticated process health check |
-| `POST` | `/api/auth/login` | Agent login → JWT + refresh cookie |
-| `POST` | `/api/auth/refresh` | Silent token refresh |
-| `GET` | `/api/conversations` | Paginated ticket list |
-| `GET` | `/api/conversations/:id/messages` | Message history |
-| `POST` | `/api/conversations/:id/messages` | Send message |
-| `GET` | `/api/conversations/:id/export` | PDF transcript → R2 presigned URL |
-| `POST` | `/api/ai/rephrase` | Rephrase draft with Gemini |
-| `GET` | `/api/knowledge-articles` | List KB articles |
-| `POST` | `/api/knowledge-articles` | Create article |
-| `POST` | `/api/knowledge-articles/:id/vectorise` | Embed article into pgvector |
-| `POST` | `/api/crawler/start` | Start web crawler (SSE progress) |
-| `GET` | `/api/crawler/job/:jobId` | Poll BullMQ job status |
-| `POST` | `/api/checkout` | Create configured billing-provider checkout |
-| `POST` | `/api/billing/portal` | Customer portal URL |
-| `GET` | `/api/billing/subscription` | Current plan + status |
-| `GET` | `/api/billing/usage` | Period usage meters |
-| `POST` | `/api/paddle/webhook` | Paddle webhook receiver (signature-verified) |
-| `PATCH` | `/api/brands/:id` | Update brand settings |
-| `POST` | `/api/brands/:id/logo-upload-url` | R2 presigned PUT for logo |
+| Method  | Path                                    | Description                                  |
+| ------- | --------------------------------------- | -------------------------------------------- |
+| `GET`   | `/api/healthz`                          | Unauthenticated process health check         |
+| `POST`  | `/api/auth/login`                       | Agent login → JWT + refresh cookie           |
+| `POST`  | `/api/auth/refresh`                     | Silent token refresh                         |
+| `GET`   | `/api/conversations`                    | Paginated ticket list                        |
+| `GET`   | `/api/conversations/:id/messages`       | Message history                              |
+| `POST`  | `/api/conversations/:id/messages`       | Send message                                 |
+| `GET`   | `/api/conversations/:id/export`         | PDF transcript → R2 presigned URL            |
+| `POST`  | `/api/ai/rephrase`                      | Rephrase draft with Gemini                   |
+| `GET`   | `/api/knowledge-articles`               | List KB articles                             |
+| `POST`  | `/api/knowledge-articles`               | Create article                               |
+| `POST`  | `/api/knowledge-articles/:id/vectorise` | Embed article into pgvector                  |
+| `POST`  | `/api/crawler/start`                    | Start web crawler (SSE progress)             |
+| `GET`   | `/api/crawler/job/:jobId`               | Poll BullMQ job status                       |
+| `POST`  | `/api/checkout`                         | Create configured billing-provider checkout  |
+| `POST`  | `/api/billing/portal`                   | Customer portal URL                          |
+| `GET`   | `/api/billing/subscription`             | Current plan + status                        |
+| `GET`   | `/api/billing/usage`                    | Period usage meters                          |
+| `POST`  | `/api/paddle/webhook`                   | Paddle webhook receiver (signature-verified) |
+| `PATCH` | `/api/brands/:id`                       | Update brand settings                        |
+| `POST`  | `/api/brands/:id/logo-upload-url`       | R2 presigned PUT for logo                    |
 
 ---
 
@@ -212,7 +218,7 @@ PostgreSQL  Gemini 1.5 Flash
 Cloudflare R2  (logos · PDF exports · attachments)
        │
        ▼
-Lemon Squeezy  (checkout · webhooks · customer portal)
+Paddle  (checkout · webhooks · customer portal)
 ```
 
 ---
@@ -220,7 +226,7 @@ Lemon Squeezy  (checkout · webhooks · customer portal)
 ### 10. Gotchas
 
 - **Embedding dimension**: schema originally created with `VECTOR(1536)`. The embedding model (`text-embedding-004`) outputs **768 dims**. Run the `ALTER TABLE` above before inserting any embeddings.
-- **Webhook raw body**: the `/api/webhooks/lemonsqueezy` route must be mounted with `express.raw({ type: 'application/json' })` **before** `express.json()` so the HMAC check has access to the raw bytes.
+- **Webhook raw body**: the `/api/paddle/webhook` route must be mounted with `express.raw({ type: 'application/json' })` **before** `express.json()` so the signature check has access to the raw bytes.
 - **Widget disable after grace period**: `scheduleWidgetDisable` uses `setTimeout`. On process restart the timer is lost. In production, replace with a BullMQ delayed job stored in Redis.
 - **R2 presigned URLs**: the Cloudflare R2 S3 compatibility layer requires `region: 'auto'` in the S3Client config — not `us-east-1`.
 - **pnpm workspace isolation**: each artifact declares its own `dependencies`. Do not rely on hoisting; always `pnpm add` inside the package that needs the dep.

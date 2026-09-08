@@ -26,12 +26,12 @@
 
 OmniCore has three deployable units and one stateful backing service:
 
-| Unit | Type | Build output | Recommended hosting |
-|---|---|---|---|
-| **API Server** | Node.js 24 process | `artifacts/api-server/dist/index.mjs` | VPS / Railway / Render / Fly.io |
-| **Dashboard** | Static SPA | `artifacts/dashboard/dist/` | nginx / Vercel / Cloudflare Pages / Render Static |
-| **Marketing Site** | Prerendered HTML | `artifacts/marketing-site/dist/public/` | nginx / Vercel / Cloudflare Pages / Render Static |
-| **PostgreSQL** | Database | — | Same VPS / Supabase / Neon / Railway / RDS |
+| Unit               | Type               | Build output                            | Recommended hosting                               |
+| ------------------ | ------------------ | --------------------------------------- | ------------------------------------------------- |
+| **API Server**     | Node.js 24 process | `artifacts/api-server/dist/index.mjs`   | VPS / Railway / Render / Fly.io                   |
+| **Dashboard**      | Static SPA         | `artifacts/dashboard/dist/`             | nginx / Vercel / Cloudflare Pages / Render Static |
+| **Marketing Site** | Prerendered HTML   | `artifacts/marketing-site/dist/public/` | nginx / Vercel / Cloudflare Pages / Render Static |
+| **PostgreSQL**     | Database           | —                                       | Same VPS / Supabase / Neon / Railway / RDS        |
 
 > **Socket.io note:** The API server uses Socket.io with long-polling + WebSocket transport. Any reverse proxy or PaaS must support persistent WebSocket connections and pass `Upgrade` headers correctly.
 
@@ -208,13 +208,13 @@ pm2 restart omnicore-api
 1. Connect your GitHub repository in the Render dashboard
 2. Create a **Web Service** with:
 
-| Setting | Value |
-|---|---|
-| **Runtime** | Node |
-| **Build Command** | `pnpm install && pnpm --filter @workspace/api-server run build` |
-| **Start Command** | `node artifacts/api-server/dist/index.mjs` |
-| **Health Check Path** | `/api/health` |
-| **Node version** | `24` (set in `NODE_VERSION` env var) |
+| Setting               | Value                                                           |
+| --------------------- | --------------------------------------------------------------- |
+| **Runtime**           | Node                                                            |
+| **Build Command**     | `pnpm install && pnpm --filter @workspace/api-server run build` |
+| **Start Command**     | `node artifacts/api-server/dist/index.mjs`                      |
+| **Health Check Path** | `/api/health`                                                   |
+| **Node version**      | `24` (set in `NODE_VERSION` env var)                            |
 
 3. Add all environment variables from `.env.example` in the **Environment** tab
 4. Set `PORT` to `10000` (Render's default) or leave it unset (Render injects `PORT` automatically)
@@ -242,12 +242,15 @@ Create two **Static Sites** on Render:
 ### 3.3 Database
 
 Use **Render Managed PostgreSQL** (postgres 15/16):
+
 - Copy the Internal Database URL to `DATABASE_URL` in your API service environment
 
 Enable pgvector after creation:
+
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
+
 (Run via Render's database shell or any psql client)
 
 ---
@@ -290,6 +293,7 @@ restartPolicyType = "ON_FAILURE"
 ```
 
 After provisioning, run the schema:
+
 ```bash
 railway run psql $DATABASE_URL -f artifacts/api-server/schema.sql
 railway run psql $DATABASE_URL -c "CREATE EXTENSION IF NOT EXISTS vector;"
@@ -299,9 +303,9 @@ railway run psql $DATABASE_URL -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 Railway can also serve static files. Alternatively, deploy the dashboard and marketing site to **Cloudflare Pages** (free) by connecting the same GitHub repo with separate build configurations:
 
-| Site | Build command | Output dir |
-|---|---|---|
-| Dashboard | `pnpm install && pnpm --filter @workspace/dashboard run build` | `artifacts/dashboard/dist` |
+| Site      | Build command                                                       | Output dir                             |
+| --------- | ------------------------------------------------------------------- | -------------------------------------- |
+| Dashboard | `pnpm install && pnpm --filter @workspace/dashboard run build`      | `artifacts/dashboard/dist`             |
 | Marketing | `pnpm install && pnpm --filter @workspace/marketing-site run build` | `artifacts/marketing-site/dist/public` |
 
 ---
@@ -399,6 +403,7 @@ Vercel (Edge CDN)                    VPS / Any Cloud
 ### 6.1 Deploy frontends to Vercel
 
 **Marketing site — `vercel.json`:**
+
 ```json
 {
   "buildCommand": "pnpm install && pnpm --filter @workspace/marketing-site run build",
@@ -408,6 +413,7 @@ Vercel (Edge CDN)                    VPS / Any Cloud
 ```
 
 **Dashboard — `vercel.json`** (in `artifacts/dashboard/` or a separate Vercel project):
+
 ```json
 {
   "buildCommand": "pnpm install && pnpm --filter @workspace/dashboard run build",
@@ -419,6 +425,7 @@ Vercel (Edge CDN)                    VPS / Any Cloud
 ### 6.2 API on VPS
 
 Follow **Option A** (VPS setup), but configure the API on a subdomain:
+
 - `api.yourdomain.com` → nginx proxies to `127.0.0.1:8080`
 - Update `PUBLIC_APP_URL=https://api.yourdomain.com`
 - Update `ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com`
@@ -426,6 +433,7 @@ Follow **Option A** (VPS setup), but configure the API on a subdomain:
 ### 6.3 CORS configuration
 
 In the API's `.env`:
+
 ```
 ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
 ```
@@ -436,14 +444,14 @@ ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
 
 All options require pgvector extension support.
 
-| Provider | pgvector | Free tier | Notes |
-|---|---|---|---|
-| **Neon** | ✅ Built-in | ✅ Yes | Serverless Postgres; serverless-compatible with connection pooling |
-| **Supabase** | ✅ Built-in | ✅ Yes (2 projects) | Excellent DX; includes auth/storage (unused but available) |
-| **Railway Postgres** | ✅ Yes | Hobby plan | Tightly integrated with Railway deployments |
-| **Render Postgres** | ✅ Yes | ❌ No | Managed, reliable, simple |
-| **AWS RDS** | ✅ via extension | ❌ No | Enterprise-grade; higher cost |
-| **Self-hosted** | ✅ via apt | N/A | `postgresql-16-pgvector` package |
+| Provider             | pgvector         | Free tier           | Notes                                                              |
+| -------------------- | ---------------- | ------------------- | ------------------------------------------------------------------ |
+| **Neon**             | ✅ Built-in      | ✅ Yes              | Serverless Postgres; serverless-compatible with connection pooling |
+| **Supabase**         | ✅ Built-in      | ✅ Yes (2 projects) | Excellent DX; includes auth/storage (unused but available)         |
+| **Railway Postgres** | ✅ Yes           | Hobby plan          | Tightly integrated with Railway deployments                        |
+| **Render Postgres**  | ✅ Yes           | ❌ No               | Managed, reliable, simple                                          |
+| **AWS RDS**          | ✅ via extension | ❌ No               | Enterprise-grade; higher cost                                      |
+| **Self-hosted**      | ✅ via apt       | N/A                 | `postgresql-16-pgvector` package                                   |
 
 ### Applying schema to any managed database
 
@@ -578,6 +586,7 @@ sudo systemctl status certbot.timer
 ### Cloudflare (proxy mode)
 
 If your DNS is on Cloudflare, enable the orange-cloud proxy:
+
 - Cloudflare handles TLS termination
 - Set nginx to listen on 80 only (Cloudflare → origin is HTTP)
 - Set `COOKIE_SECURE=false` if not using Cloudflare's flexible SSL → instead enable **Full (strict)** SSL mode in Cloudflare and keep HTTPS end-to-end
@@ -642,6 +651,7 @@ Set `REDIS_URL` in environment and ensure your load balancer uses **sticky sessi
 ### Database connection pooling
 
 For high-traffic deployments, add **PgBouncer** in front of PostgreSQL:
+
 ```
 DATABASE_URL=postgres://omnicore:pass@127.0.0.1:6432/omnicore
 ```
@@ -652,12 +662,12 @@ Serve `artifacts/dashboard/dist/assets/` and `artifacts/marketing-site/dist/publ
 
 ### Minimum recommended specs by tier
 
-| Traffic | API Server | Database |
-|---|---|---|
-| < 1k visits/day | 1 vCPU · 1 GB RAM | 5 GB storage |
-| 1k–10k visits/day | 2 vCPU · 4 GB RAM | 20 GB storage |
+| Traffic             | API Server                | Database             |
+| ------------------- | ------------------------- | -------------------- |
+| < 1k visits/day     | 1 vCPU · 1 GB RAM         | 5 GB storage         |
+| 1k–10k visits/day   | 2 vCPU · 4 GB RAM         | 20 GB storage        |
 | 10k–100k visits/day | 4 vCPU · 8 GB RAM + Redis | 50 GB + read replica |
 
 ---
 
-*Atelier OmniCore — Flexible architecture, production-ready from day one.*
+_Atelier OmniCore — Flexible architecture, production-ready from day one._

@@ -30,17 +30,17 @@
 
 ### Core capabilities
 
-| Capability | Detail |
-|---|---|
-| **Multi-tenant** | Unlimited tenants, each with isolated brands, agents, and data |
-| **Real-time inbox** | Socket.io-powered live chat, typing indicators, read receipts |
-| **AI auto-reply** | Google Gemini 2.5 Flash + pgvector RAG over your knowledge base |
-| **Embeddable widget** | Drop-in `<script>` tag for any customer website |
-| **Omnichannel** | Live chat, email inbound (SMTP/IMAP), ticket system |
-| **Billing** | Paddle Billing (Starter / Growth plans); Stripe also supported |
-| **File storage** | Cloudflare R2 (S3-compatible) for attachments and logos |
-| **CSAT** | Built-in customer satisfaction rating flow |
-| **Super Admin** | Platform-level tenant management, plan limits, usage |
+| Capability            | Detail                                                          |
+| --------------------- | --------------------------------------------------------------- |
+| **Multi-tenant**      | Unlimited tenants, each with isolated brands, agents, and data  |
+| **Real-time inbox**   | Socket.io-powered live chat, typing indicators, read receipts   |
+| **AI auto-reply**     | Google Gemini 2.5 Flash + pgvector RAG over your knowledge base |
+| **Embeddable widget** | Drop-in `<script>` tag for any customer website                 |
+| **Omnichannel**       | Live chat, email inbound (SMTP/IMAP), ticket system             |
+| **Billing**           | Paddle Billing (Starter / Growth plans); Stripe also supported  |
+| **File storage**      | Cloudflare R2 (S3-compatible) for attachments and logos         |
+| **CSAT**              | Built-in customer satisfaction rating flow                      |
+| **Super Admin**       | Platform-level tenant management, plan limits, usage            |
 
 ---
 
@@ -134,12 +134,12 @@
 
 ## 4. Prerequisites
 
-| Tool | Version | Notes |
-|---|---|---|
-| **Node.js** | 24.x LTS | Required. Use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) |
-| **pnpm** | 10+ | `npm install -g pnpm` |
-| **PostgreSQL** | 15 or 16 | With `pgvector` extension |
-| **Git** | Any | For cloning |
+| Tool           | Version  | Notes                                                                                      |
+| -------------- | -------- | ------------------------------------------------------------------------------------------ |
+| **Node.js**    | 24.x LTS | Required. Use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) |
+| **pnpm**       | 10+      | `npm install -g pnpm`                                                                      |
+| **PostgreSQL** | 15 or 16 | With `pgvector` extension                                                                  |
+| **Git**        | Any      | For cloning                                                                                |
 
 ### Install PostgreSQL + pgvector (Ubuntu/Debian)
 
@@ -202,48 +202,48 @@ Copy `.env.example` to `artifacts/api-server/.env` and populate each value.
 
 ### Required — Core
 
-| Variable | Example | Description |
-|---|---|---|
-| `NODE_ENV` | `production` | `development` or `production` |
-| `PORT` | `8080` | Port the API server binds to |
-| `DATABASE_URL` | `postgres://user:pass@localhost:5432/omnicore` | PostgreSQL connection string |
-| `JWT_SECRET` | *(64-char hex)* | Signs all access + refresh tokens. Generate: `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
-| `SESSION_SECRET` | *(32-char hex)* | Session middleware secret |
-| `PUBLIC_APP_URL` | `https://yourdomain.com` | Used in password reset links and Paddle redirect URLs |
+| Variable         | Example                                        | Description                                                                                                             |
+| ---------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`       | `production`                                   | `development` or `production`                                                                                           |
+| `PORT`           | `8080`                                         | Port the API server binds to                                                                                            |
+| `DATABASE_URL`   | `postgres://user:pass@localhost:5432/omnicore` | PostgreSQL connection string                                                                                            |
+| `JWT_SECRET`     | _(64-char hex)_                                | Signs all access + refresh tokens. Generate: `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
+| `SESSION_SECRET` | _(32-char hex)_                                | Session middleware secret                                                                                               |
+| `PUBLIC_APP_URL` | `https://yourdomain.com`                       | Used in password reset links and Paddle redirect URLs                                                                   |
 
 ### Required — AI
 
-| Variable | Example | Description |
-|---|---|---|
+| Variable         | Example | Description                                                                   |
+| ---------------- | ------- | ----------------------------------------------------------------------------- |
 | `GEMINI_API_KEY` | `AIza…` | Google AI Studio API key — [aistudio.google.com](https://aistudio.google.com) |
 
 ### Required — Billing (Paddle)
 
-| Variable | Example | Description |
-|---|---|---|
-| `BILLING_PROVIDER` | `paddle` | `paddle` or `stripe` |
-| `PADDLE_ENVIRONMENT` | `production` | `sandbox` or `production` |
-| `PADDLE_API_KEY` | `…` | From Paddle dashboard → Developer → API keys |
-| `PADDLE_WEBHOOK_SECRET` | `…` | From Paddle dashboard → Developer → Notifications |
-| `PADDLE_STARTER_PRICE_ID` | `pri_…` | Paddle price ID for Starter plan |
-| `PADDLE_GROWTH_PRICE_ID` | `pri_…` | Paddle price ID for Growth plan |
+| Variable                  | Example      | Description                                       |
+| ------------------------- | ------------ | ------------------------------------------------- |
+| `BILLING_PROVIDER`        | `paddle`     | `paddle` or `stripe`                              |
+| `PADDLE_ENVIRONMENT`      | `production` | `sandbox` or `production`                         |
+| `PADDLE_API_KEY`          | `…`          | From Paddle dashboard → Developer → API keys      |
+| `PADDLE_WEBHOOK_SECRET`   | `…`          | From Paddle dashboard → Developer → Notifications |
+| `PADDLE_STARTER_PRICE_ID` | `pri_…`      | Paddle price ID for Starter plan                  |
+| `PADDLE_GROWTH_PRICE_ID`  | `pri_…`      | Paddle price ID for Growth plan                   |
 
 ### Required — File Storage (Cloudflare R2)
 
-| Variable | Example | Description |
-|---|---|---|
-| `R2_ENDPOINT` | `https://xxx.r2.cloudflarestorage.com` | R2 bucket endpoint |
-| `R2_ACCESS_KEY_ID` | `…` | R2 API token Access Key ID |
-| `R2_SECRET_ACCESS_KEY` | `…` | R2 API token Secret |
-| `R2_BUCKET_NAME` | `omnicore-files` | R2 bucket name |
+| Variable               | Example                                | Description                |
+| ---------------------- | -------------------------------------- | -------------------------- |
+| `R2_ENDPOINT`          | `https://xxx.r2.cloudflarestorage.com` | R2 bucket endpoint         |
+| `R2_ACCESS_KEY_ID`     | `…`                                    | R2 API token Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | `…`                                    | R2 API token Secret        |
+| `R2_BUCKET_NAME`       | `omnicore-files`                       | R2 bucket name             |
 
 ### Optional
 
-| Variable | Default | Description |
-|---|---|---|
-| `COOKIE_SECURE` | *(unset)* | Set `false` for self-hosted HTTP deployments (no HTTPS) |
-| `ALLOWED_ORIGINS` | `*` | Comma-separated CORS origins |
-| `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
+| Variable          | Default   | Description                                             |
+| ----------------- | --------- | ------------------------------------------------------- |
+| `COOKIE_SECURE`   | _(unset)_ | Set `false` for self-hosted HTTP deployments (no HTTPS) |
+| `ALLOWED_ORIGINS` | `*`       | Comma-separated CORS origins                            |
+| `LOG_LEVEL`       | `info`    | `trace`, `debug`, `info`, `warn`, `error`               |
 
 ---
 
@@ -295,17 +295,17 @@ SQL
 
 ### Tables overview
 
-| Table | Purpose |
-|---|---|
-| `tenants` | Companies using the platform; holds billing/subscription state |
-| `brands` | Each tenant can have multiple brands (websites/products) with their own widget config |
-| `agents` | Tenant staff (admins, agents, supervisors) with role-based permissions |
-| `password_reset_tokens` | Time-limited tokens for password reset / agent invite flows |
-| `visitors` | Anonymous or identified end-users chatting via the widget |
-| `conversations` | Support threads — links visitor ↔ brand ↔ assigned agent |
-| `messages` | Individual chat messages, internal notes, and system events |
-| `knowledge_articles` | Help center articles used for AI context retrieval |
-| `ai_embeddings` | 1536-dimension pgvector embeddings of article chunks for semantic search |
+| Table                   | Purpose                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `tenants`               | Companies using the platform; holds billing/subscription state                        |
+| `brands`                | Each tenant can have multiple brands (websites/products) with their own widget config |
+| `agents`                | Tenant staff (admins, agents, supervisors) with role-based permissions                |
+| `password_reset_tokens` | Time-limited tokens for password reset / agent invite flows                           |
+| `visitors`              | Anonymous or identified end-users chatting via the widget                             |
+| `conversations`         | Support threads — links visitor ↔ brand ↔ assigned agent                              |
+| `messages`              | Individual chat messages, internal notes, and system events                           |
+| `knowledge_articles`    | Help center articles used for AI context retrieval                                    |
+| `ai_embeddings`         | 1536-dimension pgvector embeddings of article chunks for semantic search              |
 
 ---
 
@@ -353,17 +353,20 @@ pm2 save && pm2 startup
 ## 9. Feature Walkthrough
 
 ### Super Admin
+
 - Log in with a `super_admin_emails`-registered account
 - Navigate to **Super Admin** in the sidebar
 - View all tenants, adjust plan limits (`max_agents_allowed`, `conversation_limit`, `max_brands_allowed`), toggle AI and SMTP features per tenant
 
 ### Tenant Onboarding
+
 1. Tenant signs up via `/signup` on the marketing site
 2. A tenant record + default brand are created automatically
 3. The first agent is assigned the `admin` role
 4. They configure their brand (name, logo, widget colours) in **Brands** → **Brand Settings**
 
 ### Inbox (Real-time Chat)
+
 - Conversations appear live via Socket.io
 - Assign to agents, set priority (low / medium / high / urgent)
 - Add internal notes (not visible to visitors)
@@ -371,17 +374,20 @@ pm2 save && pm2 startup
 - SLA breach indicators
 
 ### Knowledge Base & AI Training
+
 1. Navigate to **AI Training**
 2. Add articles manually or crawl a URL
 3. Articles are chunked and embedded via Gemini embeddings → stored in `ai_embeddings`
 4. AI auto-reply uses cosine similarity to retrieve relevant chunks before composing a response
 
 ### CSAT
+
 - After a conversation is resolved, a CSAT request can be triggered
 - The visitor rates the interaction via the widget
 - Scores visible under the **CSAT** section
 
 ### Tickets
+
 - Mark any conversation as a ticket (assigns a sequential ticket number)
 - Filter inbox by tickets vs live chats
 
@@ -393,20 +399,24 @@ OmniCore ships with **Paddle Billing** pre-integrated.
 
 ### Plans
 
-| Plan | Price | Key Limits |
-|---|---|---|
-| **Free** | $0 | Platform default for new tenants |
+| Plan        | Price  | Key Limits                               |
+| ----------- | ------ | ---------------------------------------- |
+| **Free**    | $0     | Platform default for new tenants         |
 | **Starter** | $29/mo | Configured via `PADDLE_STARTER_PRICE_ID` |
-| **Growth** | $79/mo | Configured via `PADDLE_GROWTH_PRICE_ID` |
+| **Growth**  | $79/mo | Configured via `PADDLE_GROWTH_PRICE_ID`  |
 
 ### Webhook endpoint
+
 Register in Paddle dashboard → Developer → Notifications:
+
 ```
 https://yourdomain.com/api/paddle/webhook
 ```
+
 The server verifies the `Paddle-Signature` header using HMAC-SHA256.
 
 ### Changing plans / pricing
+
 1. Create new products + prices in Paddle dashboard
 2. Update `PADDLE_STARTER_PRICE_ID` and `PADDLE_GROWTH_PRICE_ID` in your `.env`
 3. Adjust feature limits per plan in `artifacts/api-server/src/lib/plansRepo.js`
@@ -422,13 +432,14 @@ The embeddable widget is a self-contained JavaScript bundle served by the API.
 ```html
 <script>
   window.OmniCoreConfig = {
-    brandId: "YOUR_BRAND_UUID"
+    brandId: 'YOUR_BRAND_UUID',
   };
 </script>
 <script src="https://yourdomain.com/api/widget/widget.js" async></script>
 ```
 
 ### Widget capabilities
+
 - Live chat with typing indicators and read receipts
 - File attachments (stored in R2)
 - CSAT rating after resolution
@@ -437,6 +448,7 @@ The embeddable widget is a self-contained JavaScript bundle served by the API.
 - Custom colours and branding configured per brand in dashboard
 
 ### Socket.io connection
+
 The widget connects to `https://yourdomain.com/api/socket.io` using the visitor's session token. A Socket.io client bundle is served at `/api/widget/socket.io.js`.
 
 ---
@@ -444,6 +456,7 @@ The widget connects to `https://yourdomain.com/api/socket.io` using the visitor'
 ## 12. AI / RAG System
 
 ### Architecture
+
 ```
 User message
     │
@@ -459,11 +472,13 @@ ai.service.js
 ```
 
 ### Configuration (per brand)
+
 - **AI auto-reply enabled** — toggle in Brand Settings
 - **System prompt** — custom instructions for the AI persona
 - **Confidence threshold** — minimum score to trigger auto-reply
 
 ### Embedding pipeline
+
 1. Agent publishes a knowledge article
 2. Article is chunked (sentence-level)
 3. Each chunk is embedded via Gemini Embeddings API
@@ -505,4 +520,4 @@ After acquisition, work through this list to make the platform your own:
 
 ---
 
-*Atelier OmniCore — Built for scale, ready to ship.*
+_Atelier OmniCore — Built for scale, ready to ship._

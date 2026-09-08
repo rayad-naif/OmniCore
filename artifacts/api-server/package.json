@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --root ../.. artifacts/api-server/src"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1068.0",
@@ -44,9 +44,11 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
+    "@types/supertest": "^7.2.1",
     "esbuild": "^0.28.1",
     "esbuild-plugin-pino": "^2.3.3",
     "pino-pretty": "^13.1.3",
+    "supertest": "^7.2.2",
     "thread-stream": "3.1.0"
   }
 }

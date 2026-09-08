@@ -10,9 +10,12 @@ export function getPaddle(): Paddle | undefined {
   return _paddle;
 }
 
-export async function ensurePaddle(paddleCustomerId?: string | null): Promise<Paddle | undefined> {
+export async function ensurePaddle(
+  paddleCustomerId?: string | null,
+): Promise<Paddle | undefined> {
   if (!PADDLE_TOKEN) return undefined;
-  const ctmId = (paddleCustomerId?.startsWith('ctm_') ? paddleCustomerId : null) ?? null;
+  const ctmId =
+    (paddleCustomerId?.startsWith('ctm_') ? paddleCustomerId : null) ?? null;
 
   if (_paddle) {
     if (ctmId && ctmId !== _initializedWithCustomer) {

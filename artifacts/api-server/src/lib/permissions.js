@@ -16,14 +16,14 @@
 
 // Canonical feature keys. Keep in sync with the dashboard.
 const FEATURES = [
-  'inbox',          // conversations / chat
-  'contacts',       // visitors / contacts directory
+  'inbox', // conversations / chat
+  'contacts', // visitors / contacts directory
   'knowledge_base', // KB articles + AI training
-  'brands',         // brand / widget configuration
-  'analytics',      // CSAT + reporting
-  'billing',        // plans & subscription
-  'team',           // agent management
-  'settings',       // workspace settings (SMTP, domains, etc.)
+  'brands', // brand / widget configuration
+  'analytics', // CSAT + reporting
+  'billing', // plans & subscription
+  'team', // agent management
+  'settings', // workspace settings (SMTP, domains, etc.)
 ];
 
 const LEVELS = { none: 0, read: 1, edit: 2 };
@@ -39,14 +39,26 @@ function defaultPermissionsForRole(role) {
   }
   if (role === 'supervisor') {
     return {
-      inbox: 'edit', contacts: 'edit', knowledge_base: 'edit', brands: 'read',
-      analytics: 'read', billing: 'read', team: 'read', settings: 'read',
+      inbox: 'edit',
+      contacts: 'edit',
+      knowledge_base: 'edit',
+      brands: 'read',
+      analytics: 'read',
+      billing: 'read',
+      team: 'read',
+      settings: 'read',
     };
   }
   // agent
   return {
-    inbox: 'edit', contacts: 'read', knowledge_base: 'read', brands: 'none',
-    analytics: 'none', billing: 'none', team: 'none', settings: 'none',
+    inbox: 'edit',
+    contacts: 'read',
+    knowledge_base: 'read',
+    brands: 'none',
+    analytics: 'none',
+    billing: 'none',
+    team: 'none',
+    settings: 'none',
   };
 }
 
@@ -75,8 +87,11 @@ function effectivePermissions(agent) {
     return Object.fromEntries(FEATURES.map((f) => [f, 'edit']));
   }
   const stored = agent.permissions;
-  const hasStored = stored && typeof stored === 'object' && Object.keys(stored).length > 0;
-  return hasStored ? normalizePermissions(stored, agent.role) : defaultPermissionsForRole(agent.role);
+  const hasStored =
+    stored && typeof stored === 'object' && Object.keys(stored).length > 0;
+  return hasStored
+    ? normalizePermissions(stored, agent.role)
+    : defaultPermissionsForRole(agent.role);
 }
 
 /** Numeric permission level an agent holds for a feature. */

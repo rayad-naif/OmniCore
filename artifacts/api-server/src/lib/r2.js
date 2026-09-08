@@ -1,6 +1,10 @@
 'use strict';
 
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const R2_ENABLED = !!(
@@ -17,7 +21,7 @@ function client() {
       region: 'auto',
       endpoint: process.env.R2_ENDPOINT,
       credentials: {
-        accessKeyId:     process.env.R2_ACCESS_KEY_ID,
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
       },
     });
@@ -35,12 +39,14 @@ const BUCKET = process.env.R2_BUCKET_NAME;
  * @returns {Promise<void>}
  */
 async function uploadToR2(buffer, key, mimeType) {
-  await client().send(new PutObjectCommand({
-    Bucket:      BUCKET,
-    Key:         key,
-    Body:        buffer,
-    ContentType: mimeType || 'application/octet-stream',
-  }));
+  await client().send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: buffer,
+      ContentType: mimeType || 'application/octet-stream',
+    }),
+  );
 }
 
 /**
@@ -51,14 +57,18 @@ async function uploadToR2(buffer, key, mimeType) {
  */
 async function streamFromR2(key, res) {
   try {
-    const obj = await client().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
-    if (obj.ContentType)   res.setHeader('Content-Type',   obj.ContentType);
-    if (obj.ContentLength) res.setHeader('Content-Length', String(obj.ContentLength));
+    const obj = await client().send(
+      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    );
+    if (obj.ContentType) res.setHeader('Content-Type', obj.ContentType);
+    if (obj.ContentLength)
+      res.setHeader('Content-Length', String(obj.ContentLength));
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     obj.Body.pipe(res);
     return true;
   } catch (err) {
-    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return false;
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404)
+      return false;
     throw err;
   }
 }

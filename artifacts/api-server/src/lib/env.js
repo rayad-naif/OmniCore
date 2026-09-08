@@ -37,7 +37,8 @@ function publicAppUrl(req) {
 
   if (req) {
     const proto = req.headers?.['x-forwarded-proto'] || req.protocol || 'https';
-    const host = typeof req.get === 'function' ? req.get('host') : req.headers?.host;
+    const host =
+      typeof req.get === 'function' ? req.get('host') : req.headers?.host;
     if (host) return `${proto}://${host}`;
   }
   return '';

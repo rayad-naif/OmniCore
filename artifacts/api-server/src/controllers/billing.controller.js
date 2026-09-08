@@ -26,11 +26,11 @@
 
 'use strict';
 
-const { pool }            = require('../lib/db');
-const logger              = require('../utils/logger');
-const billingProvider     = require('../lib/billingProvider');
-const plansRepo           = require('../lib/plansRepo');
-const { publicAppUrl }    = require('../lib/env');
+const { pool } = require('../lib/db');
+const logger = require('../utils/logger');
+const billingProvider = require('../lib/billingProvider');
+const plansRepo = require('../lib/plansRepo');
+const { publicAppUrl } = require('../lib/env');
 const { sendAccountUpdateEmail } = require('../services/email.service');
 
 // ─── Idempotent migration: ensure billing linkage columns exist ──────────────
@@ -66,22 +66,27 @@ async function notifyLockEmails(tenantId, plan) {
       [tenantId],
     );
     const companyName = rows[0]?.company_name || 'your workspace';
-    const subject  = 'Action required — OmniCore access locked';
-    const heading  = 'Workspace access locked';
-    const message  = `The free trial for ${companyName} has ended and the 7-day grace period has expired. `
-                   + `All agents in this workspace are now prevented from accessing the dashboard until a paid subscription is activated. `
-                   + `Please log in to the Billing section and add a payment method to restore access immediately.`;
+    const subject = 'Action required — OmniCore access locked';
+    const heading = 'Workspace access locked';
+    const message =
+      `The free trial for ${companyName} has ended and the 7-day grace period has expired. ` +
+      `All agents in this workspace are now prevented from accessing the dashboard until a paid subscription is activated. ` +
+      `Please log in to the Billing section and add a payment method to restore access immediately.`;
 
-    const sends = rows.map(r => sendAccountUpdateEmail({ to: r.email, subject, heading, message }));
+    const sends = rows.map((r) =>
+      sendAccountUpdateEmail({ to: r.email, subject, heading, message }),
+    );
 
     const platformEmail = process.env.PLATFORM_ADMIN_EMAIL;
     if (platformEmail) {
-      sends.push(sendAccountUpdateEmail({
-        to:      platformEmail,
-        subject: `[Platform] Workspace locked — ${companyName}`,
-        heading: 'Workspace hard-locked',
-        message: `Tenant ID: ${tenantId}\nPlan: ${plan || 'unknown'}\nCompany: ${companyName}\n\nTheir trial + grace period have expired. No active paid subscription found.`,
-      }));
+      sends.push(
+        sendAccountUpdateEmail({
+          to: platformEmail,
+          subject: `[Platform] Workspace locked — ${companyName}`,
+          heading: 'Workspace hard-locked',
+          message: `Tenant ID: ${tenantId}\nPlan: ${plan || 'unknown'}\nCompany: ${companyName}\n\nTheir trial + grace period have expired. No active paid subscription found.`,
+        }),
+      );
     }
 
     await Promise.allSettled(sends);
@@ -107,15 +112,15 @@ function appBaseUrl(req) {
 // tenant billing grid and checkout can reuse the same payload.
 async function getPlans(req, res) {
   const plans = (await plansRepo.listSelfServePlans()).map((p) => ({
-    plan:        p.slug,
-    name:        p.name,
+    plan: p.slug,
+    name: p.name,
     description: p.description,
-    priceId:     p.paddle_price_id || p.slug,
-    amount:      p.amount,
-    currency:    p.currency,
-    interval:    p.interval,
-    features:    p.features,
-    limits:      p.limits,
+    priceId: p.paddle_price_id || p.slug,
+    amount: p.amount,
+    currency: p.currency,
+    interval: p.interval,
+    features: p.features,
+    limits: p.limits,
   }));
   return res.json({ plans });
 }
@@ -132,12 +137,16 @@ async function createCheckout(req, res) {
   const tenantId = req.agent?.tenantId;
   if (!tenantId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const plan = String(req.body?.plan || '').trim().toLowerCase();
+  const plan = String(req.body?.plan || '')
+    .trim()
+    .toLowerCase();
   if (!plan) return res.status(400).json({ error: 'plan is required' });
 
   const target = await plansRepo.getPlanBySlug(plan);
   if (!target || !target.active || !target.self_serve || target.is_free) {
-    return res.status(400).json({ error: 'This plan is not available for self-serve checkout.' });
+    return res
+      .status(400)
+      .json({ error: 'This plan is not available for self-serve checkout.' });
   }
 
   // Ensure the plan is mirrored in Paddle (lazily syncs if needed).
@@ -145,22 +154,25 @@ async function createCheckout(req, res) {
 
   const { rows } = await pool.query(
     'SELECT id, company_name, stripe_customer_id, paddle_customer_id FROM tenants WHERE id = $1',
-    [tenantId]
+    [tenantId],
   );
   const tenant = rows[0];
   if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
-  const base   = appBaseUrl(req);
+  const base = appBaseUrl(req);
   const result = await billingProvider.createTenantCheckoutUrl({
     tenant,
-    agentEmail:    req.agent?.email,
+    agentEmail: req.agent?.email,
     plan,
     stripepriceId: target.paddle_price_id || null,
     paddlePriceId,
-    baseUrl:       base,
+    baseUrl: base,
   });
 
-  req.log.info({ tenantId, plan, provider: result.provider }, 'tenant_checkout_created');
+  req.log.info(
+    { tenantId, plan, provider: result.provider },
+    'tenant_checkout_created',
+  );
   return res.json(result);
 }
 
@@ -174,7 +186,7 @@ async function getPortalUrl(req, res) {
   const tenantId = req.agent?.tenantId;
   const { rows } = await pool.query(
     'SELECT stripe_customer_id, paddle_customer_id FROM tenants WHERE id = $1',
-    [tenantId]
+    [tenantId],
   );
   const tenant = rows[0];
   if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
@@ -199,7 +211,7 @@ async function getSubscription(req, res) {
        trial_ends_at           AS "trialEndsAt",
        lock_notified_at        AS "lockNotifiedAt"
      FROM tenants WHERE id = $1`,
-    [tenantId]
+    [tenantId],
   );
   if (!rows[0]) return res.status(404).json({ error: 'Tenant not found' });
 
@@ -223,7 +235,9 @@ async function getSubscription(req, res) {
     lockState = null;
   } else if (status === 'trialing') {
     if (t.trialEndsAt && new Date(t.trialEndsAt) <= now) {
-      const graceEnd = new Date(new Date(t.trialEndsAt).getTime() + 7 * 24 * 60 * 60 * 1000);
+      const graceEnd = new Date(
+        new Date(t.trialEndsAt).getTime() + 7 * 24 * 60 * 60 * 1000,
+      );
       if (now >= graceEnd) {
         lockState = 'locked';
       } else {
@@ -248,23 +262,27 @@ async function getSubscription(req, res) {
 
   // Fire one-time lock notification email (fire-and-forget, never blocks response)
   if (lockState === 'locked' && !t.lockNotifiedAt) {
-    pool.query('UPDATE tenants SET lock_notified_at = NOW() WHERE id = $1', [tenantId]).catch(() => {});
+    pool
+      .query('UPDATE tenants SET lock_notified_at = NOW() WHERE id = $1', [
+        tenantId,
+      ])
+      .catch(() => {});
     notifyLockEmails(tenantId, t.plan).catch(() => {});
   }
 
   // Determine which provider owns the active subscription.
   const isPaddle = !!t.paddleSubscriptionId;
   const out = {
-    customerId:        isPaddle ? t.paddleCustomerId  : t.stripeCustomerId,
-    subscriptionId:    isPaddle ? t.paddleSubscriptionId : t.stripeSubscriptionId,
-    plan:              t.plan,
-    status:            t.status,
+    customerId: isPaddle ? t.paddleCustomerId : t.stripeCustomerId,
+    subscriptionId: isPaddle ? t.paddleSubscriptionId : t.stripeSubscriptionId,
+    plan: t.plan,
+    status: t.status,
     gracePeriodEndsAt: t.gracePeriodEndsAt,
-    trialEndsAt:       t.trialEndsAt,
+    trialEndsAt: t.trialEndsAt,
     lockState,
     graceDaysLeft,
-    provider:          isPaddle ? 'paddle' : 'stripe',
-    currentPeriodEnd:  null,
+    provider: isPaddle ? 'paddle' : 'stripe',
+    currentPeriodEnd: null,
   };
 
   if (!isPaddle && t.stripeSubscriptionId) {
@@ -272,10 +290,12 @@ async function getSubscription(req, res) {
     try {
       const sub = await pool.query(
         `SELECT current_period_end FROM stripe.subscriptions WHERE id = $1`,
-        [t.stripeSubscriptionId]
+        [t.stripeSubscriptionId],
       );
       const cpe = sub.rows[0]?.current_period_end;
-      out.currentPeriodEnd = cpe ? new Date(Number(cpe) * 1000).toISOString() : null;
+      out.currentPeriodEnd = cpe
+        ? new Date(Number(cpe) * 1000).toISOString()
+        : null;
     } catch {
       out.currentPeriodEnd = null;
     }
@@ -283,7 +303,10 @@ async function getSubscription(req, res) {
     // For Paddle, fetch current period end from the Paddle API.
     try {
       const { paddleRequest } = require('../lib/paddleClient');
-      const resp = await paddleRequest('GET', `/subscriptions/${t.paddleSubscriptionId}`);
+      const resp = await paddleRequest(
+        'GET',
+        `/subscriptions/${t.paddleSubscriptionId}`,
+      );
       const nextBilledAt = resp?.data?.next_billed_at;
       out.currentPeriodEnd = nextBilledAt || null;
     } catch {
@@ -301,22 +324,21 @@ async function getUsage(req, res) {
   const [seats, convos, articles] = await Promise.all([
     pool.query(
       'SELECT COUNT(*) FROM agents WHERE tenant_id=$1 AND is_active=true',
-      [tenantId]
+      [tenantId],
     ),
     pool.query(
       "SELECT COUNT(*) FROM conversations WHERE tenant_id=$1 AND created_at >= date_trunc('month', NOW())",
-      [tenantId]
+      [tenantId],
     ),
-    pool.query(
-      'SELECT COUNT(*) FROM knowledge_articles WHERE tenant_id=$1',
-      [tenantId]
-    ),
+    pool.query('SELECT COUNT(*) FROM knowledge_articles WHERE tenant_id=$1', [
+      tenantId,
+    ]),
   ]);
 
   return res.json({
-    seats:         parseInt(seats.rows[0].count,    10),
-    conversations: parseInt(convos.rows[0].count,   10),
-    articles:      parseInt(articles.rows[0].count, 10),
+    seats: parseInt(seats.rows[0].count, 10),
+    conversations: parseInt(convos.rows[0].count, 10),
+    articles: parseInt(articles.rows[0].count, 10),
   });
 }
 
@@ -329,15 +351,20 @@ async function getUsage(req, res) {
  * Returns: { url, provider }
  */
 async function createPublicCheckout(req, res) {
-  const email        = String(req.body?.email        || '').trim().toLowerCase();
-  const plan         = String(req.body?.plan         || '').trim().toLowerCase();
+  const email = String(req.body?.email || '')
+    .trim()
+    .toLowerCase();
+  const plan = String(req.body?.plan || '')
+    .trim()
+    .toLowerCase();
   const businessName = String(req.body?.businessName || '').trim();
-  const userName     = String(req.body?.userName     || '').trim();
+  const userName = String(req.body?.userName || '').trim();
 
-  if (!businessName) return res.status(400).json({ error: 'businessName is required' });
-  if (!userName)     return res.status(400).json({ error: 'userName is required' });
-  if (!email)        return res.status(400).json({ error: 'email is required' });
-  if (!plan)         return res.status(400).json({ error: 'plan is required' });
+  if (!businessName)
+    return res.status(400).json({ error: 'businessName is required' });
+  if (!userName) return res.status(400).json({ error: 'userName is required' });
+  if (!email) return res.status(400).json({ error: 'email is required' });
+  if (!plan) return res.status(400).json({ error: 'plan is required' });
 
   const target = await plansRepo.getPlanBySlug(plan);
   if (!target || !target.active || !target.self_serve || target.is_free) {
@@ -349,7 +376,7 @@ async function createPublicCheckout(req, res) {
   // Ensure the plan is mirrored in Paddle (lazily syncs if needed).
   const paddlePriceId = await plansRepo.ensurePaddlePriceId(plan);
 
-  const base   = appBaseUrl(req);
+  const base = appBaseUrl(req);
   const result = await billingProvider.createPublicCheckoutUrl({
     email,
     plan,
@@ -357,7 +384,7 @@ async function createPublicCheckout(req, res) {
     userName,
     stripepriceId: target.paddle_price_id || null,
     paddlePriceId,
-    baseUrl:       base,
+    baseUrl: base,
   });
 
   return res.json(result);
@@ -371,17 +398,19 @@ function wrap(fn) {
     } catch (err) {
       logger.error({ err, path: req.path }, 'billing_controller_error');
       if (!res.headersSent) {
-        res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+        res
+          .status(err.status || 500)
+          .json({ error: err.message || 'Internal server error' });
       }
     }
   };
 }
 
 module.exports = {
-  getPlans:             wrap(getPlans),
-  createCheckout:       wrap(createCheckout),
+  getPlans: wrap(getPlans),
+  createCheckout: wrap(createCheckout),
   createPublicCheckout: wrap(createPublicCheckout),
-  getPortalUrl:         wrap(getPortalUrl),
-  getSubscription:      wrap(getSubscription),
-  getUsage:             wrap(getUsage),
+  getPortalUrl: wrap(getPortalUrl),
+  getSubscription: wrap(getSubscription),
+  getUsage: wrap(getUsage),
 };

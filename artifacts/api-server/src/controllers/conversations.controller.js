@@ -16,19 +16,34 @@
  * GET    /api/conversations/:id/export             PDF → R2 presigned URL
  */
 
-const { Router }                = require('express');
-const { requireAuth, requirePermissionByMethod, requirePermission, applyWorkspaceOverride } = require('../middleware/auth');
-const { pool }                  = require('../lib/db');
-const { handleExportRequest }   = require('../services/export.service');
-const { sendStatusChangeEmail, sendAgentReplyEmail, sendTicketCreatedEmail } = require('../services/email.service');
-const { broadcastToConversation, broadcastToTenant, broadcastToVisitor } = require('../services/socket.service');
-const logger                    = require('../utils/logger');
-const crypto                    = require('crypto');
-const fs                        = require('fs');
-const path                      = require('path');
+const { Router } = require('express');
+const {
+  requireAuth,
+  requirePermissionByMethod,
+  requirePermission,
+  applyWorkspaceOverride,
+} = require('../middleware/auth');
+const { pool } = require('../lib/db');
+const { handleExportRequest } = require('../services/export.service');
+const {
+  sendStatusChangeEmail,
+  sendAgentReplyEmail,
+  sendTicketCreatedEmail,
+} = require('../services/email.service');
+const {
+  broadcastToConversation,
+  broadcastToTenant,
+  broadcastToVisitor,
+} = require('../services/socket.service');
+const logger = require('../utils/logger');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
-try { fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch(e) {}
+try {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch (e) {}
 const { R2_ENABLED, uploadToR2 } = require('../lib/r2');
 
 const router = Router();
@@ -37,89 +52,170 @@ router.use(applyWorkspaceOverride);
 router.use(requirePermissionByMethod('inbox'));
 
 // ─── One-time migrations ───────────────────────────────────────────────────────
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN NOT NULL DEFAULT false`)
-  .catch(err => { if (!err.message?.includes('already exists')) logger.warn({ err: err.message }, 'is_ticket_migration_warning'); });
+pool
+  .query(
+    `ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_ticket BOOLEAN NOT NULL DEFAULT false`,
+  )
+  .catch((err) => {
+    if (!err.message?.includes('already exists'))
+      logger.warn({ err: err.message }, 'is_ticket_migration_warning');
+  });
 
 // Ticket number — global auto-incrementing sequence, unique per conversation
-pool.query(`CREATE SEQUENCE IF NOT EXISTS conversations_ticket_number_seq START 10001 INCREMENT 1`)
+pool
+  .query(
+    `CREATE SEQUENCE IF NOT EXISTS conversations_ticket_number_seq START 10001 INCREMENT 1`,
+  )
   .catch(() => {});
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ticket_number INT`)
+pool
+  .query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ticket_number INT`)
   .catch(() => {});
-pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS conversations_ticket_number_uidx ON conversations (ticket_number) WHERE ticket_number IS NOT NULL`)
+pool
+  .query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS conversations_ticket_number_uidx ON conversations (ticket_number) WHERE ticket_number IS NOT NULL`,
+  )
   .catch(() => {});
 
 // Latest page the visitor is viewing — persisted so the dashboard can show it
 // immediately when an agent opens a conversation (independent of socket timing).
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS current_url TEXT`)
+pool
+  .query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS current_url TEXT`)
   .catch(() => {});
 
-pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
+pool
+  .query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`)
   .catch(() => {});
 
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS referrer_url TEXT`)
+pool
+  .query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS referrer_url TEXT`)
   .catch(() => {});
 
 // Tracks whether a CSAT survey was requested at close time and not yet answered/
 // dismissed, so the widget can recover the survey on reload (the live socket
 // event may be missed). Cleared when the visitor rates or chooses "Just Close".
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS csat_requested BOOLEAN NOT NULL DEFAULT false`)
+pool
+  .query(
+    `ALTER TABLE conversations ADD COLUMN IF NOT EXISTS csat_requested BOOLEAN NOT NULL DEFAULT false`,
+  )
   .catch(() => {});
 
 // Read receipts used by the widget and dashboard. Keep this migration here as
 // well as in operational deployment scripts so existing databases self-heal.
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_last_read_at TIMESTAMPTZ`)
-  .catch(err => logger.warn({ err: err.message }, 'visitor_last_read_at_migration_warning'));
-pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS agent_last_read_at TIMESTAMPTZ`)
-  .catch(err => logger.warn({ err: err.message }, 'agent_last_read_at_migration_warning'));
+pool
+  .query(
+    `ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_last_read_at TIMESTAMPTZ`,
+  )
+  .catch((err) =>
+    logger.warn({ err: err.message }, 'visitor_last_read_at_migration_warning'),
+  );
+pool
+  .query(
+    `ALTER TABLE conversations ADD COLUMN IF NOT EXISTS agent_last_read_at TIMESTAMPTZ`,
+  )
+  .catch((err) =>
+    logger.warn({ err: err.message }, 'agent_last_read_at_migration_warning'),
+  );
 
 // Extend the status check constraint to include ticket statuses
-pool.query(`
+pool
+  .query(
+    `
   ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_status_check;
   ALTER TABLE conversations ADD CONSTRAINT conversations_status_check
     CHECK (status IN ('ai_handling','open','closed','pending','submitted','in_progress','waiting_on_customer','resolved'));
-`).catch(err => logger.warn({ err: err.message }, 'status_constraint_migration_warning'));
+`,
+  )
+  .catch((err) =>
+    logger.warn({ err: err.message }, 'status_constraint_migration_warning'),
+  );
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const PAGE_LIMIT = 50;
-function tenantId(req) { return req.agent.tenantId; }
+function tenantId(req) {
+  return req.agent.tenantId;
+}
 
 // ─── POST /api/conversations/upload — authenticated file upload for agents ────
 router.post('/upload', async (req, res, next) => {
   try {
     const { filename, mimeType, data } = req.body || {};
-    if (!filename || !data) return res.status(400).json({ error: 'filename and data are required' });
-    const buffer   = Buffer.from(data, 'base64');
-    const ext      = path.extname(filename) || '';
+    if (!filename || !data)
+      return res.status(400).json({ error: 'filename and data are required' });
+    const buffer = Buffer.from(data, 'base64');
+    const ext = path.extname(filename) || '';
     const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
     if (R2_ENABLED) {
-      await uploadToR2(buffer, safeName, mimeType || 'application/octet-stream');
-      logger.info({ filename, size: buffer.length, agentId: req.agent?.id, storage: 'r2' }, 'agent_file_uploaded');
+      await uploadToR2(
+        buffer,
+        safeName,
+        mimeType || 'application/octet-stream',
+      );
+      logger.info(
+        {
+          filename,
+          size: buffer.length,
+          agentId: req.agent?.id,
+          storage: 'r2',
+        },
+        'agent_file_uploaded',
+      );
     } else {
       fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
-      logger.info({ filename, size: buffer.length, agentId: req.agent?.id, storage: 'disk' }, 'agent_file_uploaded');
+      logger.info(
+        {
+          filename,
+          size: buffer.length,
+          agentId: req.agent?.id,
+          storage: 'disk',
+        },
+        'agent_file_uploaded',
+      );
     }
-    return res.json({ url: `/api/widget/files/${safeName}`, name: filename, type: mimeType });
-  } catch (err) { next(err); }
+    return res.json({
+      url: `/api/widget/files/${safeName}`,
+      name: filename,
+      type: mimeType,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── GET /api/conversations/csat ─────────────────────────────────────────────
-router.get('/csat', requirePermission('analytics', 'read'), async (req, res, next) => {
-  try {
-    const tid         = tenantId(req);
-    const { brand_id, date_from, date_to } = req.query;
+router.get(
+  '/csat',
+  requirePermission('analytics', 'read'),
+  async (req, res, next) => {
+    try {
+      const tid = tenantId(req);
+      const { brand_id, date_from, date_to } = req.query;
 
-    const conditions = ['a.tenant_id = $1'];
-    const values     = [tid];
-    let i = 2;
+      const conditions = ['a.tenant_id = $1'];
+      const values = [tid];
+      let i = 2;
 
-    const cConditions = ['c.tenant_id = $1'];
-    if (brand_id) { cConditions.push(`c.brand_id = $${i}`); conditions.push(`(c.brand_id IS NULL OR c.brand_id = $${i})`); values.push(brand_id); i++; }
-    if (date_from) { cConditions.push(`c.updated_at >= $${i}`); values.push(date_from); i++; }
-    if (date_to)   { cConditions.push(`c.updated_at <= $${i}`); values.push(date_to);   i++; }
+      const cConditions = ['c.tenant_id = $1'];
+      if (brand_id) {
+        cConditions.push(`c.brand_id = $${i}`);
+        conditions.push(`(c.brand_id IS NULL OR c.brand_id = $${i})`);
+        values.push(brand_id);
+        i++;
+      }
+      if (date_from) {
+        cConditions.push(`c.updated_at >= $${i}`);
+        values.push(date_from);
+        i++;
+      }
+      if (date_to) {
+        cConditions.push(`c.updated_at <= $${i}`);
+        values.push(date_to);
+        i++;
+      }
 
-    const cWhere = cConditions.join(' AND ');
+      const cWhere = cConditions.join(' AND ');
 
-    const { rows } = await pool.query(`
+      const { rows } = await pool.query(
+        `
       SELECT
         a.id                                                                          AS agent_id,
         a.name                                                                        AS agent_name,
@@ -152,35 +248,78 @@ router.get('/csat', requirePermission('analytics', 'read'), async (req, res, nex
       WHERE a.tenant_id = $1 AND a.is_active = true
       GROUP BY a.id, a.name, a.email
       ORDER BY avg_csat_score DESC NULLS LAST, total_assigned DESC
-    `, values);
+    `,
+        values,
+      );
 
-    return res.json(rows);
-  } catch (err) { next(err); }
-});
+      return res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // ─── GET /api/conversations ───────────────────────────────────────────────────
 router.get('/', async (req, res, next) => {
   try {
-    const tid      = tenantId(req);
-    const { status, is_ticket, brand_id, agent_id, rating, search, date_from, date_to, page: pageQ, limit: limitQ } = req.query;
-    const page     = Math.max(1, parseInt(pageQ) || 1);
-    const limit    = Math.min(100, parseInt(limitQ) || PAGE_LIMIT);
-    const offset   = (page - 1) * limit;
+    const tid = tenantId(req);
+    const {
+      status,
+      is_ticket,
+      brand_id,
+      agent_id,
+      rating,
+      search,
+      date_from,
+      date_to,
+      page: pageQ,
+      limit: limitQ,
+    } = req.query;
+    const page = Math.max(1, parseInt(pageQ) || 1);
+    const limit = Math.min(100, parseInt(limitQ) || PAGE_LIMIT);
+    const offset = (page - 1) * limit;
 
     const conditions = ['c.tenant_id = $1'];
-    const values     = [tid];
+    const values = [tid];
     let i = 2;
 
     if (req.agent.role === 'agent') {
-      conditions.push(`(c.assigned_agent_id = $${i} OR c.assigned_agent_id IS NULL)`);
-      values.push(req.agent.id); i++;
+      conditions.push(
+        `(c.assigned_agent_id = $${i} OR c.assigned_agent_id IS NULL)`,
+      );
+      values.push(req.agent.id);
+      i++;
     }
-    if (status)    { conditions.push(`c.status = $${i}`);            values.push(status); i++; }
-    if (brand_id)  { conditions.push(`c.brand_id = $${i}`);          values.push(brand_id); i++; }
-    if (agent_id)  { conditions.push(`c.assigned_agent_id = $${i}`); values.push(agent_id); i++; }
-    if (rating)    { conditions.push(`c.csat_score = $${i}`);        values.push(parseInt(rating, 10)); i++; }
-    if (date_from) { conditions.push(`c.updated_at >= $${i}`);       values.push(date_from); i++; }
-    if (date_to)   { conditions.push(`c.updated_at <= $${i}`);       values.push(date_to); i++; }
+    if (status) {
+      conditions.push(`c.status = $${i}`);
+      values.push(status);
+      i++;
+    }
+    if (brand_id) {
+      conditions.push(`c.brand_id = $${i}`);
+      values.push(brand_id);
+      i++;
+    }
+    if (agent_id) {
+      conditions.push(`c.assigned_agent_id = $${i}`);
+      values.push(agent_id);
+      i++;
+    }
+    if (rating) {
+      conditions.push(`c.csat_score = $${i}`);
+      values.push(parseInt(rating, 10));
+      i++;
+    }
+    if (date_from) {
+      conditions.push(`c.updated_at >= $${i}`);
+      values.push(date_from);
+      i++;
+    }
+    if (date_to) {
+      conditions.push(`c.updated_at <= $${i}`);
+      values.push(date_to);
+      i++;
+    }
     if (search) {
       const q = `%${search}%`;
       conditions.push(`(
@@ -188,9 +327,10 @@ router.get('/', async (req, res, next) => {
         c.subject ILIKE $${i} OR
         EXISTS(SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.message_body ILIKE $${i})
       )`);
-      values.push(q); i++;
+      values.push(q);
+      i++;
     }
-    if (is_ticket === 'true')  conditions.push(`c.is_ticket = true`);
+    if (is_ticket === 'true') conditions.push(`c.is_ticket = true`);
     else if (is_ticket === 'false') conditions.push(`c.is_ticket = false`);
 
     const where = conditions.join(' AND ');
@@ -214,9 +354,12 @@ router.get('/', async (req, res, next) => {
          WHERE ${where}
          ORDER BY c.updated_at DESC
          LIMIT $${i} OFFSET $${i + 1}`,
-        [...values, limit, offset]
+        [...values, limit, offset],
       ),
-      pool.query(`SELECT COUNT(*) FROM conversations c LEFT JOIN visitors v ON v.id = c.visitor_id WHERE ${where}`, values),
+      pool.query(
+        `SELECT COUNT(*) FROM conversations c LEFT JOIN visitors v ON v.id = c.visitor_id WHERE ${where}`,
+        values,
+      ),
     ]);
 
     const total = parseInt(countRow[0].count, 10);
@@ -224,7 +367,9 @@ router.get('/', async (req, res, next) => {
       conversations,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── GET /api/conversations/:id ───────────────────────────────────────────────
@@ -242,33 +387,55 @@ router.get('/:id', async (req, res, next) => {
        LEFT JOIN agents   a ON a.id = c.assigned_agent_id
        LEFT JOIN brands   b ON b.id = c.brand_id
        WHERE c.id = $1 AND c.tenant_id = $2`,
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    if (!rows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
     return res.json(rows[0]);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── PATCH /api/conversations/:id ─────────────────────────────────────────────
 router.patch('/:id', async (req, res, next) => {
   try {
     const trigger_csat = req.body.trigger_csat; // boolean, not persisted but forwarded in socket event
-    const ALLOWED = ['status', 'priority', 'assigned_agent_id', 'subject', 'is_ticket', 'csat_score'];
-    const fields  = Object.keys(req.body).filter(k => ALLOWED.includes(k));
-    if (!fields.length) return res.status(400).json({ error: 'No valid fields provided' });
+    const ALLOWED = [
+      'status',
+      'priority',
+      'assigned_agent_id',
+      'subject',
+      'is_ticket',
+      'csat_score',
+    ];
+    const fields = Object.keys(req.body).filter((k) => ALLOWED.includes(k));
+    if (!fields.length)
+      return res.status(400).json({ error: 'No valid fields provided' });
 
     const { rows: beforeRows } = await pool.query(
       `SELECT status, visitor_id, assigned_agent_id, is_ticket, ticket_number, subject FROM conversations WHERE id = $1 AND tenant_id = $2`,
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!beforeRows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    const { status: oldStatus, visitor_id: oldVisitorId, assigned_agent_id: oldAgentId, is_ticket: wasTicket, subject: convSubject } = beforeRows[0];
+    if (!beforeRows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
+    const {
+      status: oldStatus,
+      visitor_id: oldVisitorId,
+      assigned_agent_id: oldAgentId,
+      is_ticket: wasTicket,
+      subject: convSubject,
+    } = beforeRows[0];
 
     // When converting to ticket, assign ticket_number in the same UPDATE
-    const convertingToTicket = fields.includes('is_ticket') && req.body.is_ticket === true && !wasTicket;
+    const convertingToTicket =
+      fields.includes('is_ticket') && req.body.is_ticket === true && !wasTicket;
 
     let setClauses = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
-    const values   = fields.map(f => { const v = req.body[f]; return (v === '' || v === undefined) ? null : v; });
+    const values = fields.map((f) => {
+      const v = req.body[f];
+      return v === '' || v === undefined ? null : v;
+    });
 
     if (convertingToTicket) {
       // Tickets are email conversations — close the live widget channel and
@@ -300,30 +467,47 @@ router.patch('/:id', async (req, res, next) => {
       `UPDATE conversations SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
        RETURNING id, status, priority, assigned_agent_id, is_ticket, ticket_number, csat_score, updated_at`,
-      values
+      values,
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    logger.info({ conversationId: req.params.id, fields, ticket_number: rows[0].ticket_number }, 'conversation_patched');
+    if (!rows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
+    logger.info(
+      {
+        conversationId: req.params.id,
+        fields,
+        ticket_number: rows[0].ticket_number,
+      },
+      'conversation_patched',
+    );
 
     // Send ticket-created confirmation email to visitor (non-blocking)
     if (convertingToTicket && rows[0].ticket_number) {
       const ticketNum = rows[0].ticket_number;
-      const convId    = req.params.id;
-      const tId       = tenantId(req);
-      pool.query(
-        `SELECT v.email FROM visitors v WHERE v.id = $1`,
-        [oldVisitorId]
-      ).then(async ({ rows: vr }) => {
-        if (!vr[0]?.email) return;
-        // Generate a customer-facing conversation summary to include in the
-        // ticket email (optional — falls back to no summary if AI is down).
-        let summary = '';
-        try {
-          const ai = require('../services/ai.service');
-          summary = await ai.summarizeForVisitor(convId);
-        } catch { /* summary is optional */ }
-        sendTicketCreatedEmail(tId, convId, ticketNum, vr[0].email, convSubject, summary).catch(() => {});
-      }).catch(() => {});
+      const convId = req.params.id;
+      const tId = tenantId(req);
+      pool
+        .query(`SELECT v.email FROM visitors v WHERE v.id = $1`, [oldVisitorId])
+        .then(async ({ rows: vr }) => {
+          if (!vr[0]?.email) return;
+          // Generate a customer-facing conversation summary to include in the
+          // ticket email (optional — falls back to no summary if AI is down).
+          let summary = '';
+          try {
+            const ai = require('../services/ai.service');
+            summary = await ai.summarizeForVisitor(convId);
+          } catch {
+            /* summary is optional */
+          }
+          sendTicketCreatedEmail(
+            tId,
+            convId,
+            ticketNum,
+            vr[0].email,
+            convSubject,
+            summary,
+          ).catch(() => {});
+        })
+        .catch(() => {});
 
       // Close the live widget conversation so the visitor cannot keep chatting
       // in the bubble — it has been moved to an email ticket.
@@ -333,15 +517,32 @@ router.patch('/:id', async (req, res, next) => {
           trigger_csat: Boolean(trigger_csat),
           converted_to_ticket: true,
         };
-        broadcastToVisitor(oldVisitorId, 'conversation:closed', ticketClosePayload);
-        broadcastToConversation(req.params.id, 'conversation:closed', ticketClosePayload);
+        broadcastToVisitor(
+          oldVisitorId,
+          'conversation:closed',
+          ticketClosePayload,
+        );
+        broadcastToConversation(
+          req.params.id,
+          'conversation:closed',
+          ticketClosePayload,
+        );
       }
     }
 
     const newStatus = rows[0].status;
     if (fields.includes('status') && newStatus !== oldStatus) {
-      pool.query(`SELECT email FROM visitors WHERE id = $1`, [oldVisitorId])
-        .then(({ rows: vRows }) => sendStatusChangeEmail(tenantId(req), req.params.id, oldStatus, newStatus, vRows[0]?.email))
+      pool
+        .query(`SELECT email FROM visitors WHERE id = $1`, [oldVisitorId])
+        .then(({ rows: vRows }) =>
+          sendStatusChangeEmail(
+            tenantId(req),
+            req.params.id,
+            oldStatus,
+            newStatus,
+            vRows[0]?.email,
+          ),
+        )
         .catch(() => {});
 
       // Broadcast status change to agents viewing this conversation
@@ -357,22 +558,38 @@ router.patch('/:id', async (req, res, next) => {
           trigger_csat: newStatus === 'closed' ? Boolean(trigger_csat) : false,
         };
         broadcastToVisitor(oldVisitorId, 'conversation:closed', closedPayload);
-        broadcastToConversation(req.params.id, 'conversation:closed', closedPayload);
+        broadcastToConversation(
+          req.params.id,
+          'conversation:closed',
+          closedPayload,
+        );
       }
     }
 
     const newAgentId = rows[0].assigned_agent_id;
-    if (fields.includes('assigned_agent_id') && String(newAgentId) !== String(oldAgentId)) {
+    if (
+      fields.includes('assigned_agent_id') &&
+      String(newAgentId) !== String(oldAgentId)
+    ) {
       let agentName = null;
       if (newAgentId) {
-        const { rows: agRows } = await pool.query('SELECT name FROM agents WHERE id = $1', [newAgentId]);
+        const { rows: agRows } = await pool.query(
+          'SELECT name FROM agents WHERE id = $1',
+          [newAgentId],
+        );
         agentName = agRows[0]?.name ?? null;
       }
-      broadcastToTenant(tenantId(req), 'conversation:assigned', { conversationId: req.params.id, agentId: newAgentId, agentName });
+      broadcastToTenant(tenantId(req), 'conversation:assigned', {
+        conversationId: req.params.id,
+        agentId: newAgentId,
+        agentName,
+      });
     }
 
     return res.json(rows[0]);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── GET /api/conversations/:id/messages ─────────────────────────────────────
@@ -380,9 +597,10 @@ router.get('/:id/messages', async (req, res, next) => {
   try {
     const { rows: convRows } = await pool.query(
       'SELECT id FROM conversations WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    if (!convRows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
 
     const { rows: messages } = await pool.query(
       `SELECT
@@ -394,40 +612,65 @@ router.get('/:id/messages', async (req, res, next) => {
        LEFT JOIN visitors vis ON (m.sender_type = 'visitor'         AND vis.id = m.sender_id)
        WHERE m.conversation_id = $1
        ORDER BY m.created_at ASC`,
-      [req.params.id]
+      [req.params.id],
     );
     return res.json(messages);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── POST /api/conversations/:id/messages ────────────────────────────────────
 router.post('/:id/messages', async (req, res, next) => {
   try {
-    const { body: messageBody, isInternalNote = false, attachments = [] } = req.body || {};
+    const {
+      body: messageBody,
+      isInternalNote = false,
+      attachments = [],
+    } = req.body || {};
     // Allow body-only, attachment-only, or both
     const hasBody = messageBody?.trim?.();
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-    if (!hasBody && !hasAttachments) return res.status(400).json({ error: 'message body or attachment is required' });
+    if (!hasBody && !hasAttachments)
+      return res
+        .status(400)
+        .json({ error: 'message body or attachment is required' });
 
     const { rows: convRows } = await pool.query(
       `SELECT id, status, tenant_id, visitor_id, is_ticket, ticket_number, subject FROM conversations WHERE id = $1 AND tenant_id = $2`,
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    if (convRows[0].status === 'closed') return res.status(409).json({ error: 'Conversation is closed' });
+    if (!convRows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
+    if (convRows[0].status === 'closed')
+      return res.status(409).json({ error: 'Conversation is closed' });
 
     const attachmentsJson = hasAttachments ? JSON.stringify(attachments) : '[]';
     const { rows: newMsg } = await pool.query(
       `INSERT INTO messages (conversation_id, sender_type, sender_id, message_body, is_internal_note, attachments_json)
        VALUES ($1, 'agent', $2, $3, $4, $5)
        RETURNING id, conversation_id, sender_type, message_body, is_internal_note, attachments_json, created_at`,
-      [req.params.id, req.agent.id, hasBody || '', Boolean(isInternalNote), attachmentsJson]
+      [
+        req.params.id,
+        req.agent.id,
+        hasBody || '',
+        Boolean(isInternalNote),
+        attachmentsJson,
+      ],
     );
 
-    const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [req.agent.id]);
-    const result   = { ...newMsg[0], sender_name: agentRow.rows[0]?.name ?? 'Agent' };
+    const agentRow = await pool.query('SELECT name FROM agents WHERE id = $1', [
+      req.agent.id,
+    ]);
+    const result = {
+      ...newMsg[0],
+      sender_name: agentRow.rows[0]?.name ?? 'Agent',
+    };
 
-    await pool.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [req.params.id]);
+    await pool.query(
+      'UPDATE conversations SET updated_at = NOW() WHERE id = $1',
+      [req.params.id],
+    );
     broadcastToConversation(req.params.id, 'server:new_message', result);
     // Also deliver directly to the visitor's personal room — guarantees the widget
     // receives the agent reply even if it hasn't yet joined the conversation room.
@@ -435,51 +678,73 @@ router.post('/:id/messages', async (req, res, next) => {
     if (convRows[0].visitor_id && !convRows[0].is_ticket) {
       broadcastToVisitor(convRows[0].visitor_id, 'server:new_message', result);
     }
-    logger.info({ conversationId: req.params.id, agentId: req.agent.id }, 'agent_message_sent');
+    logger.info(
+      { conversationId: req.params.id, agentId: req.agent.id },
+      'agent_message_sent',
+    );
 
     // Non-blocking: email visitor when agent replies (not for internal notes)
     if (!Boolean(isInternalNote)) {
-      pool.query(
-        `SELECT v.email FROM conversations c JOIN visitors v ON v.id = c.visitor_id WHERE c.id = $1`,
-        [req.params.id]
-      ).then(({ rows: vr }) => {
-        if (vr[0]?.email) {
-          sendAgentReplyEmail(req.agent.tenantId, req.params.id, result.sender_name, messageBody, vr[0].email, attachments, convRows[0].ticket_number, convRows[0].subject)
-            .catch(() => {});
-        }
-      }).catch(() => {});
+      pool
+        .query(
+          `SELECT v.email FROM conversations c JOIN visitors v ON v.id = c.visitor_id WHERE c.id = $1`,
+          [req.params.id],
+        )
+        .then(({ rows: vr }) => {
+          if (vr[0]?.email) {
+            sendAgentReplyEmail(
+              req.agent.tenantId,
+              req.params.id,
+              result.sender_name,
+              messageBody,
+              vr[0].email,
+              attachments,
+              convRows[0].ticket_number,
+              convRows[0].subject,
+            ).catch(() => {});
+          }
+        })
+        .catch(() => {});
     }
 
     return res.status(201).json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── PATCH /api/conversations/:id/messages/:msgId ────────────────────────────
 router.patch('/:id/messages/:msgId', async (req, res, next) => {
   try {
     const { body: newBody } = req.body || {};
-    if (!newBody?.trim()) return res.status(400).json({ error: 'body is required' });
+    if (!newBody?.trim())
+      return res.status(400).json({ error: 'body is required' });
 
     const { rows: msgRows } = await pool.query(
       `SELECT m.id, m.sender_id FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
        WHERE m.id = $1 AND m.conversation_id = $2 AND c.tenant_id = $3`,
-      [req.params.msgId, req.params.id, tenantId(req)]
+      [req.params.msgId, req.params.id, tenantId(req)],
     );
-    if (!msgRows[0]) return res.status(404).json({ error: 'Message not found' });
+    if (!msgRows[0])
+      return res.status(404).json({ error: 'Message not found' });
     if (req.agent.role !== 'admin' && msgRows[0].sender_id !== req.agent.id) {
-      return res.status(403).json({ error: 'Not authorized to edit this message' });
+      return res
+        .status(403)
+        .json({ error: 'Not authorized to edit this message' });
     }
 
     const { rows } = await pool.query(
       `UPDATE messages SET message_body = $1, updated_at = NOW()
        WHERE id = $2
        RETURNING id, conversation_id, sender_type, message_body, is_internal_note, created_at`,
-      [newBody.trim(), req.params.msgId]
+      [newBody.trim(), req.params.msgId],
     );
     broadcastToConversation(req.params.id, 'server:message_updated', rows[0]);
     return res.json(rows[0]);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── DELETE /api/conversations/:id/messages/:msgId ───────────────────────────
@@ -489,16 +754,24 @@ router.delete('/:id/messages/:msgId', async (req, res, next) => {
       `SELECT m.id, m.sender_id FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
        WHERE m.id = $1 AND m.conversation_id = $2 AND c.tenant_id = $3`,
-      [req.params.msgId, req.params.id, tenantId(req)]
+      [req.params.msgId, req.params.id, tenantId(req)],
     );
-    if (!msgRows[0]) return res.status(404).json({ error: 'Message not found' });
+    if (!msgRows[0])
+      return res.status(404).json({ error: 'Message not found' });
     if (req.agent.role !== 'admin' && msgRows[0].sender_id !== req.agent.id) {
-      return res.status(403).json({ error: 'Not authorized to delete this message' });
+      return res
+        .status(403)
+        .json({ error: 'Not authorized to delete this message' });
     }
     await pool.query('DELETE FROM messages WHERE id = $1', [req.params.msgId]);
-    broadcastToConversation(req.params.id, 'server:message_deleted', { id: req.params.msgId, conversation_id: req.params.id });
+    broadcastToConversation(req.params.id, 'server:message_deleted', {
+      id: req.params.msgId,
+      conversation_id: req.params.id,
+    });
     return res.status(204).end();
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── DELETE /api/conversations/:id ────────────────────────────────────────────
@@ -511,13 +784,21 @@ router.delete('/:id', async (req, res, next) => {
     }
     const { rows } = await pool.query(
       'DELETE FROM conversations WHERE id = $1 AND tenant_id = $2 RETURNING id',
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Conversation not found' });
-    broadcastToTenant(tenantId(req), 'conversation:deleted', { conversationId: req.params.id });
-    logger.info({ conversationId: req.params.id, by: req.agent.id }, 'conversation_deleted');
+    if (!rows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
+    broadcastToTenant(tenantId(req), 'conversation:deleted', {
+      conversationId: req.params.id,
+    });
+    logger.info(
+      { conversationId: req.params.id, by: req.agent.id },
+      'conversation_deleted',
+    );
     return res.status(204).end();
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── GET /api/conversations/:id/visitor-history ───────────────────────────────
@@ -525,9 +806,10 @@ router.get('/:id/visitor-history', async (req, res, next) => {
   try {
     const { rows: convRows } = await pool.query(
       'SELECT visitor_id FROM conversations WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, tenantId(req)]
+      [req.params.id, tenantId(req)],
     );
-    if (!convRows[0]) return res.status(404).json({ error: 'Conversation not found' });
+    if (!convRows[0])
+      return res.status(404).json({ error: 'Conversation not found' });
     const visitorId = convRows[0].visitor_id;
     if (!visitorId) return res.json([]);
 
@@ -536,10 +818,12 @@ router.get('/:id/visitor-history', async (req, res, next) => {
        FROM conversations c
        WHERE c.visitor_id = $1 AND c.id != $2
        ORDER BY c.created_at DESC LIMIT 10`,
-      [visitorId, req.params.id]
+      [visitorId, req.params.id],
     );
     return res.json(rows);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── GET /api/conversations/:id/export ───────────────────────────────────────
@@ -550,8 +834,12 @@ router.post('/bulk-export', async (req, res, next) => {
   try {
     const tenantId = req.agent?.tenantId;
     const { ids } = req.body || {};
-    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array is required' });
-    if (ids.length > 50) return res.status(400).json({ error: 'Maximum 50 conversations per export' });
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ error: 'ids array is required' });
+    if (ids.length > 50)
+      return res
+        .status(400)
+        .json({ error: 'Maximum 50 conversations per export' });
 
     const { buildPdf } = require('../services/export.service');
     const archiver = require('archiver');
@@ -561,32 +849,44 @@ router.post('/bulk-export', async (req, res, next) => {
       `SELECT c.*, b.brand_name FROM conversations c
        LEFT JOIN brands b ON b.id = c.brand_id
        WHERE c.id IN (${placeholders}) AND c.tenant_id = $1`,
-      [tenantId, ...ids]
+      [tenantId, ...ids],
     );
-    if (!convRows.length) return res.status(404).json({ error: 'No conversations found' });
+    if (!convRows.length)
+      return res.status(404).json({ error: 'No conversations found' });
 
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="omnicore-export-${Date.now()}.zip"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="omnicore-export-${Date.now()}.zip"`,
+    );
 
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.pipe(res);
-    archive.on('error', err => { logger.error({ err }, 'bulk_export_archive_error'); });
+    archive.on('error', (err) => {
+      logger.error({ err }, 'bulk_export_archive_error');
+    });
 
     for (const conv of convRows) {
       const { rows: messages } = await pool.query(
         `SELECT m.*, a.name AS sender_name FROM messages m
          LEFT JOIN agents a ON a.id = m.sender_id
          WHERE m.conversation_id = $1 ORDER BY m.created_at ASC`,
-        [conv.id]
+        [conv.id],
       );
-      const pdfBuffer = await buildPdf(conv, messages, { name: conv.brand_name || 'OmniCore' });
-      const safe = (conv.subject || conv.id).replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40);
+      const pdfBuffer = await buildPdf(conv, messages, {
+        name: conv.brand_name || 'OmniCore',
+      });
+      const safe = (conv.subject || conv.id)
+        .replace(/[^a-zA-Z0-9-_]/g, '_')
+        .slice(0, 40);
       archive.append(pdfBuffer, { name: `conversation-${safe}.pdf` });
     }
 
     await archive.finalize();
     logger.info({ tenantId, count: convRows.length }, 'bulk_export_generated');
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

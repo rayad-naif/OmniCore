@@ -28,26 +28,29 @@
  *   await crawlSite({ tenantId, brandId, url, maxDepth: 2, maxPages: 20 });
  */
 
-const cheerio      = require('cheerio');
-const { URL }      = require('url');
-const { pool }     = require('../lib/db');
-const aiService    = require('../services/ai.service');
+const cheerio = require('cheerio');
+const { URL } = require('url');
+const { pool } = require('../lib/db');
+const aiService = require('../services/ai.service');
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const DEFAULT_MAX_DEPTH  = 2;
-const DEFAULT_MAX_PAGES  = 50;
-const REQUEST_DELAY_MS   = 800;    // polite crawl delay between requests
+const DEFAULT_MAX_DEPTH = 2;
+const DEFAULT_MAX_PAGES = 50;
+const REQUEST_DELAY_MS = 800; // polite crawl delay between requests
 const REQUEST_TIMEOUT_MS = 12_000;
-const USER_AGENT         = 'AtelierOmniCoreBot/1.0 (+https://iratelier.com/bot)';
+const USER_AGENT = 'AtelierOmniCoreBot/1.0 (+https://iratelier.com/bot)';
 
 // HTML elements whose text is included verbatim (beyond <p>)
-const TEXT_SELECTORS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'blockquote'].join(', ');
+const TEXT_SELECTORS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'blockquote'].join(
+  ', ',
+);
 
 // Patterns for URLs we should never crawl
-const SKIP_EXTENSIONS = /\.(pdf|zip|png|jpg|jpeg|gif|svg|mp4|mp3|css|js|xml|json|ico|woff2?)$/i;
-const SKIP_PROTOCOLS  = /^(mailto:|tel:|javascript:|#)/i;
+const SKIP_EXTENSIONS =
+  /\.(pdf|zip|png|jpg|jpeg|gif|svg|mp4|mp3|css|js|xml|json|ico|woff2?)$/i;
+const SKIP_PROTOCOLS = /^(mailto:|tel:|javascript:|#)/i;
 
 // ---------------------------------------------------------------------------
 // SSRF protection — private / loopback / link-local IP ranges
@@ -55,17 +58,17 @@ const SKIP_PROTOCOLS  = /^(mailto:|tel:|javascript:|#)/i;
 const PRIVATE_HOST_RE = new RegExp(
   [
     '^localhost$',
-    '^127\\.',                          // 127.0.0.0/8  loopback
-    '^10\\.',                           // 10.0.0.0/8   private
-    '^172\\.(1[6-9]|2[0-9]|3[01])\\.',// 172.16-31.x  private
-    '^192\\.168\\.',                    // 192.168.0.0/16 private
-    '^169\\.254\\.',                    // 169.254.0.0/16 link-local (AWS IMDS etc.)
-    '^::1$',                            // IPv6 loopback
-    '^fc00:',                           // IPv6 unique local
-    '^fe80:',                           // IPv6 link-local
-    '^0\\.0\\.0\\.0$',                  // unspecified
+    '^127\\.', // 127.0.0.0/8  loopback
+    '^10\\.', // 10.0.0.0/8   private
+    '^172\\.(1[6-9]|2[0-9]|3[01])\\.', // 172.16-31.x  private
+    '^192\\.168\\.', // 192.168.0.0/16 private
+    '^169\\.254\\.', // 169.254.0.0/16 link-local (AWS IMDS etc.)
+    '^::1$', // IPv6 loopback
+    '^fc00:', // IPv6 unique local
+    '^fe80:', // IPv6 link-local
+    '^0\\.0\\.0\\.0$', // unspecified
   ].join('|'),
-  'i'
+  'i',
 );
 
 /**
@@ -87,7 +90,9 @@ function assertPublicUrl(rawUrl) {
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error(`SSRF_PROTOCOL: only http/https allowed, got "${parsed.protocol}"`);
+    throw new Error(
+      `SSRF_PROTOCOL: only http/https allowed, got "${parsed.protocol}"`,
+    );
   }
 
   const host = parsed.hostname.toLowerCase();
@@ -101,11 +106,11 @@ function assertPublicUrl(rawUrl) {
 // ---------------------------------------------------------------------------
 async function fetchPage(url) {
   const controller = new AbortController();
-  const timer      = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const res = await fetch(url, {
-      signal:  controller.signal,
+      signal: controller.signal,
       headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' },
       redirect: 'follow',
     });
@@ -114,12 +119,13 @@ async function fetchPage(url) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('text/html')) throw new Error('Non-HTML content type');
+    if (!contentType.includes('text/html'))
+      throw new Error('Non-HTML content type');
 
     // Honour X-Robots-Tag: noindex / nofollow
     const robotsTag = (res.headers.get('x-robots-tag') || '').toLowerCase();
-    const noIndex   = robotsTag.includes('noindex');
-    const noFollow  = robotsTag.includes('nofollow');
+    const noIndex = robotsTag.includes('noindex');
+    const noFollow = robotsTag.includes('nofollow');
 
     const html = await res.text();
     return { html, noIndex, noFollow };
@@ -142,7 +148,9 @@ async function fetchPage(url) {
  */
 function extractText($) {
   // Remove noise elements
-  $('script, style, nav, footer, header, aside, form, noscript, iframe, [aria-hidden="true"]').remove();
+  $(
+    'script, style, nav, footer, header, aside, form, noscript, iframe, [aria-hidden="true"]',
+  ).remove();
 
   const parts = [];
   $(TEXT_SELECTORS).each((_i, el) => {
@@ -160,7 +168,9 @@ function extractTitle($) {
     $('meta[property="og:title"]').attr('content') ||
     $('title').text() ||
     'Untitled'
-  ).trim().slice(0, 255);
+  )
+    .trim()
+    .slice(0, 255);
 }
 
 /**
@@ -172,21 +182,24 @@ function extractTitle($) {
  * @returns {string[]} Absolute same-origin URLs
  */
 function extractInternalLinks($, baseUrl) {
-  const base    = new URL(baseUrl);
-  const links   = new Set();
+  const base = new URL(baseUrl);
+  const links = new Set();
 
   $('a[href]').each((_i, el) => {
     const href = ($(el).attr('href') || '').trim();
-    if (!href || SKIP_PROTOCOLS.test(href) || SKIP_EXTENSIONS.test(href)) return;
+    if (!href || SKIP_PROTOCOLS.test(href) || SKIP_EXTENSIONS.test(href))
+      return;
 
     try {
       const resolved = new URL(href, baseUrl);
       // Same origin only — strip hash and query for dedup
       if (resolved.hostname === base.hostname) {
-        resolved.hash   = '';
+        resolved.hash = '';
         links.add(resolved.toString());
       }
-    } catch { /* ignore malformed URLs */ }
+    } catch {
+      /* ignore malformed URLs */
+    }
   });
   return [...links];
 }
@@ -200,7 +213,14 @@ function extractInternalLinks($, baseUrl) {
  * Matches on (tenant_id, brand_id, source_url stored in embeddings).
  * Returns the article id.
  */
-async function upsertArticle({ tenantId, brandId, title, htmlContent, plainText, agentId = null }) {
+async function upsertArticle({
+  tenantId,
+  brandId,
+  title,
+  htmlContent,
+  plainText,
+  agentId = null,
+}) {
   const { rows } = await pool.query(
     `INSERT INTO knowledge_articles
        (tenant_id, brand_id, title, content, public_html_content, plain_text_content,
@@ -213,7 +233,7 @@ async function upsertArticle({ tenantId, brandId, title, htmlContent, plainText,
            is_vectorized       = FALSE,
            updated_at          = NOW()
      RETURNING id`,
-    [tenantId, brandId, title, plainText, htmlContent, plainText, agentId]
+    [tenantId, brandId, title, plainText, htmlContent, plainText, agentId],
   );
   return rows[0].id;
 }
@@ -221,7 +241,7 @@ async function upsertArticle({ tenantId, brandId, title, htmlContent, plainText,
 // ---------------------------------------------------------------------------
 // Polite delay
 // ---------------------------------------------------------------------------
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
 // Core crawl function
@@ -253,15 +273,15 @@ async function crawlSite({
   tenantId,
   brandId,
   url: startUrl,
-  maxDepth  = DEFAULT_MAX_DEPTH,
-  maxPages  = DEFAULT_MAX_PAGES,
-  agentId   = null,
+  maxDepth = DEFAULT_MAX_DEPTH,
+  maxPages = DEFAULT_MAX_PAGES,
+  agentId = null,
   onProgress = null,
 }) {
-  const visited   = new Set();
-  const errors    = [];
-  let   crawled   = 0;
-  let   vectorised = 0;
+  const visited = new Set();
+  const errors = [];
+  let crawled = 0;
+  let vectorised = 0;
 
   // SSRF guard — validate the seed URL before any network activity
   assertPublicUrl(startUrl);
@@ -283,9 +303,9 @@ async function crawlSite({
       const { html, noIndex, noFollow } = await fetchPage(normalised);
       crawled++;
 
-      const $     = cheerio.load(html);
+      const $ = cheerio.load(html);
       const title = extractTitle($);
-      const text  = extractText($);
+      const text = extractText($);
 
       if (!noIndex && text.length > 100) {
         // Upsert article and vectorise
@@ -293,8 +313,8 @@ async function crawlSite({
           tenantId,
           brandId,
           title,
-          htmlContent: html.slice(0, 500_000),   // cap raw HTML storage
-          plainText:   text,
+          htmlContent: html.slice(0, 500_000), // cap raw HTML storage
+          plainText: text,
           agentId,
         });
 
@@ -318,8 +338,12 @@ async function crawlSite({
         }
       }
 
-      onProgress?.({ crawled, vectorised, errors: errors.length, currentUrl: normalised });
-
+      onProgress?.({
+        crawled,
+        vectorised,
+        errors: errors.length,
+        currentUrl: normalised,
+      });
     } catch (err) {
       console.error(`[crawler] error  url=${normalised}  msg=${err.message}`);
       errors.push({ url: normalised, error: err.message });
@@ -328,7 +352,12 @@ async function crawlSite({
     if (queue.length) await sleep(REQUEST_DELAY_MS);
   }
 
-  const stats = { crawled, vectorised, errors: errors.length, errorDetails: errors };
+  const stats = {
+    crawled,
+    vectorised,
+    errors: errors.length,
+    errorDetails: errors,
+  };
   console.log('[crawler] complete', stats);
   return stats;
 }
@@ -336,7 +365,7 @@ async function crawlSite({
 // ---------------------------------------------------------------------------
 // BullMQ worker registration (optional — only active when REDIS_URL is set)
 // ---------------------------------------------------------------------------
-let crawlQueue  = null;
+let crawlQueue = null;
 let crawlWorker = null;
 
 function registerBullWorker() {
@@ -358,32 +387,38 @@ function registerBullWorker() {
     crawlWorker = new Worker(
       QUEUE_NAME,
       async (job) => {
-        const { tenantId, brandId, url, maxDepth, maxPages, agentId } = job.data;
+        const { tenantId, brandId, url, maxDepth, maxPages, agentId } =
+          job.data;
         return crawlSite({
-          tenantId, brandId, url,
+          tenantId,
+          brandId,
+          url,
           maxDepth: maxDepth || DEFAULT_MAX_DEPTH,
           maxPages: maxPages || DEFAULT_MAX_PAGES,
-          agentId:  agentId  || null,
+          agentId: agentId || null,
           onProgress: (stats) => job.updateProgress(stats),
         });
       },
       {
         connection,
-        concurrency: 1,         // one crawl job at a time per worker process
-        limiter:     { max: 5, duration: 10_000 },
-      }
+        concurrency: 1, // one crawl job at a time per worker process
+        limiter: { max: 5, duration: 10_000 },
+      },
     );
 
     crawlWorker.on('completed', (job, result) =>
-      console.log(`[crawler:worker] job=${job.id} done`, result)
+      console.log(`[crawler:worker] job=${job.id} done`, result),
     );
     crawlWorker.on('failed', (job, err) =>
-      console.error(`[crawler:worker] job=${job.id} failed`, err.message)
+      console.error(`[crawler:worker] job=${job.id} failed`, err.message),
     );
 
     console.log(`[crawler] BullMQ worker registered on queue "${QUEUE_NAME}"`);
   } catch (err) {
-    console.error('[crawler] BullMQ setup failed — running without queue', err.message);
+    console.error(
+      '[crawler] BullMQ setup failed — running without queue',
+      err.message,
+    );
   }
 }
 
@@ -396,10 +431,10 @@ function registerBullWorker() {
 async function enqueueCrawl(opts) {
   if (crawlQueue) {
     const job = await crawlQueue.add('crawl', opts, {
-      attempts:       3,
-      backoff:        { type: 'exponential', delay: 5_000 },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
       removeOnComplete: 100,
-      removeOnFail:   50,
+      removeOnFail: 50,
     });
     console.log(`[crawler] enqueued job=${job.id}  url=${opts.url}`);
     return { jobId: job.id };

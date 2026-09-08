@@ -1,25 +1,27 @@
-import express, { type Express } from "express";
-import cors from "cors";
-import helmet from "helmet";
-import cookieParser from "cookie-parser";
-import pinoHttp from "pino-http";
-import { createServer, type Server as HttpServer } from "node:http";
-import router, { emailWebhook } from "./routes";
-import { logger } from "./lib/logger";
+import express, { type Express } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import pinoHttp from 'pino-http';
+import { createServer, type Server as HttpServer } from 'node:http';
+import router, { emailWebhook } from './routes';
+import { logger } from './lib/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { attachSocketServer } = require("./services/socket.service");
+const { attachSocketServer } = require('./services/socket.service');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { pool } = require("./lib/db");
+const { pool } = require('./lib/db');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendAccountUpdateEmail, sendAgentInviteEmail } =
-  require("./services/email.service");
+const {
+  sendAccountUpdateEmail,
+  sendAgentInviteEmail,
+} = require('./services/email.service');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const bcrypt = require("bcryptjs");
+const bcrypt = require('bcryptjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const crypto = require("crypto");
+const crypto = require('crypto');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { publicAppUrl } = require("./lib/env");
+const { publicAppUrl } = require('./lib/env');
 
 // Injects the shared pg.Pool as req.db — consumed by CJS controllers via req.db.query()
 function attachDb(
@@ -38,30 +40,37 @@ app.use(helmet());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
-  : ["*"];
+  ? process.env.ALLOWED_ORIGINS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  : ['*'];
 
-app.use(
-  (req, res, next) => {
-    // The embeddable widget is intentionally usable from customer websites
-    // that are not known at API deployment time. Dashboard/API browser calls
-    // remain restricted by ALLOWED_ORIGINS.
-    const isWidgetRequest = req.path.startsWith("/widget");
-    const origin = isWidgetRequest || allowedOrigins.includes("*")
-      ? (requestOrigin: string | undefined, callback: (err: Error | null, origin?: boolean | string) => void) => {
+app.use((req, res, next) => {
+  // The embeddable widget is intentionally usable from customer websites
+  // that are not known at API deployment time. Dashboard/API browser calls
+  // remain restricted by ALLOWED_ORIGINS.
+  const isWidgetRequest = req.path.startsWith('/widget');
+  const origin =
+    isWidgetRequest || allowedOrigins.includes('*')
+      ? (
+          requestOrigin: string | undefined,
+          callback: (err: Error | null, origin?: boolean | string) => void,
+        ) => {
           // Reflect the caller instead of returning "*" because credentials
           // are enabled for Socket.io's polling transport.
           return callback(null, requestOrigin || true);
         }
-      : (requestOrigin: string | undefined, callback: (err: Error | null, origin?: boolean | string) => void) => {
+      : (
+          requestOrigin: string | undefined,
+          callback: (err: Error | null, origin?: boolean | string) => void,
+        ) => {
           if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
             return callback(null, requestOrigin || true);
           }
           return callback(null, false);
         };
-    cors({ origin, credentials: true })(req, res, next);
-  },
-);
+  cors({ origin, credentials: true })(req, res, next);
+});
 
 // ── Structured request logging ────────────────────────────────────────────────
 app.use(
@@ -69,7 +78,7 @@ app.use(
     logger,
     serializers: {
       req(req) {
-        return { id: req.id, method: req.method, url: req.url?.split("?")[0] };
+        return { id: req.id, method: req.method, url: req.url?.split('?')[0] };
       },
       res(res) {
         return { statusCode: res.statusCode };
@@ -82,20 +91,20 @@ app.use(
 // stripe-replit-sync verifies the signature and syncs Stripe objects into the
 // `stripe` Postgres schema. We then reconcile the tenant's plan/status.
 app.post(
-  "/api/stripe/webhook",
-  express.raw({ type: "application/json" }),
+  '/api/stripe/webhook',
+  express.raw({ type: 'application/json' }),
   async (req, res) => {
-    const signature = req.headers["stripe-signature"];
+    const signature = req.headers['stripe-signature'];
     if (!signature) {
-      return res.status(400).json({ error: "Missing stripe-signature" });
+      return res.status(400).json({ error: 'Missing stripe-signature' });
     }
     if (!Buffer.isBuffer(req.body)) {
-      logger.error("stripe_webhook_body_not_buffer");
-      return res.status(500).json({ error: "Webhook processing error" });
+      logger.error('stripe_webhook_body_not_buffer');
+      return res.status(500).json({ error: 'Webhook processing error' });
     }
     try {
       const sig = Array.isArray(signature) ? signature[0] : signature;
-      const { getStripeSync } = await import("./lib/stripeClient");
+      const { getStripeSync } = await import('./lib/stripeClient');
       const sync = await getStripeSync();
       await sync.processWebhook(req.body, sig);
 
@@ -103,13 +112,13 @@ app.post(
       try {
         await provisionTenantFromEvent(req.body);
       } catch (err) {
-        logger.error({ err }, "stripe_tenant_provision_failed");
+        logger.error({ err }, 'stripe_tenant_provision_failed');
       }
 
       return res.status(200).json({ received: true });
     } catch (err) {
-      logger.error({ err: (err as Error).message }, "stripe_webhook_error");
-      return res.status(400).json({ error: "Webhook processing error" });
+      logger.error({ err: (err as Error).message }, 'stripe_webhook_error');
+      return res.status(400).json({ error: 'Webhook processing error' });
     }
   },
 );
@@ -117,21 +126,21 @@ app.post(
 // Maps Stripe subscription status → tenants.subscription_status CHECK values.
 function mapStripeStatus(status: string | undefined): string {
   switch (status) {
-    case "active":
-      return "active";
-    case "trialing":
-      return "trialing";
-    case "past_due":
-    case "unpaid":
-    case "incomplete":
-      return "past_due";
-    case "paused":
-      return "paused";
-    case "canceled":
-    case "incomplete_expired":
-      return "cancelled";
+    case 'active':
+      return 'active';
+    case 'trialing':
+      return 'trialing';
+    case 'past_due':
+    case 'unpaid':
+    case 'incomplete':
+      return 'past_due';
+    case 'paused':
+      return 'paused';
+    case 'canceled':
+    case 'incomplete_expired':
+      return 'cancelled';
     default:
-      return "active";
+      return 'active';
   }
 }
 
@@ -156,7 +165,7 @@ async function notifyTenantAdmins(
   } catch (err) {
     logger.warn(
       { err: (err as Error).message, tenantId },
-      "tenant_admin_notify_failed",
+      'tenant_admin_notify_failed',
     );
   }
 }
@@ -170,7 +179,7 @@ async function applyPlanFeatures(
   plan: string | null,
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const plansRepo = require("./lib/plansRepo");
+  const plansRepo = require('./lib/plansRepo');
 
   type PlanShape = {
     is_free: boolean;
@@ -185,8 +194,8 @@ async function applyPlanFeatures(
   // Resolve the plan row, falling back to the Free plan for null/unknown plans.
   let row: PlanShape | null = null;
   try {
-    row = (await plansRepo.getPlanBySlug(plan || "free")) as PlanShape | null;
-    if (!row) row = (await plansRepo.getPlanBySlug("free")) as PlanShape | null;
+    row = (await plansRepo.getPlanBySlug(plan || 'free')) as PlanShape | null;
+    if (!row) row = (await plansRepo.getPlanBySlug('free')) as PlanShape | null;
   } catch {
     row = null;
   }
@@ -225,7 +234,7 @@ async function applyPlanFeatures(
       tenantId,
     ],
   );
-  logger.info({ tenantId, plan: plan || "free" }, "plan_features_applied");
+  logger.info({ tenantId, plan: plan || 'free' }, 'plan_features_applied');
 }
 
 // Resolve a tenant id from a Stripe customer id (used by invoice events).
@@ -251,7 +260,7 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
     data?: { object?: Record<string, unknown> };
   };
   try {
-    event = JSON.parse(rawBody.toString("utf8"));
+    event = JSON.parse(rawBody.toString('utf8'));
   } catch {
     return;
   }
@@ -259,16 +268,16 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
   const obj = event.data?.object;
   if (!type || !obj) return;
 
-  if (type.startsWith("customer.subscription.")) {
+  if (type.startsWith('customer.subscription.')) {
     const metadata = (obj.metadata as Record<string, string>) || {};
     const tenantId = metadata.tenant_id;
     if (!tenantId) return;
     const subId = obj.id as string;
     const customerId = obj.customer as string;
-    const deleted = type === "customer.subscription.deleted";
-    const plan = deleted ? "free" : metadata.plan || null;
+    const deleted = type === 'customer.subscription.deleted';
+    const plan = deleted ? 'free' : metadata.plan || null;
     const status = deleted
-      ? "cancelled"
+      ? 'cancelled'
       : mapStripeStatus(obj.status as string);
 
     await pool.query(
@@ -282,59 +291,59 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
        WHERE id = $5`,
       [customerId, deleted ? null : subId, plan, status, tenantId],
     );
-    logger.info({ tenantId, plan, status }, "stripe_tenant_provisioned");
+    logger.info({ tenantId, plan, status }, 'stripe_tenant_provisioned');
 
     // Grant / revoke the plan's features on the tenant.
-    if (deleted || status === "cancelled") {
-      await applyPlanFeatures(tenantId, "free");
+    if (deleted || status === 'cancelled') {
+      await applyPlanFeatures(tenantId, 'free');
       await notifyTenantAdmins(
         tenantId,
-        "Your subscription has been cancelled",
-        "Subscription cancelled",
-        "Your subscription has ended and your workspace has been moved to the free tier. Reactivate any time from Billing to restore your plan features.",
+        'Your subscription has been cancelled',
+        'Subscription cancelled',
+        'Your subscription has ended and your workspace has been moved to the free tier. Reactivate any time from Billing to restore your plan features.',
       );
-    } else if (status === "active" || status === "trialing") {
+    } else if (status === 'active' || status === 'trialing') {
       await applyPlanFeatures(tenantId, plan);
       await notifyTenantAdmins(
         tenantId,
-        "Your plan is now active",
-        "Plan activated",
-        `Your ${plan || "subscription"} plan is now active and its features have been enabled on your workspace. Thank you for subscribing!`,
+        'Your plan is now active',
+        'Plan activated',
+        `Your ${plan || 'subscription'} plan is now active and its features have been enabled on your workspace. Thank you for subscribing!`,
       );
-    } else if (status === "past_due") {
+    } else if (status === 'past_due') {
       await notifyTenantAdmins(
         tenantId,
-        "Payment issue on your subscription",
-        "Payment past due",
+        'Payment issue on your subscription',
+        'Payment past due',
         "We couldn't process your latest payment. Please update your payment method in Billing to avoid losing access to your plan features.",
       );
     }
-  } else if (type === "invoice.payment_succeeded") {
+  } else if (type === 'invoice.payment_succeeded') {
     const customerId = obj.customer as string;
     const tid = await tenantIdForCustomer(customerId);
     if (!tid) return;
-    const amount = typeof obj.amount_paid === "number" ? obj.amount_paid : 0;
-    const currency = ((obj.currency as string) || "usd").toUpperCase();
+    const amount = typeof obj.amount_paid === 'number' ? obj.amount_paid : 0;
+    const currency = ((obj.currency as string) || 'usd').toUpperCase();
     const formatted = `${currency} ${(amount / 100).toFixed(2)}`;
-    const hostedUrl = (obj.hosted_invoice_url as string) || "";
+    const hostedUrl = (obj.hosted_invoice_url as string) || '';
     await notifyTenantAdmins(
       tid,
-      "Payment received — receipt",
-      "Payment received",
-      `We've received your payment of ${formatted}. Thank you!${hostedUrl ? ` You can view your receipt here: ${hostedUrl}` : ""}`,
+      'Payment received — receipt',
+      'Payment received',
+      `We've received your payment of ${formatted}. Thank you!${hostedUrl ? ` You can view your receipt here: ${hostedUrl}` : ''}`,
     );
-  } else if (type === "invoice.payment_failed") {
+  } else if (type === 'invoice.payment_failed') {
     const customerId = obj.customer as string;
     const tid = await tenantIdForCustomer(customerId);
     if (!tid) return;
-    const hostedUrl = (obj.hosted_invoice_url as string) || "";
+    const hostedUrl = (obj.hosted_invoice_url as string) || '';
     await notifyTenantAdmins(
       tid,
-      "Payment failed on your subscription",
-      "Payment failed",
-      `Your most recent payment could not be processed. Please update your payment method to keep your plan active.${hostedUrl ? ` Retry your payment here: ${hostedUrl}` : ""}`,
+      'Payment failed on your subscription',
+      'Payment failed',
+      `Your most recent payment could not be processed. Please update your payment method to keep your plan active.${hostedUrl ? ` Retry your payment here: ${hostedUrl}` : ''}`,
     );
-  } else if (type === "checkout.session.completed") {
+  } else if (type === 'checkout.session.completed') {
     const tenantId =
       (obj.client_reference_id as string) ||
       ((obj.metadata as Record<string, string>) || {}).tenant_id;
@@ -356,10 +365,10 @@ async function provisionTenantFromEvent(rawBody: Buffer): Promise<void> {
 // Paddle sends a Paddle-Signature header. We verify it with HMAC-SHA256 then
 // reconcile the tenant plan/status from the event payload.
 app.post(
-  "/api/paddle/webhook",
-  express.raw({ type: "application/json" }),
+  '/api/paddle/webhook',
+  express.raw({ type: 'application/json' }),
   async (req, res) => {
-    const signatureHeader = req.headers["paddle-signature"];
+    const signatureHeader = req.headers['paddle-signature'];
     const secret = process.env.PADDLE_WEBHOOK_SECRET;
 
     // Diagnostic logging — helps verify the correct secret is configured.
@@ -368,60 +377,52 @@ app.post(
         hasSecret: !!secret,
         secretLength: secret?.length,
         hasSig: !!signatureHeader,
-        sigLength: (
-          Array.isArray(signatureHeader)
-            ? signatureHeader[0]
-            : signatureHeader
+        sigLength: (Array.isArray(signatureHeader)
+          ? signatureHeader[0]
+          : signatureHeader
         )?.length,
       },
-      "paddle_webhook_received",
+      'paddle_webhook_received',
     );
 
     if (!signatureHeader || !secret) {
-      logger.warn("paddle_webhook_missing_signature_or_secret");
-      return res.status(400).json({ error: "Webhook configuration error" });
+      logger.warn('paddle_webhook_missing_signature_or_secret');
+      return res.status(400).json({ error: 'Webhook configuration error' });
     }
 
     if (!Buffer.isBuffer(req.body)) {
-      logger.error("paddle_webhook_body_not_buffer");
-      return res.status(500).json({ error: "Webhook processing error" });
+      logger.error('paddle_webhook_body_not_buffer');
+      return res.status(500).json({ error: 'Webhook processing error' });
     }
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { verifyPaddleWebhook } = require("./lib/paddleClient");
+      const { verifyPaddleWebhook } = require('./lib/paddleClient');
       const sig = Array.isArray(signatureHeader)
         ? signatureHeader[0]
         : signatureHeader;
-      const event = verifyPaddleWebhook(
-        req.body,
-        secret,
-        sig,
-      ) as Record<string, unknown> | null;
+      const event = verifyPaddleWebhook(req.body, secret, sig) as Record<
+        string,
+        unknown
+      > | null;
 
       if (!event) {
-        logger.warn("paddle_webhook_signature_invalid");
-        return res.status(400).json({ error: "Invalid signature" });
+        logger.warn('paddle_webhook_signature_invalid');
+        return res.status(400).json({ error: 'Invalid signature' });
       }
 
-      logger.info(
-        { eventType: event.event_type },
-        "paddle_webhook_verified",
-      );
+      logger.info({ eventType: event.event_type }, 'paddle_webhook_verified');
 
       try {
         await provisionTenantFromPaddleEvent(event);
       } catch (err) {
-        logger.error({ err }, "paddle_tenant_provision_failed");
+        logger.error({ err }, 'paddle_tenant_provision_failed');
       }
 
       return res.status(200).json({ received: true });
     } catch (err) {
-      logger.error(
-        { err: (err as Error).message },
-        "paddle_webhook_error",
-      );
-      return res.status(400).json({ error: "Webhook processing error" });
+      logger.error({ err: (err as Error).message }, 'paddle_webhook_error');
+      return res.status(400).json({ error: 'Webhook processing error' });
     }
   },
 );
@@ -429,19 +430,19 @@ app.post(
 // Maps Paddle subscription status strings → tenants.subscription_status values.
 function mapPaddleStatus(status: string | undefined): string {
   switch (status) {
-    case "active":
-      return "active";
-    case "trialing":
-      return "trialing";
-    case "past_due":
-      return "past_due";
-    case "paused":
-      return "paused";
-    case "canceled":
-    case "cancelled":
-      return "cancelled";
+    case 'active':
+      return 'active';
+    case 'trialing':
+      return 'trialing';
+    case 'past_due':
+      return 'past_due';
+    case 'paused':
+      return 'paused';
+    case 'canceled':
+    case 'cancelled':
+      return 'cancelled';
     default:
-      return "active";
+      return 'active';
   }
 }
 
@@ -466,14 +467,14 @@ async function provisionTenantFromPaddlePublicCheckout({
   // the same purchase. A per-customer advisory lock serializes them so exactly
   // one call creates the tenant + admin + setup token (no duplicate workspaces).
   const client = await pool.connect();
-  let tenantId = "";
+  let tenantId = '';
   let created = false;
-  let displayName = "";
-  let companyName = "";
-  let rawToken = "";
+  let displayName = '';
+  let companyName = '';
+  let rawToken = '';
   try {
-    await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
       paddleCustomerId,
     ]);
 
@@ -491,11 +492,11 @@ async function provisionTenantFromPaddlePublicCheckout({
          WHERE id = $3`,
         [plan, paddleSubscriptionId || null, existing[0].id],
       );
-      await client.query("COMMIT");
+      await client.query('COMMIT');
       return existing[0].id as string;
     }
 
-    displayName = userName || email.split("@")[0];
+    displayName = userName || email.split('@')[0];
     companyName = businessName || `${displayName}'s workspace`;
 
     const { rows: tenantRows } = await client.query(
@@ -508,7 +509,7 @@ async function provisionTenantFromPaddlePublicCheckout({
     );
     tenantId = tenantRows[0].id as string;
 
-    const tempPassword = crypto.randomBytes(16).toString("hex");
+    const tempPassword = crypto.randomBytes(16).toString('hex');
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     const { rows: agentRows } = await client.query(
       `INSERT INTO agents
@@ -519,7 +520,7 @@ async function provisionTenantFromPaddlePublicCheckout({
     );
     const agentId = agentRows[0].id as string;
 
-    rawToken = crypto.randomBytes(32).toString("hex");
+    rawToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await client.query(
       `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
@@ -527,10 +528,10 @@ async function provisionTenantFromPaddlePublicCheckout({
       [agentId, rawToken, expiresAt],
     );
 
-    await client.query("COMMIT");
+    await client.query('COMMIT');
     created = true;
   } catch (err) {
-    await client.query("ROLLBACK");
+    await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
@@ -547,7 +548,7 @@ async function provisionTenantFromPaddlePublicCheckout({
       companyName,
     });
     await applyPlanFeatures(tenantId, plan);
-    logger.info({ tenantId, email, plan }, "paddle_public_tenant_provisioned");
+    logger.info({ tenantId, email, plan }, 'paddle_public_tenant_provisioned');
   }
 
   return tenantId;
@@ -562,8 +563,8 @@ async function provisionTenantFromPaddleEvent(
   if (!eventType || !data) return;
 
   if (
-    eventType === "subscription.created" ||
-    eventType === "subscription.updated"
+    eventType === 'subscription.created' ||
+    eventType === 'subscription.updated'
   ) {
     const customData =
       (data.custom_data as Record<string, string>) ||
@@ -576,8 +577,7 @@ async function provisionTenantFromPaddleEvent(
       (data.items as Array<{
         price?: { custom_data?: { plan?: string } };
       }>) || [];
-    const plan =
-      items[0]?.price?.custom_data?.plan || customData.plan || null;
+    const plan = items[0]?.price?.custom_data?.plan || customData.plan || null;
     const subId = data.id as string;
     const customerId = data.customer_id as string;
     const status = mapPaddleStatus(data.status as string);
@@ -585,20 +585,19 @@ async function provisionTenantFromPaddleEvent(
     if (!tenantId) {
       // Public checkout — no tenant yet, create one.
       if (email && customerId) {
-        const createdTenantId =
-          await provisionTenantFromPaddlePublicCheckout({
-            email,
-            plan: plan || "starter",
-            paddleCustomerId: customerId,
-            paddleSubscriptionId: subId,
-            businessName: customData.business_name || null,
-            userName: customData.user_name || null,
-          });
+        const createdTenantId = await provisionTenantFromPaddlePublicCheckout({
+          email,
+          plan: plan || 'starter',
+          paddleCustomerId: customerId,
+          paddleSubscriptionId: subId,
+          businessName: customData.business_name || null,
+          userName: customData.user_name || null,
+        });
         await notifyTenantAdmins(
           createdTenantId,
-          "Your plan is now active",
-          "Plan activated",
-          `Your ${plan || "subscription"} plan is now active. Thank you for subscribing!`,
+          'Your plan is now active',
+          'Plan activated',
+          `Your ${plan || 'subscription'} plan is now active. Thank you for subscribing!`,
         );
       }
       return;
@@ -624,32 +623,31 @@ async function provisionTenantFromPaddleEvent(
        WHERE id = $5`,
       [customerId || null, subId, plan, status, tenantId, trialEndsAt],
     );
-    logger.info({ tenantId, plan, status }, "paddle_tenant_provisioned");
+    logger.info({ tenantId, plan, status }, 'paddle_tenant_provisioned');
 
-    if (status === "active" || status === "trialing") {
+    if (status === 'active' || status === 'trialing') {
       await applyPlanFeatures(tenantId, plan);
       await notifyTenantAdmins(
         tenantId,
-        "Your plan is now active",
-        "Plan activated",
-        `Your ${plan || "subscription"} plan is now active. Thank you for subscribing!`,
+        'Your plan is now active',
+        'Plan activated',
+        `Your ${plan || 'subscription'} plan is now active. Thank you for subscribing!`,
       );
-    } else if (status === "past_due") {
+    } else if (status === 'past_due') {
       await notifyTenantAdmins(
         tenantId,
-        "Payment issue on your subscription",
-        "Payment past due",
+        'Payment issue on your subscription',
+        'Payment past due',
         "We couldn't process your latest payment. Please update your payment method in Billing.",
       );
     }
   } else if (
-    eventType === "transaction.created" ||
-    eventType === "transaction.completed" ||
-    eventType === "transaction.ready" ||
-    eventType === "transaction.paid"
+    eventType === 'transaction.created' ||
+    eventType === 'transaction.completed' ||
+    eventType === 'transaction.ready' ||
+    eventType === 'transaction.paid'
   ) {
-    const customData =
-      (data.custom_data as Record<string, string>) || {};
+    const customData = (data.custom_data as Record<string, string>) || {};
     const email = customData.email;
     const plan =
       (
@@ -665,16 +663,15 @@ async function provisionTenantFromPaddleEvent(
     if (email && customerId) {
       await provisionTenantFromPaddlePublicCheckout({
         email,
-        plan: plan || "starter",
+        plan: plan || 'starter',
         paddleCustomerId: customerId,
         paddleSubscriptionId: subId,
         businessName: customData.business_name || null,
         userName: customData.user_name || null,
       });
     }
-  } else if (eventType === "subscription.canceled") {
-    const customData =
-      (data.custom_data as Record<string, string>) || {};
+  } else if (eventType === 'subscription.canceled') {
+    const customData = (data.custom_data as Record<string, string>) || {};
     let tenantId = customData.tenant_id;
     const subId = data.id as string;
     const customerId = data.customer_id as string;
@@ -705,20 +702,20 @@ async function provisionTenantFromPaddleEvent(
        WHERE id = $1`,
       [tenantId],
     );
-    logger.info({ tenantId, subId }, "paddle_subscription_cancelled");
-    await applyPlanFeatures(tenantId, "free");
+    logger.info({ tenantId, subId }, 'paddle_subscription_cancelled');
+    await applyPlanFeatures(tenantId, 'free');
     await notifyTenantAdmins(
       tenantId,
-      "Your subscription has been cancelled",
-      "Subscription cancelled",
-      "Your subscription has ended and your workspace has been moved to the free tier.",
+      'Your subscription has been cancelled',
+      'Subscription cancelled',
+      'Your subscription has ended and your workspace has been moved to the free tier.',
     );
   }
 }
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
-app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ extended: true, limit: "20mb" }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // ── Cookie parser (for httpOnly refresh token) ────────────────────────────────
 app.use(cookieParser());
@@ -733,23 +730,24 @@ app.use(attachDb);
 // onboarding never depends on webhook delivery timing. Idempotent: repeat calls
 // and the later webhook reuse the tenant keyed by paddle_customer_id.
 app.post(
-  "/api/billing/checkout/confirm",
+  '/api/billing/checkout/confirm',
   async (req: express.Request, res: express.Response) => {
     const transactionId = String(
-      (req.body as { transactionId?: string })?.transactionId || "",
+      (req.body as { transactionId?: string })?.transactionId || '',
     ).trim();
     if (!transactionId) {
-      return res.status(400).json({ error: "transactionId is required" });
+      return res.status(400).json({ error: 'transactionId is required' });
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { paddleRequest } = require("./lib/paddleClient");
+      const { paddleRequest } = require('./lib/paddleClient');
       const resp = (await paddleRequest(
-        "GET",
+        'GET',
         `/transactions/${transactionId}`,
       )) as { data?: Record<string, unknown> };
       const data = resp?.data;
-      if (!data) return res.status(404).json({ error: "Transaction not found" });
+      if (!data)
+        return res.status(404).json({ error: 'Transaction not found' });
 
       const customData = (data.custom_data as Record<string, string>) || {};
       const items =
@@ -758,14 +756,14 @@ app.post(
         }>) || [];
       let email = customData.email;
       const plan =
-        items[0]?.price?.custom_data?.plan || customData.plan || "starter";
+        items[0]?.price?.custom_data?.plan || customData.plan || 'starter';
       const customerId = data.customer_id as string | undefined;
       const subId = (data.subscription_id as string | undefined) || null;
 
       if (!customerId) {
         // Transaction not finalized yet — the webhook will complete provisioning.
-        logger.info({ transactionId }, "checkout_confirm_pending_no_customer");
-        return res.status(202).json({ provisioned: false, reason: "pending" });
+        logger.info({ transactionId }, 'checkout_confirm_pending_no_customer');
+        return res.status(202).json({ provisioned: false, reason: 'pending' });
       }
 
       // If email wasn't stored in custom_data (e.g. user entered it directly
@@ -773,18 +771,21 @@ app.post(
       if (!email) {
         try {
           const custResp = (await paddleRequest(
-            "GET",
+            'GET',
             `/customers/${customerId}`,
           )) as { data?: { email?: string } };
-          email = custResp.data?.email || "";
+          email = custResp.data?.email || '';
         } catch {
           /* non-fatal — webhook will provision if email is still missing */
         }
       }
 
       if (!email) {
-        logger.info({ transactionId, customerId }, "checkout_confirm_pending_no_email");
-        return res.status(202).json({ provisioned: false, reason: "pending" });
+        logger.info(
+          { transactionId, customerId },
+          'checkout_confirm_pending_no_email',
+        );
+        return res.status(202).json({ provisioned: false, reason: 'pending' });
       }
 
       // Check if an existing tenant already has this paddle_customer_id
@@ -797,27 +798,30 @@ app.post(
         businessName: customData.business_name || null,
         userName: customData.user_name || null,
       });
-      logger.info({ transactionId, tenantId, plan }, "checkout_confirm_provisioned");
+      logger.info(
+        { transactionId, tenantId, plan },
+        'checkout_confirm_provisioned',
+      );
       return res.json({ provisioned: true, tenantId });
     } catch (err) {
       logger.error(
         { err: (err as Error).message, transactionId },
-        "checkout_confirm_failed",
+        'checkout_confirm_failed',
       );
-      return res.status(500).json({ error: "Could not confirm checkout" });
+      return res.status(500).json({ error: 'Could not confirm checkout' });
     }
   },
 );
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // Redirect root domain to the dashboard
-app.get("/", (req: express.Request, res: express.Response) => {
-  res.redirect(301, "/dashboard");
+app.get('/', (req: express.Request, res: express.Response) => {
+  res.redirect(301, '/dashboard');
 });
 
-app.use("/api", router);
+app.use('/api', router);
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use("/api", router);
+app.use('/api', router);
 
 // ── Global error handler (4-arg signature required by Express) ────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -832,15 +836,15 @@ app.use(
       (err as { status?: number }).status ??
       (err as { statusCode?: number }).statusCode ??
       500;
-    const message = err.message || "Internal server error";
+    const message = err.message || 'Internal server error';
 
     if (status >= 500) {
-      req.log?.error({ err }, "unhandled_error");
+      req.log?.error({ err }, 'unhandled_error');
     }
 
     res.status(status).json({
       error: message,
-      ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+      ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
     });
   },
 );
@@ -853,7 +857,11 @@ function startAutoCloseScheduler(): void {
 
   const run = async () => {
     try {
-      const { rows } = await (pool.query as (sql: string) => Promise<{ rows: { id: string; tenant_id: string }[] }>)(`
+      const { rows } = await (
+        pool.query as (
+          sql: string,
+        ) => Promise<{ rows: { id: string; tenant_id: string }[] }>
+      )(`
         UPDATE conversations c
         SET status = 'closed', updated_at = NOW()
         FROM brands b
@@ -869,12 +877,12 @@ function startAutoCloseScheduler(): void {
         RETURNING c.id, c.tenant_id
       `);
       if (rows.length) {
-        logger.info({ closed: rows.length }, "auto_close_conversations");
+        logger.info({ closed: rows.length }, 'auto_close_conversations');
       }
     } catch (err) {
       logger.warn(
         { err: (err as Error).message },
-        "auto_close_scheduler_error",
+        'auto_close_scheduler_error',
       );
     }
   };

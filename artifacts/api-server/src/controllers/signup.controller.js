@@ -1,8 +1,8 @@
 'use strict';
 
 const { Router } = require('express');
-const bcrypt     = require('bcryptjs');
-const { pool }   = require('../lib/db');
+const bcrypt = require('bcryptjs');
+const { pool } = require('../lib/db');
 
 const router = Router();
 
@@ -23,7 +23,9 @@ router.post('/', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
-    const { rows: [tenant] } = await client.query(
+    const {
+      rows: [tenant],
+    } = await client.query(
       `INSERT INTO tenants (company_name) VALUES ($1) RETURNING id`,
       [companyName],
     );

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.vite/
+# Generated build output and third-party assets.
+build/
+*.min.js
+artifacts/api-server/public/
+pnpm-lock.yaml
+docs/**/*.pdf
+
+# Legacy monolith baselines; extracted modules remain checked by Prettier.
+artifacts/dashboard/src/App.tsx
+artifacts/dashboard/src/pages/Inbox.jsx

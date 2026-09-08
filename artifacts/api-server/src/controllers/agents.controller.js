@@ -11,24 +11,33 @@
  * by any admin or agent.
  */
 
-const { Router }   = require('express');
-const bcrypt       = require('bcryptjs');
-const crypto       = require('crypto');
-const { pool }     = require('../lib/db');
+const { Router } = require('express');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { pool } = require('../lib/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const logger       = require('../utils/logger');
+const logger = require('../utils/logger');
 const { sendAgentInviteEmail } = require('../services/email.service');
-const { normalizePermissions, defaultPermissionsForRole } = require('../lib/permissions');
+const {
+  normalizePermissions,
+  defaultPermissionsForRole,
+} = require('../lib/permissions');
 
 const router = Router();
 router.use(requireAuth);
 
 // Self-healing migration: per-feature RBAC permission map.
-pool.query(
-  `ALTER TABLE agents ADD COLUMN IF NOT EXISTS permissions_json JSONB NOT NULL DEFAULT '{}'`
-).catch((err) => logger.warn({ err: err.message }, 'agents_permissions_migration_warning'));
+pool
+  .query(
+    `ALTER TABLE agents ADD COLUMN IF NOT EXISTS permissions_json JSONB NOT NULL DEFAULT '{}'`,
+  )
+  .catch((err) =>
+    logger.warn({ err: err.message }, 'agents_permissions_migration_warning'),
+  );
 
-const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '')
+  .trim()
+  .toLowerCase();
 
 const VALID_ROLES = new Set(['admin', 'agent', 'supervisor']);
 
@@ -41,7 +50,7 @@ router.get('/', requireRole('admin'), async (req, res, next) => {
        WHERE tenant_id = $1
          AND ($2 = '' OR lower(email) != $2)
        ORDER BY created_at ASC`,
-      [req.agent.tenantId, SUPER_ADMIN_EMAIL]
+      [req.agent.tenantId, SUPER_ADMIN_EMAIL],
     );
     // Return resolved permissions so the UI always has a complete map.
     const withPerms = rows.map((r) => ({
@@ -49,7 +58,9 @@ router.get('/', requireRole('admin'), async (req, res, next) => {
       permissions: normalizePermissions(r.permissions_json || {}, r.role),
     }));
     return res.json(withPerms);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── POST /api/agents ─────────────────────────────────────────────────────────
@@ -69,7 +80,7 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await pool.query(
       'SELECT id FROM agents WHERE email = $1',
-      [normalizedEmail]
+      [normalizedEmail],
     );
     if (existing.rows.length) {
       return res.status(409).json({ error: 'Email already in use' });
@@ -87,7 +98,14 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
       `INSERT INTO agents (tenant_id, name, email, role, password_hash, is_active, permissions_json)
        VALUES ($1, $2, $3, $4, $5, true, $6)
        RETURNING id, name, email, role, is_active, permissions_json, created_at`,
-      [req.agent.tenantId, name.trim(), normalizedEmail, role, password_hash, JSON.stringify(perms)]
+      [
+        req.agent.tenantId,
+        name.trim(),
+        normalizedEmail,
+        role,
+        password_hash,
+        JSON.stringify(perms),
+      ],
     );
     const agent = rows[0];
 
@@ -97,7 +115,7 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
     await pool.query(
       `INSERT INTO password_reset_tokens (agent_id, token, expires_at)
        VALUES ($1, $2, $3)`,
-      [agent.id, rawToken, expiresAt]
+      [agent.id, rawToken, expiresAt],
     );
 
     // Build the invite link on the public domain (PUBLIC_APP_URL, then REPLIT_DOMAINS).
@@ -108,20 +126,35 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
     // Resolve the tenant's company name for a friendlier email.
     let companyName = '';
     try {
-      const { rows: tRows } = await pool.query('SELECT company_name FROM tenants WHERE id = $1', [req.agent.tenantId]);
+      const { rows: tRows } = await pool.query(
+        'SELECT company_name FROM tenants WHERE id = $1',
+        [req.agent.tenantId],
+      );
       companyName = tRows[0]?.company_name || '';
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
 
-    const emailSent = await sendAgentInviteEmail({ to: agent.email, name: agent.name, inviteLink, companyName });
+    const emailSent = await sendAgentInviteEmail({
+      to: agent.email,
+      name: agent.name,
+      inviteLink,
+      companyName,
+    });
 
-    logger.info({ agentId: agent.id, invitedBy: req.agent.id, emailSent }, 'agent_invited');
+    logger.info(
+      { agentId: agent.id, invitedBy: req.agent.id, emailSent },
+      'agent_invited',
+    );
     return res.status(201).json({
       ...agent,
       email_sent: emailSent,
       // Only expose the link in non-production (dev convenience / no SMTP).
       ...(process.env.NODE_ENV !== 'production' && { invite_link: inviteLink }),
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── DELETE /api/agents/:id ───────────────────────────────────────────────────
@@ -135,7 +168,7 @@ router.delete('/:id', requireRole('admin'), async (req, res, next) => {
     if (SUPER_ADMIN_EMAIL) {
       const { rows: target } = await pool.query(
         'SELECT email FROM agents WHERE id = $1',
-        [req.params.id]
+        [req.params.id],
       );
       if (target[0] && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
         return res.status(403).json({ error: 'Super admin cannot be deleted' });
@@ -144,12 +177,17 @@ router.delete('/:id', requireRole('admin'), async (req, res, next) => {
 
     const { rowCount } = await pool.query(
       'DELETE FROM agents WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, req.agent.tenantId]
+      [req.params.id, req.agent.tenantId],
     );
     if (!rowCount) return res.status(404).json({ error: 'Agent not found' });
-    logger.info({ removedId: req.params.id, by: req.agent.id }, 'agent_removed');
+    logger.info(
+      { removedId: req.params.id, by: req.agent.id },
+      'agent_removed',
+    );
     return res.status(204).end();
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── PATCH /api/agents/:id/password ───────────────────────────────────────────
@@ -160,17 +198,25 @@ router.patch('/:id/password', requireRole('admin'), async (req, res, next) => {
   try {
     const { password } = req.body || {};
     if (!password || String(password).length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      return res
+        .status(400)
+        .json({ error: 'Password must be at least 8 characters' });
     }
 
     const { rows: target } = await pool.query(
       'SELECT id, email FROM agents WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, req.agent.tenantId]
+      [req.params.id, req.agent.tenantId],
     );
-    if (!target.length) return res.status(404).json({ error: 'Agent not found' });
+    if (!target.length)
+      return res.status(404).json({ error: 'Agent not found' });
 
-    if (SUPER_ADMIN_EMAIL && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
-      return res.status(403).json({ error: 'Super admin password cannot be changed here' });
+    if (
+      SUPER_ADMIN_EMAIL &&
+      target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL
+    ) {
+      return res
+        .status(403)
+        .json({ error: 'Super admin password cannot be changed here' });
     }
 
     const hash = await bcrypt.hash(String(password), 10);
@@ -178,11 +224,16 @@ router.patch('/:id/password', requireRole('admin'), async (req, res, next) => {
       `UPDATE agents SET password_hash = $1, updated_at = NOW()
        WHERE id = $2 AND tenant_id = $3
        RETURNING id, name, email, role`,
-      [hash, req.params.id, req.agent.tenantId]
+      [hash, req.params.id, req.agent.tenantId],
     );
-    logger.info({ agentId: req.params.id, by: req.agent.id }, 'agent_password_set_by_admin');
+    logger.info(
+      { agentId: req.params.id, by: req.agent.id },
+      'agent_password_set_by_admin',
+    );
     return res.json({ ...rows[0], password_set: true });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── PATCH /api/agents/me ─────────────────────────────────────────────────────
@@ -190,17 +241,21 @@ router.patch('/me', async (req, res, next) => {
   try {
     const { name, password } = req.body || {};
     if (!name?.trim() && !password) {
-      return res.status(400).json({ error: 'Provide name or password to update' });
+      return res
+        .status(400)
+        .json({ error: 'Provide name or password to update' });
     }
     const updates = [];
-    const values  = [];
+    const values = [];
     if (name?.trim()) {
       values.push(name.trim());
       updates.push(`name = $${values.length}`);
     }
     if (password) {
       if (password.length < 8) {
-        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        return res
+          .status(400)
+          .json({ error: 'Password must be at least 8 characters' });
       }
       const hash = await bcrypt.hash(password, 10);
       values.push(hash);
@@ -211,10 +266,12 @@ router.patch('/me', async (req, res, next) => {
       `UPDATE agents SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = $${values.length}
        RETURNING id, name, email, role`,
-      values
+      values,
     );
     return res.json(rows[0]);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ─── PATCH /api/agents/:id ────────────────────────────────────────────────────
@@ -225,7 +282,9 @@ router.patch('/:id', requireRole('admin'), async (req, res, next) => {
   try {
     const { role, permissions } = req.body || {};
     if (role === undefined && permissions === undefined) {
-      return res.status(400).json({ error: 'Provide role or permissions to update' });
+      return res
+        .status(400)
+        .json({ error: 'Provide role or permissions to update' });
     }
     if (role !== undefined && !VALID_ROLES.has(role)) {
       return res.status(400).json({ error: 'Invalid role' });
@@ -233,17 +292,23 @@ router.patch('/:id', requireRole('admin'), async (req, res, next) => {
 
     const { rows: target } = await pool.query(
       'SELECT id, email, role FROM agents WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, req.agent.tenantId]
+      [req.params.id, req.agent.tenantId],
     );
-    if (!target.length) return res.status(404).json({ error: 'Agent not found' });
-    if (SUPER_ADMIN_EMAIL && target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL) {
-      return res.status(403).json({ error: 'Super admin cannot be edited here' });
+    if (!target.length)
+      return res.status(404).json({ error: 'Agent not found' });
+    if (
+      SUPER_ADMIN_EMAIL &&
+      target[0].email.toLowerCase() === SUPER_ADMIN_EMAIL
+    ) {
+      return res
+        .status(403)
+        .json({ error: 'Super admin cannot be edited here' });
     }
 
     const nextRole = role !== undefined ? role : target[0].role;
 
     const updates = [];
-    const values  = [];
+    const values = [];
     if (role !== undefined) {
       values.push(role);
       updates.push(`role = $${values.length}`);
@@ -259,13 +324,21 @@ router.patch('/:id', requireRole('admin'), async (req, res, next) => {
       `UPDATE agents SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = $${values.length - 1} AND tenant_id = $${values.length}
        RETURNING id, name, email, role, is_active, permissions_json, created_at`,
-      values
+      values,
     );
     const updated = rows[0];
-    updated.permissions = normalizePermissions(updated.permissions_json || {}, updated.role);
-    logger.info({ agentId: req.params.id, by: req.agent.id }, 'agent_permissions_updated');
+    updated.permissions = normalizePermissions(
+      updated.permissions_json || {},
+      updated.role,
+    );
+    logger.info(
+      { agentId: req.params.id, by: req.agent.id },
+      'agent_permissions_updated',
+    );
     return res.json(updated);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

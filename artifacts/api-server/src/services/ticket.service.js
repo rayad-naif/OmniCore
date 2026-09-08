@@ -23,8 +23,12 @@ const { pool } = require('../lib/db');
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const STRATEGY       = Object.freeze({ ROUND_ROBIN: 'round_robin', LEAST_LOAD: 'least_load', MANUAL: 'manual' });
-const DEFAULT_SLA_H  = 8;     // hours until SLA breach if not set on brand
+const STRATEGY = Object.freeze({
+  ROUND_ROBIN: 'round_robin',
+  LEAST_LOAD: 'least_load',
+  MANUAL: 'manual',
+});
+const DEFAULT_SLA_H = 8; // hours until SLA breach if not set on brand
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -49,7 +53,7 @@ async function getEligibleAgents(client, { tenantId, brandId }) {
        )
      GROUP BY a.id, a.name, a.role
      ORDER BY last_assigned_at ASC, open_count ASC`,
-    [tenantId, brandId]
+    [tenantId, brandId],
   );
   return rows;
 }
@@ -62,10 +66,10 @@ async function getSlaHours(client, brandId) {
   const { rows } = await client.query(
     `SELECT widget_config_json->>'sla_first_response_hours' AS sla_h
      FROM brands WHERE id = $1`,
-    [brandId]
+    [brandId],
   );
   const raw = rows[0]?.sla_h;
-  const h   = raw ? parseFloat(raw) : NaN;
+  const h = raw ? parseFloat(raw) : NaN;
   return isNaN(h) || h <= 0 ? DEFAULT_SLA_H : h;
 }
 
@@ -81,7 +85,7 @@ async function applyAssignment(client, { conversationId, agentId, slaHours }) {
          updated_at        = NOW()
      WHERE id = $3
      RETURNING id, assigned_agent_id, status, sla_breach_at`,
-    [agentId, slaHours.toString(), conversationId]
+    [agentId, slaHours.toString(), conversationId],
   );
   return rows[0] || null;
 }
@@ -117,7 +121,7 @@ async function assignAgent({
     const { rows: convRows } = await client.query(
       `SELECT id, tenant_id, brand_id, assigned_agent_id, status
        FROM conversations WHERE id = $1 FOR UPDATE`,
-      [conversationId]
+      [conversationId],
     );
 
     if (!convRows.length) {
@@ -142,18 +146,17 @@ async function assignAgent({
       const { rows } = await client.query(
         `SELECT id, name FROM agents
          WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE`,
-        [manualAgentId, conv.tenant_id]
+        [manualAgentId, conv.tenant_id],
       );
       if (!rows.length) {
         await client.query('ROLLBACK');
         return { error: 'AGENT_NOT_ELIGIBLE' };
       }
       selectedAgent = rows[0];
-
     } else {
       const eligible = await getEligibleAgents(client, {
         tenantId: conv.tenant_id,
-        brandId:  conv.brand_id,
+        brandId: conv.brand_id,
       });
 
       if (!eligible.length) {
@@ -164,7 +167,7 @@ async function assignAgent({
       if (strategy === STRATEGY.LEAST_LOAD) {
         // eligible is already sorted by open_count ASC (secondary sort in getEligibleAgents)
         selectedAgent = eligible.reduce((min, a) =>
-          Number(a.open_count) < Number(min.open_count) ? a : min
+          Number(a.open_count) < Number(min.open_count) ? a : min,
         );
       } else {
         // ROUND_ROBIN: pick the agent with the oldest last_assigned_at
@@ -173,8 +176,8 @@ async function assignAgent({
       }
     }
 
-    const slaHours   = await getSlaHours(client, conv.brand_id);
-    const updated    = await applyAssignment(client, {
+    const slaHours = await getSlaHours(client, conv.brand_id);
+    const updated = await applyAssignment(client, {
       conversationId,
       agentId: selectedAgent.id,
       slaHours,
@@ -186,8 +189,8 @@ async function assignAgent({
     if (io) {
       io.to(`conv:${conversationId}`).emit('server:conversation_assigned', {
         conversationId,
-        agentId:     selectedAgent.id,
-        agentName:   selectedAgent.name,
+        agentId: selectedAgent.id,
+        agentName: selectedAgent.name,
         slaBreachAt: updated.sla_breach_at,
       });
 
@@ -223,12 +226,14 @@ async function unassignAgent({ conversationId, tenantId, io = null }) {
      WHERE id = $1
        AND tenant_id = $2
      RETURNING id, status, updated_at`,
-    [conversationId, tenantId]
+    [conversationId, tenantId],
   );
   if (!rows.length) return { error: 'CONVERSATION_NOT_FOUND' };
 
   if (io) {
-    io.to(`conv:${conversationId}`).emit('server:conversation_unassigned', { conversationId });
+    io.to(`conv:${conversationId}`).emit('server:conversation_unassigned', {
+      conversationId,
+    });
   }
 
   return { conversation: rows[0] };
@@ -249,8 +254,11 @@ async function autoAssignIncoming({ conversationId, io = null }) {
  * Call this from a scheduled job (e.g. every 5 min via setInterval or a BullMQ cron).
  */
 async function checkSlaBreaches({ tenantId } = {}) {
-  const conditions = ['c.sla_breach_at <= NOW()', "c.status IN ('open','ai_handling')"];
-  const values     = [];
+  const conditions = [
+    'c.sla_breach_at <= NOW()',
+    "c.status IN ('open','ai_handling')",
+  ];
+  const values = [];
 
   if (tenantId) {
     conditions.push(`c.tenant_id = $${values.length + 1}`);
@@ -265,7 +273,7 @@ async function checkSlaBreaches({ tenantId } = {}) {
      JOIN visitors v ON v.id = c.visitor_id
      WHERE ${conditions.join(' AND ')}
      ORDER BY c.sla_breach_at ASC`,
-    values
+    values,
   );
   return rows;
 }
@@ -282,7 +290,7 @@ async function escalateSlaBreaches({ io = null } = {}) {
   const breached = await checkSlaBreaches();
   if (!breached.length) return { escalated: 0 };
 
-  const ids = breached.map(r => r.id);
+  const ids = breached.map((r) => r.id);
 
   await pool.query(
     `UPDATE conversations
@@ -291,21 +299,26 @@ async function escalateSlaBreaches({ io = null } = {}) {
                            ELSE priority END,
          updated_at = NOW()
      WHERE id = ANY($1::uuid[])`,
-    [ids]
+    [ids],
   );
 
   if (io) {
     for (const conv of breached) {
       io.to(`conv:${conv.id}`).emit('server:sla_breach', {
         conversationId: conv.id,
-        slaBreachAt:    conv.sla_breach_at,
+        slaBreachAt: conv.sla_breach_at,
       });
       // Notify supervisors in the tenant's admin room
-      io.to(`tenant:${conv.tenant_id}:supervisors`).emit('server:sla_breach', conv);
+      io.to(`tenant:${conv.tenant_id}:supervisors`).emit(
+        'server:sla_breach',
+        conv,
+      );
     }
   }
 
-  console.log(`[ticket.service] escalated ${ids.length} SLA-breached conversations`);
+  console.log(
+    `[ticket.service] escalated ${ids.length} SLA-breached conversations`,
+  );
   return { escalated: ids.length, conversationIds: ids };
 }
 

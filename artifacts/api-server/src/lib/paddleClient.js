@@ -77,7 +77,7 @@ async function paddleRequest(method, path, body) {
     if (!key) {
       const err = new Error(
         'Paddle is not configured. Either connect the Paddle integration in Replit, ' +
-        'or set the PADDLE_API_KEY environment secret.',
+          'or set the PADDLE_API_KEY environment secret.',
       );
       err.status = 503;
       throw err;
@@ -118,7 +118,14 @@ async function paddleRequest(method, path, body) {
  * Creates a Paddle Billing transaction and returns the hosted checkout URL.
  * Trial periods must be baked into the Price object (via seed-paddle).
  */
-async function createCheckoutTransaction({ priceId, email, plan, businessName, userName, tenantId }) {
+async function createCheckoutTransaction({
+  priceId,
+  email,
+  plan,
+  businessName,
+  userName,
+  tenantId,
+}) {
   // NOTE: We do NOT pass checkout.url here. With Paddle.js overlay checkout,
   // the success/cancel URLs are specified client-side via Paddle.Checkout.open()
   // settings. Passing a server-side checkout.url requires that domain to be
@@ -129,15 +136,17 @@ async function createCheckoutTransaction({ priceId, email, plan, businessName, u
       plan,
       email,
       business_name: businessName || null,
-      user_name:     userName || null,
-      tenant_id:     tenantId || null,
+      user_name: userName || null,
+      tenant_id: tenantId || null,
     },
   });
 
   const txId = resp.data?.id;
   // Build a fallback redirect URL (used if JS overlay isn't available)
   const base = paddleCheckoutBaseUrl();
-  const url = resp.data?.checkout?.url || `${base}/checkout/custom-checkout?_ptxn=${txId}`;
+  const url =
+    resp.data?.checkout?.url ||
+    `${base}/checkout/custom-checkout?_ptxn=${txId}`;
 
   return { url, transactionId: txId };
 }
@@ -178,7 +187,10 @@ async function createPaddleProduct({ name, description, customData }) {
 }
 
 /** Updates a Paddle product's name/description/custom_data (best-effort fields). */
-async function updatePaddleProduct(productId, { name, description, customData }) {
+async function updatePaddleProduct(
+  productId,
+  { name, description, customData },
+) {
   const body = {};
   if (name !== undefined) body.name = name;
   if (description !== undefined) body.description = description || null;
@@ -200,7 +212,13 @@ async function archivePaddleProduct(productId) {
  * Paddle prices are immutable — change price by creating a new one + archiving
  * the old. Returns the created price object.
  */
-async function createPaddlePrice({ productId, amountCents, currency, trialDays, plan }) {
+async function createPaddlePrice({
+  productId,
+  amountCents,
+  currency,
+  trialDays,
+  plan,
+}) {
   const body = {
     product_id: productId,
     description: `${plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : 'Plan'} — Monthly`,

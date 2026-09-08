@@ -61,7 +61,9 @@ function ensureSchema() {
 
     // Seed defaults only when the table is empty, mirroring the previous Stripe
     // plan definitions so existing tenants keep their expected limits.
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM billing_plans');
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM billing_plans',
+    );
     if ((rows[0]?.n || 0) === 0) {
       await pool.query(
         `INSERT INTO billing_plans
@@ -71,7 +73,7 @@ function ensureSchema() {
          VALUES
            ('free',    'Free',             'Get started with the essentials.',                 0,    true,  false, 0, false, false, 1,  2,   100),
            ('starter', 'OmniCore Starter', 'For small teams getting started with omnichannel support.', 2900, false, true,  1, false, false, 1,  3,   500),
-           ('growth',  'OmniCore Growth',  'For scaling teams with AI deflection and automations.',     7900, false, true,  2, true,  true,  10, 999, 10000)`
+           ('growth',  'OmniCore Growth',  'For scaling teams with AI deflection and automations.',     7900, false, true,  2, true,  true,  10, 999, 10000)`,
       );
       logger.info('billing_plans_seeded');
     }
@@ -86,24 +88,24 @@ function ensureSchema() {
 // ─── Shaping ─────────────────────────────────────────────────────────────────
 function shape(r) {
   return {
-    id:           r.id,
-    slug:         r.slug,
-    plan:         r.slug, // alias kept for dashboard/back-compat
-    name:         r.name,
-    description:  r.description || '',
-    amount:       r.amount_cents,
-    currency:     r.currency,
-    interval:     r.interval,
-    is_free:      r.is_free,
-    self_serve:   r.self_serve,
-    active:       r.active,
-    sort_order:   r.sort_order,
-    trial_days:   r.trial_days,
+    id: r.id,
+    slug: r.slug,
+    plan: r.slug, // alias kept for dashboard/back-compat
+    name: r.name,
+    description: r.description || '',
+    amount: r.amount_cents,
+    currency: r.currency,
+    interval: r.interval,
+    is_free: r.is_free,
+    self_serve: r.self_serve,
+    active: r.active,
+    sort_order: r.sort_order,
+    trial_days: r.trial_days,
     paddle_product_id: r.paddle_product_id,
-    paddle_price_id:   r.paddle_price_id,
-    paddle_synced:     !!r.paddle_price_id,
+    paddle_price_id: r.paddle_price_id,
+    paddle_synced: !!r.paddle_price_id,
     features: {
-      ai_feature_enabled:   r.ai_feature_enabled,
+      ai_feature_enabled: r.ai_feature_enabled,
       smtp_feature_enabled: r.smtp_feature_enabled,
     },
     limits: {
@@ -119,7 +121,7 @@ async function listPlans({ includeInactive = false } = {}) {
   await ensureSchema();
   const where = includeInactive ? '' : 'WHERE active = true';
   const { rows } = await pool.query(
-    `SELECT * FROM billing_plans ${where} ORDER BY sort_order ASC, amount_cents ASC`
+    `SELECT * FROM billing_plans ${where} ORDER BY sort_order ASC, amount_cents ASC`,
   );
   return rows.map(shape);
 }
@@ -130,7 +132,7 @@ async function listSelfServePlans() {
   const { rows } = await pool.query(
     `SELECT * FROM billing_plans
      WHERE active = true AND self_serve = true AND is_free = false
-     ORDER BY sort_order ASC, amount_cents ASC`
+     ORDER BY sort_order ASC, amount_cents ASC`,
   );
   return rows.map(shape);
 }
@@ -139,7 +141,7 @@ async function getPlanRowBySlug(slug) {
   await ensureSchema();
   const { rows } = await pool.query(
     'SELECT * FROM billing_plans WHERE slug = $1 LIMIT 1',
-    [String(slug).toLowerCase()]
+    [String(slug).toLowerCase()],
   );
   return rows[0] || null;
 }
@@ -170,11 +172,18 @@ async function syncPlanToPaddle(row) {
       });
       productId = product.id;
     } else {
-      await paddle.updatePaddleProduct(productId, {
-        name: row.name,
-        description: row.description,
-        customData,
-      }).catch((err) => logger.warn({ err: err.message, productId }, 'paddle_product_update_failed'));
+      await paddle
+        .updatePaddleProduct(productId, {
+          name: row.name,
+          description: row.description,
+          customData,
+        })
+        .catch((err) =>
+          logger.warn(
+            { err: err.message, productId },
+            'paddle_product_update_failed',
+          ),
+        );
     }
 
     const price = await paddle.createPaddlePrice({
@@ -187,20 +196,29 @@ async function syncPlanToPaddle(row) {
 
     // Archive the previous price (immutable; replaced by the new one).
     if (row.paddle_price_id && row.paddle_price_id !== price.id) {
-      await paddle.archivePaddlePrice(row.paddle_price_id)
-        .catch((err) => logger.warn({ err: err.message }, 'paddle_price_archive_failed'));
+      await paddle
+        .archivePaddlePrice(row.paddle_price_id)
+        .catch((err) =>
+          logger.warn({ err: err.message }, 'paddle_price_archive_failed'),
+        );
     }
 
     const { rows } = await pool.query(
       `UPDATE billing_plans
          SET paddle_product_id = $1, paddle_price_id = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
-      [productId, price.id, row.id]
+      [productId, price.id, row.id],
     );
-    logger.info({ slug: row.slug, productId, priceId: price.id }, 'plan_synced_to_paddle');
+    logger.info(
+      { slug: row.slug, productId, priceId: price.id },
+      'plan_synced_to_paddle',
+    );
     return { row: rows[0], warning: null };
   } catch (err) {
-    logger.error({ err: err.message, slug: row.slug }, 'plan_paddle_sync_failed');
+    logger.error(
+      { err: err.message, slug: row.slug },
+      'plan_paddle_sync_failed',
+    );
     return { row, warning: `Saved, but Paddle sync failed: ${err.message}` };
   }
 }
@@ -222,7 +240,11 @@ async function ensurePaddlePriceId(slug) {
 
 // ─── Writes ──────────────────────────────────────────────────────────────────
 function slugify(input) {
-  return String(input).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return String(input)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function normInt(v) {
@@ -234,16 +256,28 @@ function normInt(v) {
 async function createPlan(body) {
   await ensureSchema();
   const name = String(body.name || '').trim();
-  if (!name) { const e = new Error('name is required'); e.status = 400; throw e; }
+  if (!name) {
+    const e = new Error('name is required');
+    e.status = 400;
+    throw e;
+  }
 
   const slug = slugify(body.slug || body.plan || name);
-  if (!slug) { const e = new Error('A valid plan key/slug is required'); e.status = 400; throw e; }
+  if (!slug) {
+    const e = new Error('A valid plan key/slug is required');
+    e.status = 400;
+    throw e;
+  }
 
   const isFree = !!body.is_free;
-  const amount = isFree ? 0 : normInt(body.amount) ?? 0;
+  const amount = isFree ? 0 : (normInt(body.amount) ?? 0);
 
   const existing = await getPlanRowBySlug(slug);
-  if (existing) { const e = new Error(`A plan with key "${slug}" already exists`); e.status = 409; throw e; }
+  if (existing) {
+    const e = new Error(`A plan with key "${slug}" already exists`);
+    e.status = 409;
+    throw e;
+  }
 
   const { rows } = await pool.query(
     `INSERT INTO billing_plans
@@ -267,7 +301,7 @@ async function createPlan(body) {
       normInt(body.max_brands_allowed),
       normInt(body.max_agents_allowed),
       normInt(body.conversation_limit),
-    ]
+    ],
   );
 
   const { row, warning } = await syncPlanToPaddle(rows[0]);
@@ -277,26 +311,44 @@ async function createPlan(body) {
 
 async function updatePlan(id, body) {
   await ensureSchema();
-  const { rows: cur } = await pool.query('SELECT * FROM billing_plans WHERE id = $1', [id]);
+  const { rows: cur } = await pool.query(
+    'SELECT * FROM billing_plans WHERE id = $1',
+    [id],
+  );
   const existing = cur[0];
-  if (!existing) { const e = new Error('Plan not found'); e.status = 404; throw e; }
+  if (!existing) {
+    const e = new Error('Plan not found');
+    e.status = 404;
+    throw e;
+  }
 
   const next = { ...existing };
-  if (body.name !== undefined) next.name = String(body.name).trim() || existing.name;
-  if (body.description !== undefined) next.description = String(body.description).trim() || null;
-  if (body.currency !== undefined) next.currency = String(body.currency).toLowerCase();
+  if (body.name !== undefined)
+    next.name = String(body.name).trim() || existing.name;
+  if (body.description !== undefined)
+    next.description = String(body.description).trim() || null;
+  if (body.currency !== undefined)
+    next.currency = String(body.currency).toLowerCase();
   if (body.active !== undefined) next.active = !!body.active;
-  if (body.sort_order !== undefined) next.sort_order = normInt(body.sort_order) ?? existing.sort_order;
-  if (body.trial_days !== undefined) next.trial_days = normInt(body.trial_days) ?? existing.trial_days;
-  if (body.ai_feature_enabled !== undefined) next.ai_feature_enabled = !!body.ai_feature_enabled;
-  if (body.smtp_feature_enabled !== undefined) next.smtp_feature_enabled = !!body.smtp_feature_enabled;
-  if (body.max_brands_allowed !== undefined) next.max_brands_allowed = normInt(body.max_brands_allowed);
-  if (body.max_agents_allowed !== undefined) next.max_agents_allowed = normInt(body.max_agents_allowed);
-  if (body.conversation_limit !== undefined) next.conversation_limit = normInt(body.conversation_limit);
+  if (body.sort_order !== undefined)
+    next.sort_order = normInt(body.sort_order) ?? existing.sort_order;
+  if (body.trial_days !== undefined)
+    next.trial_days = normInt(body.trial_days) ?? existing.trial_days;
+  if (body.ai_feature_enabled !== undefined)
+    next.ai_feature_enabled = !!body.ai_feature_enabled;
+  if (body.smtp_feature_enabled !== undefined)
+    next.smtp_feature_enabled = !!body.smtp_feature_enabled;
+  if (body.max_brands_allowed !== undefined)
+    next.max_brands_allowed = normInt(body.max_brands_allowed);
+  if (body.max_agents_allowed !== undefined)
+    next.max_agents_allowed = normInt(body.max_agents_allowed);
+  if (body.conversation_limit !== undefined)
+    next.conversation_limit = normInt(body.conversation_limit);
   // Free plans never carry a price or self-serve flag.
   if (!existing.is_free) {
     if (body.self_serve !== undefined) next.self_serve = !!body.self_serve;
-    if (body.amount !== undefined) next.amount_cents = normInt(body.amount) ?? existing.amount_cents;
+    if (body.amount !== undefined)
+      next.amount_cents = normInt(body.amount) ?? existing.amount_cents;
   }
 
   const { rows } = await pool.query(
@@ -308,12 +360,21 @@ async function updatePlan(id, body) {
        updated_at = NOW()
      WHERE id = $14 RETURNING *`,
     [
-      next.name, next.description, next.amount_cents, next.currency, next.active,
-      next.self_serve, next.sort_order, next.trial_days,
-      next.ai_feature_enabled, next.smtp_feature_enabled,
-      next.max_brands_allowed, next.max_agents_allowed, next.conversation_limit,
+      next.name,
+      next.description,
+      next.amount_cents,
+      next.currency,
+      next.active,
+      next.self_serve,
+      next.sort_order,
+      next.trial_days,
+      next.ai_feature_enabled,
+      next.smtp_feature_enabled,
+      next.max_brands_allowed,
+      next.max_agents_allowed,
+      next.conversation_limit,
       id,
-    ]
+    ],
   );
 
   let row = rows[0];
@@ -321,15 +382,25 @@ async function updatePlan(id, body) {
 
   // Re-sync Paddle when the price changed, the plan has no price yet, or core
   // catalog fields changed — but only for active paid plans.
-  const priceChanged = next.amount_cents !== existing.amount_cents || next.currency !== existing.currency;
+  const priceChanged =
+    next.amount_cents !== existing.amount_cents ||
+    next.currency !== existing.currency;
   if (!row.is_free && row.active) {
-    if (priceChanged || !row.paddle_price_id || body.name !== undefined || body.description !== undefined) {
+    if (
+      priceChanged ||
+      !row.paddle_price_id ||
+      body.name !== undefined ||
+      body.description !== undefined
+    ) {
       ({ row, warning } = await syncPlanToPaddle(row));
     }
   } else if (!row.is_free && !row.active && row.paddle_product_id) {
     // Archived — remove it from Paddle's catalog (best-effort).
-    await paddle.archivePaddleProduct(row.paddle_product_id)
-      .catch((err) => logger.warn({ err: err.message }, 'paddle_product_archive_failed'));
+    await paddle
+      .archivePaddleProduct(row.paddle_product_id)
+      .catch((err) =>
+        logger.warn({ err: err.message }, 'paddle_product_archive_failed'),
+      );
   }
 
   logger.info({ id, slug: row.slug }, 'plan_updated');
@@ -342,13 +413,27 @@ async function archivePlan(id) {
 
 async function deletePlan(id) {
   await ensureSchema();
-  const { rows } = await pool.query('SELECT * FROM billing_plans WHERE id = $1', [id]);
+  const { rows } = await pool.query(
+    'SELECT * FROM billing_plans WHERE id = $1',
+    [id],
+  );
   const row = rows[0];
-  if (!row) { const e = new Error('Plan not found'); e.status = 404; throw e; }
-  if (row.is_free) { const e = new Error('The Free plan cannot be removed'); e.status = 400; throw e; }
+  if (!row) {
+    const e = new Error('Plan not found');
+    e.status = 404;
+    throw e;
+  }
+  if (row.is_free) {
+    const e = new Error('The Free plan cannot be removed');
+    e.status = 400;
+    throw e;
+  }
   if (row.paddle_product_id) {
-    await paddle.archivePaddleProduct(row.paddle_product_id)
-      .catch((err) => logger.warn({ err: err.message }, 'paddle_product_archive_failed'));
+    await paddle
+      .archivePaddleProduct(row.paddle_product_id)
+      .catch((err) =>
+        logger.warn({ err: err.message }, 'paddle_product_archive_failed'),
+      );
   }
   await pool.query('DELETE FROM billing_plans WHERE id = $1', [id]);
   logger.info({ id, slug: row.slug }, 'plan_deleted');

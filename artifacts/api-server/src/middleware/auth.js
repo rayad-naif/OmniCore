@@ -13,7 +13,7 @@
  *   Must be placed after requireAuth.
  */
 
-const jwt    = require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const { pool } = require('../lib/db');
 const { LEVELS, permissionLevel } = require('../lib/permissions');
@@ -30,7 +30,7 @@ async function isSuperAdminAgent(agent) {
   try {
     const { rows } = await pool.query(
       `SELECT 1 FROM super_admin_emails WHERE email = $1 AND is_active = TRUE LIMIT 1`,
-      [agent.email]
+      [agent.email],
     );
     return rows.length > 0;
   } catch {
@@ -66,10 +66,12 @@ async function applyWorkspaceOverride(req, res, next) {
 function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing or malformed Authorization header' });
+    return res
+      .status(401)
+      .json({ error: 'Missing or malformed Authorization header' });
   }
 
-  const token  = header.slice(7);
+  const token = header.slice(7);
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
@@ -80,16 +82,17 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, secret);
     req.agent = {
-      id:          payload.sub,
-      tenantId:    payload.tenantId,
-      role:        payload.role,
-      email:       payload.email,
-      name:        payload.name,
+      id: payload.sub,
+      tenantId: payload.tenantId,
+      role: payload.role,
+      email: payload.email,
+      name: payload.name,
       permissions: payload.permissions || {},
     };
     next();
   } catch (err) {
-    const code = err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID';
+    const code =
+      err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID';
     return res.status(401).json({ error: code });
   }
 }
@@ -119,7 +122,9 @@ function requirePermission(feature, level = 'read') {
   return function permGuard(req, res, next) {
     if (!req.agent) return res.status(401).json({ error: 'Unauthorized' });
     if (permissionLevel(req.agent, feature) >= needed) return next();
-    return res.status(403).json({ error: `Forbidden — requires ${level} access to ${feature}` });
+    return res
+      .status(403)
+      .json({ error: `Forbidden — requires ${level} access to ${feature}` });
   };
 }
 
@@ -131,10 +136,20 @@ function requirePermission(feature, level = 'read') {
 function requirePermissionByMethod(feature) {
   return function permGuardByMethod(req, res, next) {
     if (!req.agent) return res.status(401).json({ error: 'Unauthorized' });
-    const needed = (req.method === 'GET' || req.method === 'HEAD') ? LEVELS.read : LEVELS.edit;
+    const needed =
+      req.method === 'GET' || req.method === 'HEAD' ? LEVELS.read : LEVELS.edit;
     if (permissionLevel(req.agent, feature) >= needed) return next();
-    return res.status(403).json({ error: `Forbidden — insufficient ${feature} permission` });
+    return res
+      .status(403)
+      .json({ error: `Forbidden — insufficient ${feature} permission` });
   };
 }
 
-module.exports = { requireAuth, requireRole, requirePermission, requirePermissionByMethod, isSuperAdminAgent, applyWorkspaceOverride };
+module.exports = {
+  requireAuth,
+  requireRole,
+  requirePermission,
+  requirePermissionByMethod,
+  isSuperAdminAgent,
+  applyWorkspaceOverride,
+};

@@ -26,14 +26,16 @@ const logger = require('../utils/logger');
 // ---------------------------------------------------------------------------
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
-  console.warn('[ai.service] GEMINI_API_KEY is not set — AI features will be disabled');
+  console.warn(
+    '[ai.service] GEMINI_API_KEY is not set — AI features will be disabled',
+  );
 }
 
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
-const GENERATION_MODEL  = 'gemini-2.5-flash';
+const GENERATION_MODEL = 'gemini-2.5-flash';
 const MAX_OUTPUT_TOKENS = 8192;
-const EMBEDDING_DIMS    = 768; // kept for API compat even though we no longer embed
+const EMBEDDING_DIMS = 768; // kept for API compat even though we no longer embed
 
 // ---------------------------------------------------------------------------
 // Handover sentinel
@@ -54,11 +56,14 @@ const HUMAN_REQUEST_PATTERNS = [
 // ---------------------------------------------------------------------------
 
 function assertAI() {
-  if (!genAI) throw new Error('AI features unavailable: GEMINI_API_KEY is not configured');
+  if (!genAI)
+    throw new Error(
+      'AI features unavailable: GEMINI_API_KEY is not configured',
+    );
 }
 
 function isAskingForHuman(text) {
-  return HUMAN_REQUEST_PATTERNS.some(p => p.test(text));
+  return HUMAN_REQUEST_PATTERNS.some((p) => p.test(text));
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +93,7 @@ async function retrieveContextFts({ brandId, tenantId, query, topK = 5 }) {
            @@ plainto_tsquery('english', $1)
      ORDER BY rank DESC
      LIMIT $4`,
-    [query, tenantId, brandId, topK]
+    [query, tenantId, brandId, topK],
   );
 
   if (rows.length) return rows;
@@ -98,7 +103,7 @@ async function retrieveContextFts({ brandId, tenantId, query, topK = 5 }) {
     `SELECT title, content FROM knowledge_articles
      WHERE tenant_id = $1 AND (brand_id = $2 OR brand_id IS NULL) AND is_active = TRUE
      ORDER BY updated_at DESC LIMIT $3`,
-    [tenantId, brandId, topK]
+    [tenantId, brandId, topK],
   );
   return fallback;
 }
@@ -114,10 +119,12 @@ const retrieveContext = retrieveContextFts;
  *             NOT including the current userMessage.
  */
 function buildRagPrompt({ systemPrompt, context, history = [], userMessage }) {
-  const historyLines = history.map(m => {
-    const who = m.sender_type === 'visitor' ? 'Customer' : 'Assistant';
-    return `${who}: ${m.message_body}`;
-  }).join('\n');
+  const historyLines = history
+    .map((m) => {
+      const who = m.sender_type === 'visitor' ? 'Customer' : 'Assistant';
+      return `${who}: ${m.message_body}`;
+    })
+    .join('\n');
 
   const historySection = historyLines
     ? `\n--- CONVERSATION SO FAR ---\n${historyLines}\n--- END CONVERSATION ---\n`
@@ -162,31 +169,44 @@ function isHandoverTriggered(responseText) {
  * When the bot limit is reached or the visitor requests a human, the
  * conversation moves to `pending` (awaiting agent pickup) rather than `open`.
  */
-async function handleInboundMessage({ conversationId, tenantId, brandId, userMessage, io = null }) {
+async function handleInboundMessage({
+  conversationId,
+  tenantId,
+  brandId,
+  userMessage,
+  io = null,
+}) {
   assertAI();
 
   // 1. Fetch brand config (system prompt + bot settings from widget_config_json)
   const { rows: brandRows } = await pool.query(
     `SELECT ai_system_prompt, widget_config_json
      FROM brands WHERE id = $1 AND tenant_id = $2`,
-    [brandId, tenantId]
+    [brandId, tenantId],
   );
-  const brand        = brandRows[0];
-  const wConf        = (brand?.widget_config_json) || {};
+  const brand = brandRows[0];
+  const wConf = brand?.widget_config_json || {};
   const systemPrompt = brand?.ai_system_prompt || '';
-  const botMaxMsgs   = parseInt(String(wConf.bot_max_messages ?? '20'), 10) || 20;
+  const botMaxMsgs = parseInt(String(wConf.bot_max_messages ?? '20'), 10) || 20;
   const autoStrategy = wConf.auto_assign_strategy || 'round_robin';
 
   // 2. Fetch conversation + visitor info
   const { rows: convRows } = await pool.query(
     `SELECT c.visitor_id, c.status FROM conversations c WHERE c.id = $1`,
-    [conversationId]
+    [conversationId],
   );
   const visitorId = convRows[0]?.visitor_id;
 
   // 3. Visitor asking for human? Hand over to pending immediately.
   if (isAskingForHuman(userMessage)) {
-    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'visitor_requested_human' });
+    await triggerHandover({
+      conversationId,
+      tenantId,
+      brandId,
+      strategy: autoStrategy,
+      io,
+      reason: 'visitor_requested_human',
+    });
     return { reply: null, handedOver: true, topChunks: [] };
   }
 
@@ -194,11 +214,18 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
   const { rows: countRows } = await pool.query(
     `SELECT COUNT(*) AS cnt FROM messages
      WHERE conversation_id = $1 AND sender_type = 'bot'`,
-    [conversationId]
+    [conversationId],
   );
   const botMsgCount = parseInt(countRows[0]?.cnt ?? '0', 10);
   if (botMsgCount >= botMaxMsgs) {
-    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'bot_message_limit' });
+    await triggerHandover({
+      conversationId,
+      tenantId,
+      brandId,
+      strategy: autoStrategy,
+      io,
+      reason: 'bot_message_limit',
+    });
     return { reply: null, handedOver: true, topChunks: [] };
   }
 
@@ -210,21 +237,32 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
        AND sender_type IN ('visitor', 'bot', 'agent')
        AND COALESCE(message_body, '') <> ''
      ORDER BY created_at DESC LIMIT 14`,
-    [conversationId]
+    [conversationId],
   );
   // Reverse so oldest is first; these are the turns BEFORE the current message
   const history = historyRows.reverse();
 
   // 6. FTS retrieval — brand-scoped
-  const articles = await retrieveContextFts({ brandId, tenantId, query: userMessage });
+  const articles = await retrieveContextFts({
+    brandId,
+    tenantId,
+    query: userMessage,
+  });
 
   // 7. Build prompt and call Gemini (with history + KB context)
-  const contextText = articles.map((a, i) => `[${i + 1}] ${a.title}\n${a.content}`).join('\n\n');
-  const fullPrompt  = buildRagPrompt({ systemPrompt, context: contextText, history, userMessage });
+  const contextText = articles
+    .map((a, i) => `[${i + 1}] ${a.title}\n${a.content}`)
+    .join('\n\n');
+  const fullPrompt = buildRagPrompt({
+    systemPrompt,
+    context: contextText,
+    history,
+    userMessage,
+  });
 
-  const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+  const model = genAI.getGenerativeModel({ model: GENERATION_MODEL });
   const result = await model.generateContent({
-    contents:         [{ role: 'user', parts: [{ text: fullPrompt }] }],
+    contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
     generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: 0.3 },
   });
 
@@ -232,7 +270,14 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
 
   // 7. Handover detection from model output
   if (isHandoverTriggered(rawReply)) {
-    await triggerHandover({ conversationId, tenantId, brandId, strategy: autoStrategy, io, reason: 'model_uncertain' });
+    await triggerHandover({
+      conversationId,
+      tenantId,
+      brandId,
+      strategy: autoStrategy,
+      io,
+      reason: 'model_uncertain',
+    });
     return { reply: null, handedOver: true, topChunks: articles };
   }
 
@@ -241,23 +286,23 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
     `INSERT INTO messages (conversation_id, sender_type, message_body)
      VALUES ($1, 'bot', $2)
      RETURNING id, conversation_id, sender_type, message_body, created_at`,
-    [conversationId, rawReply]
+    [conversationId, rawReply],
   );
   await pool.query(
     `UPDATE conversations SET updated_at = NOW() WHERE id = $1`,
-    [conversationId]
+    [conversationId],
   );
   const msg = msgRows[0];
 
   // 9. Emit to Socket.io rooms
   if (io) {
     const enriched = {
-      id:               msg.id,
-      conversation_id:  conversationId,
-      sender_type:      'bot',
-      sender_name:      'AI Assistant',
-      message_body:     rawReply,
-      created_at:       msg.created_at,
+      id: msg.id,
+      conversation_id: conversationId,
+      sender_type: 'bot',
+      sender_name: 'AI Assistant',
+      message_body: rawReply,
+      created_at: msg.created_at,
     };
     io.to(`conv:${conversationId}`).emit('server:new_message', enriched);
     if (visitorId) {
@@ -278,20 +323,29 @@ async function handleInboundMessage({ conversationId, tenantId, brandId, userMes
  *
  * @param {{ conversationId, tenantId, brandId?, strategy?, io?, reason? }} opts
  */
-async function triggerHandover({ conversationId, tenantId, brandId = null, strategy = 'round_robin', io = null, reason = 'unknown' }) {
+async function triggerHandover({
+  conversationId,
+  tenantId,
+  brandId = null,
+  strategy = 'round_robin',
+  io = null,
+  reason = 'unknown',
+}) {
   const { rows } = await pool.query(
     `UPDATE conversations
      SET status     = 'pending',
          updated_at = NOW()
      WHERE id = $1 AND status = 'ai_handling'
      RETURNING id, tenant_id, brand_id, assigned_agent_id`,
-    [conversationId]
+    [conversationId],
   );
 
   if (!rows.length) return; // already open or closed — no-op
 
   const conv = rows[0];
-  console.log(`[ai.service] handover  conv=${conversationId}  reason=${reason}  strategy=${strategy}`);
+  console.log(
+    `[ai.service] handover  conv=${conversationId}  reason=${reason}  strategy=${strategy}`,
+  );
 
   // Auto-assign agent (skip if manual or already assigned).
   // Assignment order per product spec:
@@ -304,7 +358,11 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
       const effectiveBrandId = brandId || conv.brand_id;
 
       let onlineIds = [];
-      try { onlineIds = require('./socket.service').getOnlineAgentIds() || []; } catch { onlineIds = []; }
+      try {
+        onlineIds = require('./socket.service').getOnlineAgentIds() || [];
+      } catch {
+        onlineIds = [];
+      }
 
       // restrictIds: array of agent IDs to limit the pool to, or null for no limit.
       const pickAgent = async (restrictIds) => {
@@ -318,7 +376,7 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
                WHERE c3.assigned_agent_id = a.id AND c3.status = 'open'
              ) ASC
              LIMIT 1`,
-            [tenantId, restrictIds]
+            [tenantId, restrictIds],
           );
           return ll[0]?.id ?? null;
         }
@@ -335,7 +393,7 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
              FROM conversations c2 WHERE c2.assigned_agent_id = a.id
            ) ASC
            LIMIT 1`,
-          [tenantId, effectiveBrandId, restrictIds]
+          [tenantId, effectiveBrandId, restrictIds],
         );
         return rr[0]?.id ?? null;
       };
@@ -347,9 +405,11 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
       if (agentId) {
         await pool.query(
           `UPDATE conversations SET assigned_agent_id = $1, updated_at = NOW() WHERE id = $2`,
-          [agentId, conversationId]
+          [agentId, conversationId],
         );
-        console.log(`[ai.service] auto-assigned  conv=${conversationId}  agent=${agentId}  online=${onlineIds.includes(agentId)}`);
+        console.log(
+          `[ai.service] auto-assigned  conv=${conversationId}  agent=${agentId}  online=${onlineIds.includes(agentId)}`,
+        );
       }
     } catch (err) {
       console.error('[ai.service] auto-assign error', err.message);
@@ -359,14 +419,19 @@ async function triggerHandover({ conversationId, tenantId, brandId = null, strat
   // Socket.io notifications
   if (io) {
     io.to(`conv:${conversationId}`).emit('server:handover_required', {
-      conversationId, reason, ts: new Date().toISOString(),
+      conversationId,
+      reason,
+      ts: new Date().toISOString(),
     });
     io.to(`tenant:${tenantId}`).emit('server:new_assignment_available', {
-      conversationId, reason,
+      conversationId,
+      reason,
     });
     // Also emit general conversation update so sidebar refreshes
     io.to(`tenant:${tenantId}`).emit('conversation:updated', {
-      conversationId, status: 'pending', reason,
+      conversationId,
+      status: 'pending',
+      reason,
     });
   }
 }
@@ -387,9 +452,9 @@ Keep the core meaning identical. Return ONLY the rewritten text — no commentar
 
 Draft: ${draft}`;
 
-  const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+  const model = genAI.getGenerativeModel({ model: GENERATION_MODEL });
   const result = await model.generateContent({
-    contents:         [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS, temperature: 0.5 },
   });
   return result.response.text().trim();
@@ -404,8 +469,8 @@ async function summariseThread({ conversationId, messages }) {
   if (!messages?.length) return '';
 
   const transcript = messages
-    .filter(m => !m.is_internal_note)
-    .map(m => `[${m.sender_type?.toUpperCase()}]: ${m.message_body}`)
+    .filter((m) => !m.is_internal_note)
+    .map((m) => `[${m.sender_type?.toUpperCase()}]: ${m.message_body}`)
     .join('\n');
 
   const prompt = `You are summarising a customer support thread for a human agent who is taking over.
@@ -418,9 +483,9 @@ Return ONLY the bullet-point summary.
 Transcript:
 ${transcript}`;
 
-  const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+  const model = genAI.getGenerativeModel({ model: GENERATION_MODEL });
   const result = await model.generateContent({
-    contents:         [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: 1024, temperature: 0.3 },
   });
   const summary = result.response.text().trim();
@@ -428,7 +493,7 @@ ${transcript}`;
   await pool.query(
     `INSERT INTO messages (conversation_id, sender_type, message_body, is_internal_note)
      VALUES ($1, 'system', $2, TRUE)`,
-    [conversationId, `[AI Summary]\n${summary}`]
+    [conversationId, `[AI Summary]\n${summary}`],
   );
 
   return summary;
@@ -442,14 +507,14 @@ ${transcript}`;
  * chunkText — kept for API compatibility; still useful if embedding is restored later.
  */
 function chunkText(text, { chunkSize = 500, overlap = 100 } = {}) {
-  const words  = text.split(/\s+/).filter(Boolean);
+  const words = text.split(/\s+/).filter(Boolean);
   const chunks = [];
   let i = 0;
   while (i < words.length) {
     chunks.push(words.slice(i, i + chunkSize).join(' '));
     i += chunkSize - overlap;
   }
-  return chunks.filter(c => c.trim().length > 20);
+  return chunks.filter((c) => c.trim().length > 20);
 }
 
 /**
@@ -460,7 +525,7 @@ async function vectoriseArticle({ articleId }) {
   try {
     await pool.query(
       `UPDATE knowledge_articles SET updated_at = NOW() WHERE id = $1`,
-      [articleId]
+      [articleId],
     );
     console.log(`[ai.service] article=${articleId} marked ready (FTS mode)`);
   } catch (err) {
@@ -496,7 +561,7 @@ async function maybeAutoReply({ conversationId, tenantId, userMessage, io }) {
        FROM conversations c
        JOIN tenants t ON t.id = c.tenant_id
       WHERE c.id = $1 AND c.status = 'ai_handling'`,
-    [conversationId]
+    [conversationId],
   );
   const row = rows[0];
   if (!row || !row.ai_auto_reply_enabled || !row.ai_feature_enabled) return;
@@ -512,8 +577,21 @@ async function maybeAutoReply({ conversationId, tenantId, userMessage, io }) {
   } catch (err) {
     // Bot failed (model error etc.) — hand over to a human so the chat is not
     // stranded in ai_handling with no reply.
-    try { logger.error({ err: err.message, conversationId }, 'ai_auto_reply_failed_handover'); } catch { /* noop */ }
-    await triggerHandover({ conversationId, tenantId, brandId: row.brand_id, io, reason: 'bot_error' }).catch(() => {});
+    try {
+      logger.error(
+        { err: err.message, conversationId },
+        'ai_auto_reply_failed_handover',
+      );
+    } catch {
+      /* noop */
+    }
+    await triggerHandover({
+      conversationId,
+      tenantId,
+      brandId: row.brand_id,
+      io,
+      reason: 'bot_error',
+    }).catch(() => {});
   }
 }
 
@@ -530,29 +608,45 @@ async function summarizeForVisitor(conversationId) {
      WHERE conversation_id = $1 AND is_internal_note = FALSE
        AND sender_type != 'system' AND COALESCE(message_body, '') <> ''
      ORDER BY created_at ASC LIMIT 80`,
-    [conversationId]
+    [conversationId],
   );
   if (!rows.length) return '';
 
-  const transcript = rows.map(m => {
-    const who = m.sender_type === 'visitor' ? 'Customer'
-      : m.sender_type === 'bot' ? 'Assistant' : 'Agent';
-    return `${who}: ${m.message_body}`;
-  }).join('\n');
+  const transcript = rows
+    .map((m) => {
+      const who =
+        m.sender_type === 'visitor'
+          ? 'Customer'
+          : m.sender_type === 'bot'
+            ? 'Assistant'
+            : 'Agent';
+      return `${who}: ${m.message_body}`;
+    })
+    .join('\n');
 
   // Fallback: first customer message, trimmed.
-  const firstCustomer = rows.find(m => m.sender_type === 'visitor');
-  const base = (firstCustomer ? firstCustomer.message_body : rows[0].message_body) || '';
+  const firstCustomer = rows.find((m) => m.sender_type === 'visitor');
+  const base =
+    (firstCustomer ? firstCustomer.message_body : rows[0].message_body) || '';
   const fallback = base.length > 280 ? base.slice(0, 277) + '…' : base;
 
   if (!genAI) return fallback;
   try {
-    const model  = genAI.getGenerativeModel({ model: GENERATION_MODEL });
+    const model = genAI.getGenerativeModel({ model: GENERATION_MODEL });
     const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text:
-        `Summarise this customer support conversation for the customer's own records. `
-        + `Write 2-4 short, plain-language sentences describing what they asked about and what was discussed or resolved. `
-        + `Address it neutrally (no greeting, no sign-off, do not invent details).\n\nConversation:\n${transcript}` }] }],
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text:
+                `Summarise this customer support conversation for the customer's own records. ` +
+                `Write 2-4 short, plain-language sentences describing what they asked about and what was discussed or resolved. ` +
+                `Address it neutrally (no greeting, no sign-off, do not invent details).\n\nConversation:\n${transcript}`,
+            },
+          ],
+        },
+      ],
       generationConfig: { maxOutputTokens: 512, temperature: 0.3 },
     });
     const text = result?.response?.text?.()?.trim();

@@ -32,35 +32,35 @@ interface PlanSpec {
 
 const PLANS: PlanSpec[] = [
   {
-    plan: "starter",
-    name: "OmniCore Starter",
+    plan: 'starter',
+    name: 'OmniCore Starter',
     description:
-      "For small teams getting started with omnichannel support. Includes live chat widget, email integration, and basic reporting. 14-day free trial included.",
+      'For small teams getting started with omnichannel support. Includes live chat widget, email integration, and basic reporting. 14-day free trial included.',
     unitAmountCents: 2900,
     metadata: {
-      plan: "starter",
-      self_serve: "true",
-      max_brands_allowed: "1",
-      max_agents_allowed: "3",
-      conversation_limit: "500",
-      ai_feature_enabled: "false",
-      smtp_feature_enabled: "false",
+      plan: 'starter',
+      self_serve: 'true',
+      max_brands_allowed: '1',
+      max_agents_allowed: '3',
+      conversation_limit: '500',
+      ai_feature_enabled: 'false',
+      smtp_feature_enabled: 'false',
     },
   },
   {
-    plan: "growth",
-    name: "OmniCore Growth",
+    plan: 'growth',
+    name: 'OmniCore Growth',
     description:
-      "For scaling teams with AI deflection and powerful automations. Unlimited agents, AI bot deflection, advanced reporting, and custom branding. 14-day free trial included.",
+      'For scaling teams with AI deflection and powerful automations. Unlimited agents, AI bot deflection, advanced reporting, and custom branding. 14-day free trial included.',
     unitAmountCents: 7900,
     metadata: {
-      plan: "growth",
-      self_serve: "true",
-      max_brands_allowed: "10",
-      max_agents_allowed: "999",
-      conversation_limit: "10000",
-      ai_feature_enabled: "true",
-      smtp_feature_enabled: "true",
+      plan: 'growth',
+      self_serve: 'true',
+      max_brands_allowed: '10',
+      max_agents_allowed: '999',
+      conversation_limit: '10000',
+      ai_feature_enabled: 'true',
+      smtp_feature_enabled: 'true',
     },
   },
 ];
@@ -69,30 +69,33 @@ function getApiKey(): string {
   const key = process.env.PADDLE_API_KEY;
   if (!key) {
     throw new Error(
-      "PADDLE_API_KEY is not set.\n" +
-        "Add it as an environment secret from: Paddle dashboard → Developer → Authentication.",
+      'PADDLE_API_KEY is not set.\n' +
+        'Add it as an environment secret from: Paddle dashboard → Developer → Authentication.',
     );
   }
   return key;
 }
 
 function baseUrl(): string {
-  return process.env.PADDLE_ENVIRONMENT === "production"
-    ? "https://api.paddle.com"
-    : "https://sandbox-api.paddle.com";
+  return process.env.PADDLE_ENVIRONMENT === 'production'
+    ? 'https://api.paddle.com'
+    : 'https://sandbox-api.paddle.com';
 }
 
 async function paddlePost(path: string, body: unknown): Promise<unknown> {
   const res = await fetch(`${baseUrl()}${path}`, {
-    method: "POST",
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${getApiKey()}`,
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
-  const json = (await res.json()) as { data?: unknown; error?: { detail?: string } };
+  const json = (await res.json()) as {
+    data?: unknown;
+    error?: { detail?: string };
+  };
   if (!res.ok) {
     const detail = json?.error?.detail ?? `Paddle API error ${res.status}`;
     throw new Error(detail);
@@ -102,10 +105,10 @@ async function paddlePost(path: string, body: unknown): Promise<unknown> {
 
 async function paddleGet(path: string): Promise<unknown[]> {
   const res = await fetch(`${baseUrl()}${path}`, {
-    method: "GET",
+    method: 'GET',
     headers: {
       Authorization: `Bearer ${getApiKey()}`,
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
     signal: AbortSignal.timeout(15_000),
   });
@@ -121,14 +124,15 @@ async function paddleGet(path: string): Promise<unknown[]> {
 }
 
 async function seed() {
-  const env = process.env.PADDLE_ENVIRONMENT === "production" ? "production" : "sandbox";
+  const env =
+    process.env.PADDLE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
   console.log(`\nSeeding Paddle Billing products — environment: ${env}\n`);
 
   const priceIds: Record<string, string> = {};
 
   for (const spec of PLANS) {
     // Paddle doesn't have product search by custom_data via REST, so list and filter.
-    const products = (await paddleGet("/products?per_page=200")) as Array<{
+    const products = (await paddleGet('/products?per_page=200')) as Array<{
       id: string;
       name: string;
       custom_data?: Record<string, string>;
@@ -136,7 +140,7 @@ async function seed() {
     }>;
 
     const existing = products.find(
-      (p) => p.custom_data?.plan === spec.plan && p.status === "active",
+      (p) => p.custom_data?.plan === spec.plan && p.status === 'active',
     );
 
     let productId: string;
@@ -144,10 +148,10 @@ async function seed() {
       productId = existing.id;
       console.log(`✓ ${spec.name} product already exists (${productId})`);
     } else {
-      const product = (await paddlePost("/products", {
+      const product = (await paddlePost('/products', {
         name: spec.name,
         description: spec.description,
-        tax_category: "saas",
+        tax_category: 'saas',
         custom_data: spec.metadata,
       })) as { id: string };
       productId = product.id;
@@ -167,34 +171,34 @@ async function seed() {
 
     const hasPrice = prices.some(
       (p) =>
-        p.status === "active" &&
+        p.status === 'active' &&
         p.unit_price?.amount === String(spec.unitAmountCents) &&
-        p.billing_cycle?.interval === "month",
+        p.billing_cycle?.interval === 'month',
     );
 
     if (hasPrice) {
       const match = prices.find(
         (p) =>
-          p.status === "active" &&
+          p.status === 'active' &&
           p.unit_price?.amount === String(spec.unitAmountCents) &&
-          p.billing_cycle?.interval === "month",
+          p.billing_cycle?.interval === 'month',
       )!;
       priceIds[spec.plan] = match.id;
       console.log(
         `  ✓ Monthly price $${(spec.unitAmountCents / 100).toFixed(2)} already exists (${match.id})`,
       );
     } else {
-      const price = (await paddlePost("/prices", {
+      const price = (await paddlePost('/prices', {
         product_id: productId,
         description: `OmniCore ${spec.plan.charAt(0).toUpperCase() + spec.plan.slice(1)} — Monthly`,
         unit_price: {
           amount: String(spec.unitAmountCents),
-          currency_code: "USD",
+          currency_code: 'USD',
         },
-        billing_cycle: { interval: "month", frequency: 1 },
+        billing_cycle: { interval: 'month', frequency: 1 },
         // 14-day free trial — baked into the Price so it applies at every checkout
-        trial_period: { interval: "day", frequency: TRIAL_DAYS },
-        tax_mode: "account_setting",
+        trial_period: { interval: 'day', frequency: TRIAL_DAYS },
+        tax_mode: 'account_setting',
         custom_data: { plan: spec.plan },
       })) as { id: string };
       priceIds[spec.plan] = price.id;
@@ -204,24 +208,22 @@ async function seed() {
     }
   }
 
-  console.log("\n✓ Paddle products seeded successfully!\n");
+  console.log('\n✓ Paddle products seeded successfully!\n');
   console.log(
-    "Add these price IDs as environment secrets (Replit → Secrets):\n",
+    'Add these price IDs as environment secrets (Replit → Secrets):\n',
   );
   for (const [plan, priceId] of Object.entries(priceIds)) {
-    console.log(
-      `  PADDLE_${plan.toUpperCase()}_PRICE_ID=${priceId}`,
-    );
+    console.log(`  PADDLE_${plan.toUpperCase()}_PRICE_ID=${priceId}`);
   }
   console.log(
-    "\nAlso set BILLING_PROVIDER=paddle to route new checkouts through Paddle.",
+    '\nAlso set BILLING_PROVIDER=paddle to route new checkouts through Paddle.',
   );
   console.log(
-    "Set PADDLE_WEBHOOK_SECRET from Paddle dashboard → Developer → Notifications.\n",
+    'Set PADDLE_WEBHOOK_SECRET from Paddle dashboard → Developer → Notifications.\n',
   );
 }
 
 seed().catch((err: Error) => {
-  console.error("\nError seeding Paddle products:", err.message);
+  console.error('\nError seeding Paddle products:', err.message);
   process.exit(1);
 });

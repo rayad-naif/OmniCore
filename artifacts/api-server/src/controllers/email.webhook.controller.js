@@ -22,11 +22,14 @@
 const crypto = require('crypto');
 const multer = require('multer');
 const { Router } = require('express');
-const { pool }   = require('../lib/db');
-const logger     = require('../utils/logger');
+const { pool } = require('../lib/db');
+const logger = require('../utils/logger');
 
 // Multer with memory storage — file buffers available at req.files
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+});
 
 // Apply multer only when Content-Type is multipart/form-data (SendGrid, Mailgun).
 // JSON webhooks (Resend) are already parsed by express.json() upstream.
@@ -42,7 +45,9 @@ const router = Router();
 
 // Injected after Socket.io is initialised — call setIo(io) from server bootstrap
 let _io = null;
-function setIo(io) { _io = io; }
+function setIo(io) {
+  _io = io;
+}
 
 // ---------------------------------------------------------------------------
 // Quote Stripper
@@ -80,24 +85,26 @@ function stripQuotes(rawText) {
 // ---------------------------------------------------------------------------
 function verifySignature(req) {
   const secret = process.env.INBOUND_WEBHOOK_SECRET;
-  if (!secret) return true;  // Skip verification if not configured
+  if (!secret) return true; // Skip verification if not configured
 
   // SendGrid uses a timestamp + payload HMAC; Resend uses X-Resend-Signature
-  const signature = req.headers['x-webhook-signature'] ||
-                    req.headers['x-resend-signature']  ||
-                    req.headers['x-sendgrid-signature'];
+  const signature =
+    req.headers['x-webhook-signature'] ||
+    req.headers['x-resend-signature'] ||
+    req.headers['x-sendgrid-signature'];
 
   if (!signature) return false;
 
-  const payload   = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-  const expected  = crypto
+  const payload =
+    typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+  const expected = crypto
     .createHmac('sha256', secret)
     .update(payload)
     .digest('hex');
 
   return crypto.timingSafeEqual(
     Buffer.from(signature.replace(/^sha256=/, '')),
-    Buffer.from(expected)
+    Buffer.from(expected),
   );
 }
 
@@ -107,10 +114,14 @@ function verifySignature(req) {
 //   reply+conv_3fa85f64-...@inbound.yourdomain.com
 // Returns the UUID if found, otherwise null.
 // ---------------------------------------------------------------------------
-const REPLY_CONV_RE = /^reply\+conv[_-]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
+const REPLY_CONV_RE =
+  /^reply\+conv[_-]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
 
 function parseConvIdFromReplyTo(toAddress) {
-  const clean = (toAddress || '').replace(/^.*</, '').replace(/>.*$/, '').trim();
+  const clean = (toAddress || '')
+    .replace(/^.*</, '')
+    .replace(/>.*$/, '')
+    .trim();
   const local = clean.split('@')[0] || '';
   const m = REPLY_CONV_RE.exec(local);
   return m ? m[1] : null;
@@ -127,9 +138,12 @@ function parseConvIdFromReplyTo(toAddress) {
 const ROOT_DOMAIN_RE = /^([^@]+)@([^.]+)\.iratelier\.com$/i;
 
 function parseRoutingPrefix(toAddress) {
-  const clean = (toAddress || '').replace(/^.*</, '').replace(/>.*$/, '').trim();
+  const clean = (toAddress || '')
+    .replace(/^.*</, '')
+    .replace(/>.*$/, '')
+    .trim();
   const match = ROOT_DOMAIN_RE.exec(clean);
-  if (match) return match[2];          // subdomain = prefix
+  if (match) return match[2]; // subdomain = prefix
   // Fallback: use the local-part before the @
   return clean.split('@')[0] || null;
 }
@@ -139,7 +153,9 @@ function parseRoutingPrefix(toAddress) {
 // ---------------------------------------------------------------------------
 function extractHeader(headers, name) {
   if (!headers) return null;
-  const key = Object.keys(headers).find(k => k.toLowerCase() === name.toLowerCase());
+  const key = Object.keys(headers).find(
+    (k) => k.toLowerCase() === name.toLowerCase(),
+  );
   return key ? headers[key] : null;
 }
 
@@ -157,14 +173,20 @@ function parseMessageId(raw) {
 // ---------------------------------------------------------------------------
 function normaliseSendgrid(body) {
   return {
-    to:          body.to    || body.envelope && JSON.parse(body.envelope || '{}').to,
-    from:        body.from,
-    subject:     body.subject,
-    text:        body.text  || '',
-    html:        body.html  || '',
-    messageId:   body.headers && extractHeader(JSON.parse(body.headers || '{}'), 'message-id'),
-    inReplyTo:   body.headers && extractHeader(JSON.parse(body.headers || '{}'), 'in-reply-to'),
-    references:  body.headers && extractHeader(JSON.parse(body.headers || '{}'), 'references'),
+    to: body.to || (body.envelope && JSON.parse(body.envelope || '{}').to),
+    from: body.from,
+    subject: body.subject,
+    text: body.text || '',
+    html: body.html || '',
+    messageId:
+      body.headers &&
+      extractHeader(JSON.parse(body.headers || '{}'), 'message-id'),
+    inReplyTo:
+      body.headers &&
+      extractHeader(JSON.parse(body.headers || '{}'), 'in-reply-to'),
+    references:
+      body.headers &&
+      extractHeader(JSON.parse(body.headers || '{}'), 'references'),
   };
 }
 
@@ -174,14 +196,14 @@ function normaliseSendgrid(body) {
 function normaliseResend(body) {
   const hdrs = body.headers || {};
   return {
-    to:         Array.isArray(body.to) ? body.to[0]?.email : body.to,
-    from:       body.from?.email || body.from,
-    subject:    body.subject,
-    text:       body.text || '',
-    html:       body.html || '',
-    messageId:  hdrs['message-id'] || hdrs['Message-Id'],
-    inReplyTo:  hdrs['in-reply-to'] || hdrs['In-Reply-To'],
-    references: hdrs['references']  || hdrs['References'],
+    to: Array.isArray(body.to) ? body.to[0]?.email : body.to,
+    from: body.from?.email || body.from,
+    subject: body.subject,
+    text: body.text || '',
+    html: body.html || '',
+    messageId: hdrs['message-id'] || hdrs['Message-Id'],
+    inReplyTo: hdrs['in-reply-to'] || hdrs['In-Reply-To'],
+    references: hdrs['references'] || hdrs['References'],
   };
 }
 
@@ -202,27 +224,37 @@ function normaliseMailgun(body) {
         if (typeof k === 'string') hdrs[k.toLowerCase()] = v;
       }
     }
-  } catch { /* ignore parse errors */ }
+  } catch {
+    /* ignore parse errors */
+  }
 
   return {
-    to:         body.recipient || body.To || body.to || '',
-    from:       body.sender   || body.From || body.from || '',
-    subject:    body.Subject  || body.subject || '',
+    to: body.recipient || body.To || body.to || '',
+    from: body.sender || body.From || body.from || '',
+    subject: body.Subject || body.subject || '',
     // Prefer stripped-text (Mailgun already strips the reply chain); fall back to body-plain
-    text:       body['stripped-text'] || body['body-plain'] || body.text || '',
-    html:       body['stripped-html'] || body['body-html']  || body.html || '',
-    messageId:  body['Message-Id'] || body['message-id'] || hdrs['message-id'] || null,
-    inReplyTo:  body['In-Reply-To'] || body['in-reply-to'] || hdrs['in-reply-to'] || null,
-    references: body['References'] || body['references']   || hdrs['references']  || null,
+    text: body['stripped-text'] || body['body-plain'] || body.text || '',
+    html: body['stripped-html'] || body['body-html'] || body.html || '',
+    messageId:
+      body['Message-Id'] || body['message-id'] || hdrs['message-id'] || null,
+    inReplyTo:
+      body['In-Reply-To'] || body['in-reply-to'] || hdrs['in-reply-to'] || null,
+    references:
+      body['References'] || body['references'] || hdrs['references'] || null,
   };
 }
 
 function normalisePayload(body) {
   // Detect provider heuristically
-  if (body.envelope !== undefined) return normaliseSendgrid(body);   // SendGrid
-  if (body.from?.email !== undefined || body.type === 'email.received') return normaliseResend(body);
+  if (body.envelope !== undefined) return normaliseSendgrid(body); // SendGrid
+  if (body.from?.email !== undefined || body.type === 'email.received')
+    return normaliseResend(body);
   // Mailgun: uses 'recipient' and 'sender' instead of 'to'/'from'
-  if (body.recipient !== undefined || body.sender !== undefined || body['body-plain'] !== undefined) {
+  if (
+    body.recipient !== undefined ||
+    body.sender !== undefined ||
+    body['body-plain'] !== undefined
+  ) {
     return normaliseMailgun(body);
   }
   return normaliseResend(body); // safe default
@@ -245,10 +277,18 @@ function extractFileAttachments(body, files = []) {
   if (Array.isArray(body.attachments)) {
     for (const att of body.attachments) {
       if (!att || !att.filename) continue;
-      const mimeType = att.content_type || att.type || 'application/octet-stream';
+      const mimeType =
+        att.content_type || att.type || 'application/octet-stream';
       if (att.content) {
-        const base64 = typeof att.content === 'string' ? att.content : Buffer.from(att.content).toString('base64');
-        results.push({ url: `data:${mimeType};base64,${base64}`, name: att.filename, type: mimeType });
+        const base64 =
+          typeof att.content === 'string'
+            ? att.content
+            : Buffer.from(att.content).toString('base64');
+        results.push({
+          url: `data:${mimeType};base64,${base64}`,
+          name: att.filename,
+          type: mimeType,
+        });
       } else if (att.url) {
         results.push({ url: att.url, name: att.filename, type: mimeType });
       }
@@ -261,7 +301,9 @@ function extractFileAttachments(body, files = []) {
     let sgMeta = {};
     try {
       if (body['attachment-info']) sgMeta = JSON.parse(body['attachment-info']);
-    } catch { /* ignore bad JSON */ }
+    } catch {
+      /* ignore bad JSON */
+    }
 
     for (const file of files) {
       // Skip metadata-only text fields and empty buffers
@@ -270,11 +312,17 @@ function extractFileAttachments(body, files = []) {
       // it up as a file but guard anyway
       if (file.fieldname === 'attachment-info') continue;
 
-      const meta     = sgMeta[file.fieldname] || {};
-      const mimeType = file.mimetype || meta['mime-type'] || 'application/octet-stream';
-      const filename = file.originalname || meta.filename || meta.name || file.fieldname;
-      const base64   = file.buffer.toString('base64');
-      results.push({ url: `data:${mimeType};base64,${base64}`, name: filename, type: mimeType });
+      const meta = sgMeta[file.fieldname] || {};
+      const mimeType =
+        file.mimetype || meta['mime-type'] || 'application/octet-stream';
+      const filename =
+        file.originalname || meta.filename || meta.name || file.fieldname;
+      const base64 = file.buffer.toString('base64');
+      results.push({
+        url: `data:${mimeType};base64,${base64}`,
+        name: filename,
+        type: mimeType,
+      });
     }
   }
 
@@ -296,11 +344,8 @@ async function handleInboundEmail(req, res) {
     }
 
     const parsed = normalisePayload(req.body);
-    const {
-      to, from, subject,
-      text, html,
-      messageId, inReplyTo, references,
-    } = parsed;
+    const { to, from, subject, text, html, messageId, inReplyTo, references } =
+      parsed;
 
     if (!to || !from) {
       console.warn('[email:webhook] missing to/from — skipping', parsed);
@@ -318,7 +363,7 @@ async function handleInboundEmail(req, res) {
       // Verify the conversation exists and get its tenant
       const { rows: convCheck } = await pool.query(
         `SELECT id, tenant_id, brand_id FROM conversations WHERE id = $1 LIMIT 1`,
-        [directConvId]
+        [directConvId],
       );
       if (!convCheck.length) {
         logger.warn({ convId: directConvId }, 'email_webhook_conv_not_found');
@@ -328,8 +373,8 @@ async function handleInboundEmail(req, res) {
 
       // Strip quotes and persist. An email with only an image/file and no text
       // still counts — use a placeholder body so the attachment isn't dropped.
-      const rawText   = text || (html || '').replace(/<[^>]+>/g, ' ');
-      let cleanBody   = stripQuotes(rawText);
+      const rawText = text || (html || '').replace(/<[^>]+>/g, ' ');
+      let cleanBody = stripQuotes(rawText);
       const fileAttachments = extractFileAttachments(req.body, req.files || []);
       if (!cleanBody && fileAttachments.length === 0) {
         logger.warn({ conversationId }, 'email_webhook_empty_body_after_strip');
@@ -343,27 +388,36 @@ async function handleInboundEmail(req, res) {
         `INSERT INTO messages (conversation_id, sender_type, message_body, attachments_json)
          VALUES ($1, 'visitor', $2, $3::jsonb)
          RETURNING id, conversation_id, sender_type, message_body, attachments_json, created_at`,
-        [conversationId, cleanBody, attachmentsJson]
+        [conversationId, cleanBody, attachmentsJson],
       );
       await pool.query(
         `UPDATE conversations SET updated_at = NOW(),
            status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
          WHERE id = $1`,
-        [conversationId]
+        [conversationId],
       );
       if (_io) {
         const msg = newMsg[0];
         _io.to(`conv:${conversationId}`).emit('server:new_message', msg);
-        _io.to(`tenant:${tenant_id}`).emit('conversation:visitor_message', { conversationId, message: msg });
+        _io.to(`tenant:${tenant_id}`).emit('conversation:visitor_message', {
+          conversationId,
+          message: msg,
+        });
       }
-      logger.info({ conversationId, from }, 'email_webhook_reply_conv_appended');
+      logger.info(
+        { conversationId, from },
+        'email_webhook_reply_conv_appended',
+      );
       return;
     }
     // ─────────────────────────────────────────────────────────────────────────
 
     const prefix = parseRoutingPrefix(toAddr);
     if (!prefix) {
-      console.warn('[email:webhook] could not determine routing prefix from', toAddr);
+      console.warn(
+        '[email:webhook] could not determine routing prefix from',
+        toAddr,
+      );
       return;
     }
 
@@ -372,7 +426,7 @@ async function handleInboundEmail(req, res) {
       `SELECT b.id AS brand_id, b.tenant_id
        FROM brands b
        WHERE b.inbound_email_prefix = $1 LIMIT 1`,
-      [prefix]
+      [prefix],
     );
     if (!brandRows.length) {
       console.warn('[email:webhook] no brand found for prefix', prefix);
@@ -397,7 +451,7 @@ async function handleInboundEmail(req, res) {
              WHERE c.id = m.conversation_id AND c.tenant_id = $2
            )
          LIMIT 1`,
-        [candidateIds, tenant_id]
+        [candidateIds, tenant_id],
       );
       if (msgRows.length) conversationId = msgRows[0].conversation_id;
     }
@@ -410,13 +464,13 @@ async function handleInboundEmail(req, res) {
          VALUES ($1, $2, gen_random_uuid()::text, $3)
          ON CONFLICT DO NOTHING
          RETURNING id`,
-        [tenant_id, brand_id, from]
+        [tenant_id, brand_id, from],
       );
       let visitorId = visitorRows[0]?.id;
       if (!visitorId) {
         const { rows } = await pool.query(
           `SELECT id FROM visitors WHERE tenant_id = $1 AND brand_id = $2 AND email = $3 LIMIT 1`,
-          [tenant_id, brand_id, from]
+          [tenant_id, brand_id, from],
         );
         visitorId = rows[0]?.id;
       }
@@ -430,7 +484,7 @@ async function handleInboundEmail(req, res) {
         `INSERT INTO conversations (tenant_id, brand_id, visitor_id, status, channel, subject, is_ticket)
          VALUES ($1, $2, $3, 'open', 'email', $4, true)
          RETURNING id`,
-        [tenant_id, brand_id, visitorId, subject || '(no subject)']
+        [tenant_id, brand_id, visitorId, subject || '(no subject)'],
       );
       conversationId = convRows[0].id;
 
@@ -445,10 +499,12 @@ async function handleInboundEmail(req, res) {
            JOIN visitors v ON v.id = c.visitor_id
            LEFT JOIN brands b ON b.id = c.brand_id
            WHERE c.id = $1 LIMIT 1`,
-          [conversationId]
+          [conversationId],
         );
         if (newConvRows.length) {
-          _io.to(`tenant:${tenant_id}`).emit('conversation:created', newConvRows[0]);
+          _io
+            .to(`tenant:${tenant_id}`)
+            .emit('conversation:created', newConvRows[0]);
         }
       }
     }
@@ -456,8 +512,8 @@ async function handleInboundEmail(req, res) {
     // 4. Strip quoted reply chain — prefer plain text, fall back to html-stripped.
     // An email carrying only an attachment (no text) still counts — use a
     // placeholder body so the attachment isn't dropped.
-    const rawText    = text || html.replace(/<[^>]+>/g, ' ');
-    let cleanBody    = stripQuotes(rawText);
+    const rawText = text || html.replace(/<[^>]+>/g, ' ');
+    let cleanBody = stripQuotes(rawText);
     const fileAttachments = extractFileAttachments(req.body, req.files || []);
 
     if (!cleanBody && fileAttachments.length === 0) {
@@ -475,21 +531,23 @@ async function handleInboundEmail(req, res) {
          (conversation_id, sender_type, message_body, attachments_json)
        VALUES ($1, 'visitor', $2, $3::jsonb)
        RETURNING id, conversation_id, sender_type, message_body, attachments_json, created_at`,
-      [conversationId, cleanBody, attachmentsJson]
+      [conversationId, cleanBody, attachmentsJson],
     );
 
     await pool.query(
       `UPDATE conversations SET updated_at = NOW(), status =
          CASE WHEN status = 'closed' THEN 'open' ELSE status END
        WHERE id = $1`,
-      [conversationId]
+      [conversationId],
     );
 
     // 6. Push to Socket.io: conv room (agents viewing the thread) + tenant room (all agents)
     if (_io) {
       const msg = newMsg[0];
       _io.to(`conv:${conversationId}`).emit('server:new_message', msg);
-      _io.to(`tenant:${tenant_id}`).emit('conversation:visitor_message', { conversationId, message: msg });
+      _io
+        .to(`tenant:${tenant_id}`)
+        .emit('conversation:visitor_message', { conversationId, message: msg });
     }
 
     logger.info({ conversationId, from }, 'email_webhook_message_appended');
@@ -498,7 +556,7 @@ async function handleInboundEmail(req, res) {
   }
 }
 
-router.post('/inbound-mail',  multipartMiddleware, handleInboundEmail);
+router.post('/inbound-mail', multipartMiddleware, handleInboundEmail);
 router.post('/email/inbound', multipartMiddleware, handleInboundEmail);
 
 module.exports = { router, setIo, stripQuotes };

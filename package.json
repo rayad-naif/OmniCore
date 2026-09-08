@@ -8,13 +8,25 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "test": "vitest run",
-    "format:check": "prettier --check package.json .prettierrc.json vitest.config.ts artifacts/api-server/src/lib/requestValidation.js artifacts/api-server/src/lib/requestValidation.test.ts artifacts/dashboard/src/lib/brandValidation.ts artifacts/dashboard/src/lib/brandValidation.test.ts artifacts/dashboard/src/lib/checkout.ts artifacts/dashboard/src/lib/checkout.test.ts",
-    "lint": "pnpm run format:check"
+    "test:coverage": "vitest run --coverage",
+    "format:check": "prettier --check --ignore-unknown \"{package.json,pnpm-workspace.yaml,.prettierrc.json,eslint.config.mjs,vitest.config.ts,*.md,docs/**/*.md,.github/**/*.{yml,yaml},artifacts/**/{package.json,*.config.{js,mjs,ts}},artifacts/{api-server,dashboard}/src/**/*.{js,jsx,ts,tsx},lib/**/*.{js,jsx,ts,tsx},scripts/**/*.{js,jsx,ts,tsx}}\"",
+    "lint": "eslint . --max-warnings 93"
   },
   "private": true,
+  "packageManager": "pnpm@10.26.1",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=10.26.1 <11"
+  },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.12.0",
     "prettier": "^3.8.3",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
     "stripe": "^22.3.0",
@@ -28,6 +40,7 @@
       "esbuild": "^0.28.1",
       "nanoid": "^3.3.18",
       "postcss": "^8.5.18",
+      "qs": "^6.16.0",
       "socket.io-parser": "^4.2.7",
       "undici": "^7.29.0",
       "ws": "^8.21.0"
