@@ -1,6 +1,7 @@
 'use strict';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const { validateWidgetSessionInput } = require('./widgetSession');
 
 function validateLoginInput(body) {
   const email =
@@ -37,12 +38,6 @@ function validateTenantProvisionInput(body) {
     ok: true,
     value: { companyName, adminName, adminEmail, adminPassword },
   };
-}
-
-function validateWidgetSessionInput(body) {
-  const brandId = typeof body?.brandId === 'string' ? body.brandId.trim() : '';
-  if (!brandId) return { ok: false, error: 'brandId is required' };
-  return { ok: true, value: { brandId } };
 }
 
 module.exports = {
