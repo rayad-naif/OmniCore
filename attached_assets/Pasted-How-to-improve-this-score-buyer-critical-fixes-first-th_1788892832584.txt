@@ -1,0 +1,67 @@
+How to improve this score
+buyer-critical fixes first, then by expected impact
+01
+Ship features together with their tests, in small focused commits
+payout impact
+high impact
+Value scales with how much of the history can be mined into self-contained engineering tasks, changes that arrive with the tests proving them. Large mixed commits and test-less changes don't count toward that.
+
+Keep each feature or fix in its own commit (or small PR) that includes the tests pinning the new behavior.
+Avoid bulk commits that mix formatting, refactors, and features; they hide the mineable work.
+02
+Make install, build, and test work from a fresh clone
+payout impact
+high impact
+One of the biggest drivers of what buyers pay is whether the project builds and its test suite actually runs, today, on a machine that has never seen it. Tests exist, but the path from a fresh clone to a green suite isn't verifiable. Close the gaps below.
+
+Clone the repository into an empty directory and follow only the README: every missing step you hit is a step to add.
+Commit a lockfile for every package manager so installs are reproducible.
+Make the test command explicit in the README and CI, and ensure CI runs it on every push.
+03
+Stand up CI running lint, typecheck, and tests on every PR
+high impact
+H · CI/CD Maturity
+repo_stats shows ci_present is false and ci_config_files is empty, meaning none of the quality gates already scripted in package.json (typecheck, format:check, test) actually run automatically.
+
+Create .github/workflows/ci.yml with a job that runs pnpm install --frozen-lockfile, pnpm run typecheck, pnpm run format:check, and pnpm test on push and pull_request events.
+Add a second job step running pnpm audit --prod --audit-level=high as referenced in README section 5 so dependency issues are caught in CI.
+Cache the pnpm store using actions/setup-node with cache: pnpm to speed up repeated runs.
+Commit the workflow file with a single focused commit and verify a subsequent PR shows the workflow run green in the Actions tab.
+04
+Grow real test coverage alongside feature commits
+high impact
+B · Test Coverage
+repo_stats reports only 3 spec files across 218 source files (test_source_ratio 1:73), covering just small validation helpers (requestValidation.test.ts, brandValidation.test.ts, checkout.test.ts) while core logic like widget.controller.js (1569 LOC) and app.ts (830 LOC) have zero tests.
+
+Add artifacts/api-server/src/controllers/widget.controller.test.ts covering pickInitialStatus and the /session route logic using a mocked pg pool, committed together with any refactor needed to make the controller testable.
+Add artifacts/dashboard/src/pages/Inbox.jsx tests for ticketsReducer and messagesReducer pure functions, which require no DOM or network mocking.
+Configure vitest coverage reporting in vitest.config.ts and add a coverage script to package.json so ratio and breadth can be tracked over time.
+Land each new test file in its own small commit paired with the code it verifies rather than one large batch, and run pnpm test to confirm all specs pass.
+05
+Break up god files into isolated, testable modules
+medium impact
+C · Code Cleanliness
+14 files exceed 500 LOC and 3 exceed 1000 LOC, notably artifacts/dashboard/src/App.tsx at 5303 LOC and artifacts/api-server/src/controllers/widget.controller.js at 1569 LOC, making them hard to test or reason about in isolation.
+
+Extract the interfaces and section-specific views out of artifacts/dashboard/src/App.tsx into separate files under artifacts/dashboard/src/types/ and artifacts/dashboard/src/sections/, one commit per extracted section.
+Split artifacts/api-server/src/controllers/widget.controller.js into session.controller.js, upload.controller.js, and message.controller.js under the same directory, each under 300 LOC.
+Deduplicate the near-identical sidebar.tsx (660 to 673 LOC) found in both artifacts/marketing-site/src/components/ui/sidebar.tsx and artifacts/mockup-sandbox/src/components/ui/sidebar.tsx into a single shared package.
+Run pnpm run typecheck and pnpm test after each extraction commit to confirm no behavior regressed.
+06
+Make the test suite runnable without external services
+high impact
+B · Test Coverage
+Widget and controller logic in artifacts/api-server depends on a live Postgres pool (pool.query calls) and Redis/BullMQ, so tests today only cover pure validation helpers rather than exercising real request handling.
+
+Introduce a lightweight in-memory or mock implementation of artifacts/api-server/src/lib/db.js pool.query for use in tests, exported behind a test-only factory function.
+Add integration-style tests for router endpoints in artifacts/api-server/src/routes using supertest against the mocked db, avoiding any real Postgres or Redis connection.
+Document in docs/local-development.md how tests run offline without docker compose up, and verify by running pnpm test on a machine with no DATABASE_URL set.
+07
+Complete .env.example and add dependency update tooling
+medium impact
+F · Docs & Onboarding
+repo_stats flags env_vars_missing_from_example (BASE_PATH, REPLIT_CONNECTORS_HOSTNAME, REPLIT_DOMAINS, REPL_ID, REPL_IDENTITY, WEB_REPL_RENEWAL) and dep_update_tooling is none, so a fresh clone cannot fully configure the app from the example file alone.
+
+Add the 6 missing variables (BASE_PATH, REPLIT_CONNECTORS_HOSTNAME, REPLIT_DOMAINS, REPL_ID, REPL_IDENTITY, WEB_REPL_RENEWAL) to .env.example with placeholder values and a one-line comment each.
+Add a .github/dependabot.yml or renovate.json configured for the npm/pnpm ecosystem with a weekly schedule.
+Commit both changes together since they are small, self-contained config additions.
