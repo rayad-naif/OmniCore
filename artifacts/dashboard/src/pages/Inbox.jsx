@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import { messagesReducer, ticketsReducer } from '../lib/inboxReducers';
 
 /**
  * Inbox.jsx
@@ -83,33 +84,6 @@ function priorityDot(priority) {
 function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-}
-
-// ─── Ticket list reducer ───────────────────────────────────────────────────────
-function ticketsReducer(state, action) {
-  switch (action.type) {
-    case 'SET':    return action.payload;
-    case 'PATCH': {
-      return state.map(t => t.id === action.id ? { ...t, ...action.patch } : t);
-    }
-    case 'PREPEND': return [action.payload, ...state.filter(t => t.id !== action.payload.id)];
-    default: return state;
-  }
-}
-
-// ─── Messages reducer ─────────────────────────────────────────────────────────
-function messagesReducer(state, action) {
-  switch (action.type) {
-    case 'SET':    return action.payload;
-    case 'PUSH': {
-      // Deduplicate by ID — prevents agent-echo and double visitor events
-      const id = action.payload.id;
-      if (id && state.some(m => m.id === id)) return state;
-      return [...state, action.payload];
-    }
-    case 'CLEAR':  return [];
-    default: return state;
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

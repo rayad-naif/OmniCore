@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ensurePaddle } from './lib/paddle'
 import { checkoutMode } from './lib/checkout'
+import {
+  buildMessageGroups, defaultPermsForRole, extractEmailDomain, FEATURE_META,
+  fmtMoney, PERMISSION_LEVELS, safeHref, slaColor, timeAgo,
+} from './lib/dashboardHelpers'
+import type {
+  AuthView, Channel, Priority, Section, Sender, Status, StatusFilter, TicketStatus,
+} from './lib/dashboardTypes'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -24,17 +31,10 @@ import {
 import { useAuth } from './context/AuthContext'
 import TrialGateway from './components/TrialGateway'
 import { io, type Socket } from 'socket.io-client'
+import { BillingSection } from './sections/BillingSection'
+import { CsatSection } from './sections/CsatSection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Status      = 'open' | 'closed' | 'pending' | 'ai_handling' | 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved'
-type TicketStatus = 'submitted' | 'in_progress' | 'waiting_on_customer' | 'resolved' | 'closed'
-type Channel     = 'email' | 'widget' | 'api' | 'whatsapp'
-type Priority    = 'low' | 'normal' | 'high' | 'urgent'
-type Sender      = 'agent' | 'visitor' | 'bot' | 'system'
-type Section     = 'conversations' | 'tickets' | 'brands' | 'billing' | 'settings' | 'team' | 'superadmin' | 'csat' | 'ai_training' | 'smtp' | 'contacts' | 'canned_responses'
-type StatusFilter = 'all' | Status
-type AuthView    = 'login' | 'signup' | 'forgot' | 'reset'
-
 interface Conversation {
   id: string; subject: string | null; status: Status; channel: Channel
   priority: Priority; visitor_name: string; visitor_email: string | null
@@ -572,24 +572,6 @@ function useApi() {
   }), [authFetch, effectiveTenantId])()
 }
 
-// ─── Utility ──────────────────────────────────────────────────────────────────
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const MIN = 60_000, HR = 3_600_000
-  if (diff < MIN) return 'just now'
-  if (diff < HR) return `${Math.floor(diff / MIN)}m ago`
-  if (diff < 86_400_000) return `${Math.floor(diff / HR)}h ago`
-  return `${Math.floor(diff / 86_400_000)}d ago`
-}
-
-function slaColor(breachAt?: string | null): string {
-  if (!breachAt) return ''
-  const diff = new Date(breachAt).getTime() - Date.now()
-  if (diff < 0) return 'text-red-500'
-  if (diff < 3_600_000) return 'text-amber-500'
-  return 'text-slate-400'
-}
-
 function StarRating({ score, size = 'sm' }: { score: number | null | undefined; size?: 'sm' | 'lg' }) {
   const s = size === 'lg' ? 14 : 10
   return (
@@ -986,18 +968,6 @@ function ConversationsList({ convs, activeId, onSelect, brands, agents }: {
   )
 }
 
-// ─── URL allow-list sanitizer ─────────────────────────────────────────────────
-// Only allow http: and https: URLs. Any other scheme (javascript:, data:, etc.)
-// returns null so the caller can fall back to plain text.
-function safeHref(raw: string): string | null {
-  try {
-    const { protocol } = new URL(raw)
-    return protocol === 'http:' || protocol === 'https:' ? raw : null
-  } catch {
-    return null
-  }
-}
-
 // ─── Message Bubble ───────────────────────────────────────────────────────────
 function MessageBubble({ msg, visitorName, onEdit, onDelete, isLastAgentMsg, readAt }: {
   msg: Message; visitorName: string
@@ -1193,41 +1163,6 @@ function PageJourneyGroup({ msgs }: { msgs: Message[] }) {
       </div>
     </div>
   )
-}
-
-// ─── buildMessageGroups ────────────────────────────────────────────────────────
-type MsgGroup =
-  | { type: 'single'; msg: Message; idx: number }
-  | { type: 'journey'; msgs: Message[] }
-
-function buildMessageGroups(messages: Message[]): MsgGroup[] {
-  const groups: MsgGroup[] = []
-  let i = 0
-  while (i < messages.length) {
-    const m = messages[i]
-    if (m.sender_type === 'system' && m.message_body.startsWith('Visited:')) {
-      const group: Message[] = [m]
-      let j = i + 1
-      while (
-        j < messages.length &&
-        messages[j].sender_type === 'system' &&
-        messages[j].message_body.startsWith('Visited:')
-      ) {
-        group.push(messages[j])
-        j++
-      }
-      if (group.length >= 2) {
-        groups.push({ type: 'journey', msgs: group })
-      } else {
-        groups.push({ type: 'single', msg: m, idx: i })
-      }
-      i = j
-    } else {
-      groups.push({ type: 'single', msg: m, idx: i })
-      i++
-    }
-  }
-  return groups
 }
 
 // ─── Visitor Info Panel ────────────────────────────────────────────────────────
@@ -2010,363 +1945,6 @@ function BrandsSection() {
   )
 }
 
-// ─── Billing Section ──────────────────────────────────────────────────────────
-function fmtMoney(amount: number, currency: string) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: (currency || 'usd').toUpperCase(), minimumFractionDigits: 0 }).format(amount / 100)
-}
-
-function BillingSection() {
-  const api = useApi()
-  const [plans, setPlans]       = useState<BillingPlan[]>([])
-  const [sub, setSubInfo]       = useState<SubscriptionInfo | null>(null)
-  const [loading, setLoading]   = useState(true)
-  const [busy, setBusy]         = useState<string | null>(null)
-  const [error, setError]       = useState<string | null>(null)
-  const [notice, setNotice]     = useState<string | null>(null)
-
-  // Enterprise "request upgrade" flow.
-  const [reqOpen, setReqOpen]   = useState(false)
-  const [submitting, setSub]    = useState(false)
-  const [submitted, setSubmitted] = useState(false)
-  const [form, setForm]         = useState({ company_size: '', notes: '' })
-
-  useEffect(() => {
-    // Surface the post-checkout redirect result, then clean the URL.
-    const params = new URLSearchParams(window.location.search)
-    const co = params.get('checkout')
-    if (co === 'success') setNotice('Payment successful — your subscription is being activated.')
-    else if (co === 'cancelled') setNotice('Checkout cancelled. No changes were made.')
-    if (co) { params.delete('checkout'); const q = params.toString(); window.history.replaceState({}, '', window.location.pathname + (q ? `?${q}` : '')) }
-  }, [])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [p, s] = await Promise.all([api.listBillingPlans(), api.getSubscription()])
-      setPlans(p); setSubInfo(s)
-    } catch (err) { setError((err as Error).message) }
-    finally { setLoading(false) }
-  }, []) // eslint-disable-line
-  useEffect(() => { load() }, [load])
-
-  const checkout = async (plan: string) => {
-    setError(null); setBusy(plan)
-    try {
-      const result = await api.createCheckout(plan)
-      const paddle = result.transactionId && result.provider === 'paddle'
-        ? await ensurePaddle(sub?.customerId ?? null)
-        : undefined
-      const mode = checkoutMode(result, Boolean(paddle))
-      if (mode === 'paddle') {
-        if (!paddle || !result.transactionId) {
-          throw new Error('Paddle checkout could not be initialized.')
-        }
-        paddle.Checkout.open({
-          transactionId: result.transactionId,
-          settings: {
-            successUrl: `${window.location.origin}/dashboard/`,
-            displayMode: 'overlay',
-            theme: 'light',
-          },
-        })
-        setBusy(null)
-      } else {
-        if (!result.url) throw new Error('Checkout provider did not return a hosted checkout URL.')
-        window.location.href = result.url
-      }
-    }
-    catch (err) { setError((err as Error).message); setBusy(null) }
-  }
-
-  const openPortal = async () => {
-    setError(null); setBusy('portal')
-    try { const url = await api.getBillingPortal(); window.location.href = url }
-    catch (err) { setError((err as Error).message); setBusy(null) }
-  }
-
-  const submitEnterprise = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null); setSub(true)
-    try { await api.createUpgradeRequest('enterprise', form.company_size, form.notes); setSubmitted(true) }
-    catch (err) { setError((err as Error).message) }
-    finally { setSub(false) }
-  }
-
-  const currentPlan = (sub?.plan || 'free').toLowerCase()
-
-  return (
-    <div className="flex-1 overflow-auto p-6 bg-slate-50">
-      <div className="max-w-4xl">
-        <h2 className="text-base font-semibold text-slate-900 mb-1">Billing & Plans</h2>
-        <p className="text-xs text-slate-500 mb-6">Choose a plan or manage your subscription</p>
-
-        {notice && <div className="mb-4 p-3 bg-sky-50 border border-sky-200 rounded-lg text-xs text-sky-700">{notice}</div>}
-        {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error}</div>}
-
-        {/* Current subscription summary */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 mb-6 flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Current Plan</p>
-            <p className="text-lg font-semibold text-slate-900 capitalize">{currentPlan}</p>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Status: <span className="capitalize">{sub?.status ?? '—'}</span>
-              {sub?.currentPeriodEnd && <> · Renews {new Date(sub.currentPeriodEnd).toLocaleDateString()}</>}
-            </p>
-          </div>
-          {sub?.customerId && (
-            <button onClick={openPortal} disabled={busy === 'portal'} className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 disabled:opacity-50 flex items-center gap-1.5">
-              {busy === 'portal' ? <><RefreshCw size={11} className="animate-spin" /> Opening…</> : 'Manage Billing'}
-            </button>
-          )}
-        </div>
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-xs text-slate-400 py-8"><RefreshCw size={12} className="animate-spin" /> Loading plans…</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {plans.map(p => {
-              const isCurrent = currentPlan === p.plan
-              return (
-                <div key={p.plan} className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-sm font-semibold text-slate-900">{p.name}</h3>
-                  <p className="mt-2"><span className="text-2xl font-bold text-slate-900">{fmtMoney(p.amount, p.currency)}</span><span className="text-xs text-slate-400">/{p.interval}</span></p>
-                  {p.description && <p className="text-xs text-slate-500 mt-2 leading-relaxed">{p.description}</p>}
-                  {(p.features || p.limits) && (
-                    <ul className="mt-3 space-y-1.5">
-                      {p.features?.ai_feature_enabled && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> AI auto-replies</li>}
-                      {p.features?.smtp_feature_enabled && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> Custom SMTP / email</li>}
-                      {p.limits?.max_brands_allowed != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.max_brands_allowed} brands</li>}
-                      {p.limits?.max_agents_allowed != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.max_agents_allowed} agents</li>}
-                      {p.limits?.conversation_limit != null && <li className="flex items-center gap-1.5 text-xs text-slate-600"><CheckCircle2 size={12} className="text-emerald-500 shrink-0" /> {p.limits.conversation_limit} conversations/mo</li>}
-                    </ul>
-                  )}
-                  <div className="flex-1" />
-                  <button
-                    onClick={() => checkout(p.plan)}
-                    disabled={isCurrent || busy === p.plan}
-                    className="mt-4 px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                  >
-                    {isCurrent ? 'Current Plan' : busy === p.plan ? <><RefreshCw size={11} className="animate-spin" /> Redirecting…</> : `Upgrade to ${p.name}`}
-                  </button>
-                </div>
-              )
-            })}
-
-            {/* Enterprise — manual request only */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col">
-              <h3 className="text-sm font-semibold text-slate-900">Enterprise</h3>
-              <p className="mt-2"><span className="text-2xl font-bold text-slate-900">Custom</span></p>
-              <p className="text-xs text-slate-500 mt-2 leading-relaxed">Dedicated support, custom limits, SSO and SLA. Talk to our team.</p>
-              <div className="flex-1" />
-              <button onClick={() => { setReqOpen(true); setSubmitted(false) }} disabled={currentPlan === 'enterprise'} className="mt-4 px-4 py-2 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 disabled:opacity-50">
-                {currentPlan === 'enterprise' ? 'Current Plan' : 'Request Upgrade'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Enterprise request modal */}
-        {reqOpen && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setReqOpen(false)}>
-            <div className="bg-white rounded-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
-              {submitted ? (
-                <div className="text-center py-4">
-                  <CheckCircle2 size={28} className="text-emerald-500 mx-auto mb-3" />
-                  <p className="text-sm font-semibold text-emerald-800">Request submitted!</p>
-                  <p className="text-xs text-emerald-600 mt-1">Our team will contact you within 24 hours.</p>
-                  <button onClick={() => setReqOpen(false)} className="mt-4 px-4 py-2 bg-slate-100 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-200">Close</button>
-                </div>
-              ) : (
-                <>
-                  <h3 className="text-sm font-semibold text-slate-900 mb-4">Request Enterprise Plan</h3>
-                  <form onSubmit={submitEnterprise} className="space-y-4">
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Company Size</label><input type="text" value={form.company_size} onChange={e => setForm(f => ({ ...f, company_size: e.target.value }))} placeholder="e.g. 50 employees" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30" /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1.5">Notes</label><textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} placeholder="Any specific requirements…" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/30 resize-none" /></div>
-                    <div className="flex gap-2">
-                      <button type="submit" disabled={submitting} className="px-4 py-2 bg-sky-600 text-white text-xs font-medium rounded-lg hover:bg-sky-700 disabled:opacity-50 flex items-center gap-1.5">{submitting ? <><RefreshCw size={11} className="animate-spin" /> Submitting…</> : 'Submit Request'}</button>
-                      <button type="button" onClick={() => setReqOpen(false)} className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50">Cancel</button>
-                    </div>
-                  </form>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── CSAT Section ─────────────────────────────────────────────────────────────
-function CsatSection({ brands }: { brands: Brand[] }) {
-  const api = useApi()
-  const [data, setData]           = useState<CsatAgent[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [brandFilter, setBrand]   = useState('')
-  const [dateFrom, setDateFrom]   = useState('')
-  const [dateTo, setDateTo]       = useState('')
-  const [sortBy, setSortBy]       = useState<'avg_csat_score' | 'total_assigned' | 'closed_today' | 'participated_today' | 'avg_first_response_minutes'>('avg_csat_score')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params: Record<string, string> = {}
-      if (brandFilter) params.brand_id = brandFilter
-      if (dateFrom)    params.date_from = dateFrom
-      if (dateTo)      params.date_to   = dateTo
-      const result = await api.getCsatReport(params)
-      setData(result)
-    } catch { /* ignore */ }
-    finally { setLoading(false) }
-  }, [brandFilter, dateFrom, dateTo]) // eslint-disable-line
-
-  useEffect(() => { load() }, [load])
-
-  const sorted = [...data].sort((a, b) => {
-    const av = (a[sortBy] as number | null) ?? -1
-    const bv = (b[sortBy] as number | null) ?? -1
-    if (sortBy === 'avg_first_response_minutes') return av - bv
-    return bv - av
-  })
-
-  const totals = data.reduce((acc, a) => ({
-    total_assigned: acc.total_assigned + a.total_assigned,
-    closed_count:   acc.closed_count + a.closed_count,
-    rated_count:    acc.rated_count + a.rated_count,
-    positive_ratings: acc.positive_ratings + a.positive_ratings,
-    closed_today:   acc.closed_today + a.closed_today,
-    participated_today: acc.participated_today + a.participated_today,
-  }), { total_assigned: 0, closed_count: 0, rated_count: 0, positive_ratings: 0, closed_today: 0, participated_today: 0 })
-
-  const overallCsat = data.length && data.some(a => a.avg_csat_score !== null)
-    ? (data.reduce((s, a) => s + (a.avg_csat_score ?? 0) * a.rated_count, 0) / Math.max(1, totals.rated_count)).toFixed(2)
-    : null
-
-  const SortBtn = ({ field, label }: { field: typeof sortBy; label: string }) => (
-    <button onClick={() => setSortBy(field)} className={`text-[11px] font-medium px-2 py-1 rounded transition-colors ${sortBy === field ? 'bg-sky-100 text-sky-700' : 'text-slate-500 hover:bg-slate-100'}`}>{label}</button>
-  )
-
-  return (
-    <div className="flex-1 overflow-auto p-6 bg-slate-50">
-      <div className="max-w-5xl">
-        <div className="flex items-center justify-between mb-6">
-          <div><h2 className="text-base font-semibold text-slate-900 flex items-center gap-2"><BarChart2 size={16} className="text-sky-600" /> CSAT & Agent Performance</h2><p className="text-xs text-slate-500 mt-0.5">Customer satisfaction scores and productivity metrics per agent</p></div>
-          <button onClick={load} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"><RefreshCw size={12} /> Refresh</button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          <select value={brandFilter} onChange={e => setBrand(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30 min-w-[140px]">
-            <option value="">All Brands</option>
-            {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
-          </select>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30" placeholder="From" />
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/30" placeholder="To" />
-        </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Overall CSAT', value: overallCsat ? `${overallCsat}/5.0` : '—', icon: <Star size={16} className="text-amber-500" />, color: 'bg-amber-50 border-amber-200' },
-            { label: 'Total Assigned', value: totals.total_assigned, icon: <MessageCircle size={16} className="text-sky-500" />, color: 'bg-sky-50 border-sky-200' },
-            { label: 'Closed Today', value: totals.closed_today, icon: <CheckCircle2 size={16} className="text-emerald-500" />, color: 'bg-emerald-50 border-emerald-200' },
-            { label: 'Positive Ratings', value: totals.rated_count ? `${Math.round(totals.positive_ratings / totals.rated_count * 100)}%` : '—', icon: <ThumbsUp size={16} className="text-indigo-500" />, color: 'bg-indigo-50 border-indigo-200' },
-          ].map(card => (
-            <div key={card.label} className={`bg-white border rounded-xl p-4 ${card.color}`}>
-              <div className="flex items-center gap-2 mb-1">{card.icon}<span className="text-xs font-medium text-slate-600">{card.label}</span></div>
-              <p className="text-2xl font-bold text-slate-900">{card.value}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Sort controls */}
-        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-          <span className="text-xs text-slate-400 mr-1">Sort by:</span>
-          <SortBtn field="avg_csat_score" label="CSAT Score" />
-          <SortBtn field="total_assigned" label="Assigned" />
-          <SortBtn field="closed_today" label="Closed Today" />
-          <SortBtn field="participated_today" label="Active Today" />
-          <SortBtn field="avg_first_response_minutes" label="Response Time ↑" />
-        </div>
-
-        {/* Agent Table */}
-        {loading ? (
-          <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /> Loading…</div>
-        ) : sorted.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-xl border border-slate-200"><BarChart2 size={28} className="mx-auto mb-3 text-slate-300" /><p className="text-sm text-slate-400">No data yet</p></div>
-        ) : (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    {['Agent', 'CSAT Score', 'Rating Distribution', 'Assigned', 'Closed', 'Closed Today', 'Active Today', 'Avg 1st Reply'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {sorted.map((agent, i) => (
-                    <tr key={agent.agent_id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          {i < 3 && <Award size={13} className={i === 0 ? 'text-amber-400' : i === 1 ? 'text-slate-400' : 'text-amber-700'} />}
-                          <div className="w-7 h-7 bg-sky-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">{agent.agent_name[0]?.toUpperCase()}</div>
-                          <div>
-                            <p className="text-xs font-semibold text-slate-800">{agent.agent_name}</p>
-                            <p className="text-[10px] text-slate-400">{agent.agent_email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {agent.avg_csat_score !== null ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-bold text-slate-800">{agent.avg_csat_score}</span>
-                            <StarRating score={Math.round(agent.avg_csat_score)} />
-                            <span className="text-[10px] text-slate-400">({agent.rated_count})</span>
-                          </div>
-                        ) : <span className="text-xs text-slate-300">No ratings</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-0.5 items-center">
-                          {[5,4,3,2,1].map(n => {
-                            const count = agent[`${['five','four','three','two','one'][5-n]}_star` as keyof CsatAgent] as number
-                            const pct = agent.rated_count ? Math.round(count / agent.rated_count * 100) : 0
-                            return (
-                              <div key={n} className="flex flex-col items-center gap-0.5" title={`${n}★: ${count}`}>
-                                <div className="w-4 bg-slate-100 rounded-full overflow-hidden" style={{ height: 24 }}>
-                                  <div className={`w-full rounded-full ${n >= 4 ? 'bg-emerald-400' : n === 3 ? 'bg-amber-400' : 'bg-red-400'}`} style={{ height: `${pct}%`, marginTop: `${100-pct}%` }} />
-                                </div>
-                                <span className="text-[8px] text-slate-400">{n}★</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3"><span className="text-xs font-semibold text-slate-700">{agent.total_assigned}</span></td>
-                      <td className="px-4 py-3"><span className="text-xs text-slate-600">{agent.closed_count}</span></td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold ${agent.closed_today > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>{agent.closed_today}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold ${agent.participated_today > 0 ? 'text-sky-600' : 'text-slate-400'}`}>{agent.participated_today}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs text-slate-600">
-                          {agent.avg_first_response_minutes !== null ? `${agent.avg_first_response_minutes}m` : '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ─── Settings Section ─────────────────────────────────────────────────────────
 function SettingsSection() {
   const api = useApi()
@@ -2593,27 +2171,6 @@ function WebhookPanel({ webhookUrl, onLoad }: { webhookUrl: string; onLoad: () =
       </div>
     </div>
   )
-}
-
-// ─── Team Section ─────────────────────────────────────────────────────────────
-// ─── RBAC: feature catalogue + permission matrix editor ───────────────────────
-const FEATURE_META: { key: string; label: string; desc: string }[] = [
-  { key: 'inbox',          label: 'Inbox',          desc: 'Conversations & live chat' },
-  { key: 'contacts',       label: 'Contacts',       desc: 'Visitor / contact directory' },
-  { key: 'knowledge_base', label: 'Knowledge Base', desc: 'KB articles & AI training' },
-  { key: 'brands',         label: 'Brands',         desc: 'Brand & widget configuration' },
-  { key: 'analytics',      label: 'Analytics',      desc: 'CSAT & reporting' },
-  { key: 'billing',        label: 'Billing',        desc: 'Plans & subscription' },
-  { key: 'team',           label: 'Team',           desc: 'Agent management' },
-  { key: 'settings',       label: 'Settings',       desc: 'Workspace settings & SMTP' },
-]
-const PERMISSION_LEVELS = ['none', 'read', 'edit'] as const
-
-// Sensible per-role defaults, mirrored from the server's permissions lib.
-function defaultPermsForRole(role: string): Record<string, string> {
-  if (role === 'admin') return Object.fromEntries(FEATURE_META.map(f => [f.key, 'edit']))
-  if (role === 'supervisor') return { inbox: 'edit', contacts: 'edit', knowledge_base: 'edit', brands: 'read', analytics: 'read', billing: 'read', team: 'read', settings: 'read' }
-  return { inbox: 'edit', contacts: 'read', knowledge_base: 'read', brands: 'none', analytics: 'none', billing: 'none', team: 'none', settings: 'none' }
 }
 
 function PermissionMatrix({ value, onChange, disabled }: {
@@ -4256,13 +3813,6 @@ function AITrainingSection() {
   )
 }
 
-// ─── SMTP Section ─────────────────────────────────────────────────────────────
-/** Extract the domain part from an email address, e.g. "support@omni.irofficial.com" → "omni.irofficial.com" */
-function extractEmailDomain(email: string): string {
-  const at = email.trim().lastIndexOf('@')
-  return at !== -1 ? email.trim().slice(at + 1).toLowerCase() : ''
-}
-
 function SMTPSection() {
   const api = useApi()
   const [form, setForm] = useState({
@@ -5548,11 +5098,11 @@ function Dashboard() {
           )}
           {section === 'contacts'         && <ContactsSection brands={brands} socketRef={socketRef} />}
           {section === 'canned_responses' && <CannedResponsesSection />}
-          {section === 'csat'             && <CsatSection brands={brands} />}
+          {section === 'csat'             && <CsatSection brands={brands} api={api} />}
           {section === 'ai_training' && <AITrainingSection />}
           {section === 'smtp'        && <SMTPSection />}
           {section === 'brands'      && <BrandsSection />}
-          {section === 'billing'     && <BillingSection />}
+          {section === 'billing'     && <BillingSection api={api} />}
           {section === 'settings'    && <SettingsSection />}
           {section === 'team'        && <TeamSection />}
           {section === 'superadmin'  && <SuperAdminSection />}
