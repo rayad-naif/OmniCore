@@ -85,6 +85,44 @@ sudo -u ubuntu pm2 restart omnicore-api --update-env
 cd /srv/omnicore && ./deploy.sh seed-admin
 ```
 
+## 5a. Paddle setup (payments)
+
+Paddle is the billing provider (`BILLING_PROVIDER=paddle`, the default). Do this
+in the Paddle sandbox first, then repeat with live keys.
+
+1. **API key** — Paddle → Developer tools → Authentication → API keys → create
+   one with read/write access to products, prices, customers, transactions and
+   subscriptions. Put it in `PADDLE_API_KEY`.
+2. **Client-side token** — same page, Client-side tokens. Put it in
+   `VITE_PADDLE_CLIENT_TOKEN` (`test_…` for sandbox, `live_…` for production;
+   the app picks the Paddle.js environment from the prefix).
+3. **Webhook** — Developer tools → Notifications → New destination:
+   - URL: `https://omnicore.irofficial.com/api/paddle/webhook`
+   - Events: `subscription.created`, `subscription.updated`,
+     `subscription.canceled`, `transaction.created`, `transaction.ready`,
+     `transaction.paid`, `transaction.completed`
+   - Copy the destination's secret key into `PADDLE_WEBHOOK_SECRET`.
+4. **Checkout settings** — Checkout → Checkout settings: set the _Default
+   payment link_ to `https://omnicore.irofficial.com/checkout`. For live
+   payments also add `omnicore.irofficial.com` under approved domains
+   (Paddle reviews it).
+5. **Environment** — set `PADDLE_ENVIRONMENT=sandbox` or `production` to match
+   the keys.
+6. Rebuild and restart so the client token is baked into the frontends:
+
+   ```bash
+   cd /srv/omnicore && sudo -u ubuntu ./deploy.sh deploy
+   ```
+
+7. **Plans** — log in as super admin → Super Admin → Billing. The Paddle
+   Connection card should show **Connected**. Open each paid plan and save it
+   (or create new ones): the app creates the matching Paddle product and price
+   and stores their IDs. Plans marked _Not synced_ cannot be bought.
+
+Test with a [Paddle sandbox test card](https://developer.paddle.com/concepts/payment-methods/credit-debit-card#test-payment-method)
+from `/pricing` → _Start free trial_: a new workspace is provisioned and the
+owner receives a set-password email.
+
 ## 6. Verify
 
 ```bash

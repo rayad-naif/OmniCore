@@ -12,8 +12,13 @@ afterEach(() => {
 });
 
 describe('active billing provider selection', () => {
-  it('defaults to Stripe when no provider is configured', () => {
+  it('defaults to Paddle when no provider is configured', () => {
     delete process.env.BILLING_PROVIDER;
+    expect(getActiveProvider()).toBe('paddle');
+  });
+
+  it('selects legacy Stripe only when explicitly configured', () => {
+    process.env.BILLING_PROVIDER = 'Stripe';
     expect(getActiveProvider()).toBe('stripe');
   });
 
@@ -22,8 +27,8 @@ describe('active billing provider selection', () => {
     expect(getActiveProvider()).toBe('paddle');
   });
 
-  it('fails closed to Stripe for unsupported provider values', () => {
+  it('falls back to Paddle for unsupported provider values', () => {
     process.env.BILLING_PROVIDER = 'stripe-test';
-    expect(getActiveProvider()).toBe('stripe');
+    expect(getActiveProvider()).toBe('paddle');
   });
 });

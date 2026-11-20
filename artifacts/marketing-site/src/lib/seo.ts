@@ -191,6 +191,18 @@ export const routeMeta: RouteMeta[] = [
     ),
   },
   {
+    path: "/features",
+    title: "Features — Atelier OmniCore Helpdesk",
+    description:
+      "Every Atelier OmniCore feature: unified chat and email inbox, ticketing with SLAs, Gemini AI auto-replies and copilot, knowledge base training, live chat widget, CSAT analytics, team permissions, multi-brand workspaces and Paddle billing.",
+    ogType: "website",
+    jsonLd: webPage(
+      "Atelier OmniCore Features",
+      "/features",
+      "A complete list of what Atelier OmniCore includes.",
+    ),
+  },
+  {
     path: "/help",
     title: "Help Center — Atelier OmniCore",
     description:

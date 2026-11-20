@@ -5,7 +5,7 @@
  * Provider abstraction over Stripe and Paddle Billing.
  *
  * Environment:
- *   BILLING_PROVIDER = 'stripe' (default) | 'paddle'
+ *   BILLING_PROVIDER = 'paddle' (default) | 'stripe'
  *     Controls which provider handles NEW public checkouts.
  *     Existing Stripe subscribers are never affected — their renewal/portal
  *     still routes through Stripe regardless of this flag.
@@ -26,11 +26,11 @@ const logger = require('../utils/logger');
 
 /**
  * Returns the active billing provider slug.
- * 'stripe' unless BILLING_PROVIDER=paddle is set.
+ * 'paddle' unless BILLING_PROVIDER=stripe is set.
  */
 function getActiveProvider() {
-  const p = (process.env.BILLING_PROVIDER || 'stripe').toLowerCase();
-  return p === 'paddle' ? 'paddle' : 'stripe';
+  const p = (process.env.BILLING_PROVIDER || 'paddle').toLowerCase();
+  return p === 'stripe' ? 'stripe' : 'paddle';
 }
 
 // ─── Stripe helpers ───────────────────────────────────────────────────────────
@@ -247,18 +247,30 @@ async function _paddleTenantCheckout({
 }
 
 async function _paddlePortal({ tenant }) {
-  // Paddle uses a customer portal URL pattern.
+  // Paddle Billing customer portal links are per-session and must be created
+  // through the API: POST /customers/{id}/portal-sessions.
   const paddleCustomerId = tenant.paddle_customer_id;
   if (!paddleCustomerId) {
     const err = new Error('No Paddle billing record found for this workspace');
     err.status = 404;
     throw err;
   }
-  const base =
-    process.env.PADDLE_ENVIRONMENT === 'production'
-      ? 'https://customer.paddle.com'
-      : 'https://sandbox-customer.paddle.com';
-  return { url: `${base}/portal/${paddleCustomerId}` };
+  const { paddleRequest } = require('./paddleClient');
+  const body = tenant.paddle_subscription_id
+    ? { subscription_ids: [tenant.paddle_subscription_id] }
+    : {};
+  const resp = await paddleRequest(
+    'POST',
+    `/customers/${encodeURIComponent(paddleCustomerId)}/portal-sessions`,
+    body,
+  );
+  const url = resp.data?.urls?.general?.overview;
+  if (!url) {
+    const err = new Error('Paddle did not return a customer portal URL');
+    err.status = 502;
+    throw err;
+  }
+  return { url };
 }
 
 // ─── Public interface ─────────────────────────────────────────────────────────
@@ -339,11 +351,15 @@ async function createTenantCheckoutUrl({
  * Routes to the provider that owns the tenant's active subscription.
  */
 async function getPortalUrl({ tenant, baseUrl }) {
-  // Prefer the provider that has a customer record.
-  if (tenant.paddle_customer_id && !tenant.stripe_customer_id) {
+  // Prefer the provider that has a customer record; legacy Stripe-only
+  // tenants keep using the Stripe portal.
+  if (tenant.paddle_customer_id) {
     return _paddlePortal({ tenant });
   }
-  return _stripePortal({ tenant, baseUrl });
+  if (tenant.stripe_customer_id) {
+    return _stripePortal({ tenant, baseUrl });
+  }
+  return _paddlePortal({ tenant }); // throws a clear 404
 }
 
 module.exports = {

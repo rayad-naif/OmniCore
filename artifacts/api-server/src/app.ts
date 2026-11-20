@@ -455,6 +455,7 @@ async function provisionTenantFromPaddlePublicCheckout({
   paddleSubscriptionId,
   businessName,
   userName,
+  status = 'trialing',
 }: {
   email: string;
   plan: string;
@@ -462,6 +463,7 @@ async function provisionTenantFromPaddlePublicCheckout({
   paddleSubscriptionId?: string | null;
   businessName?: string | null;
   userName?: string | null;
+  status?: string;
 }): Promise<string> {
   // The webhook and the /checkout/confirm success-page call can both fire for
   // the same purchase. A per-customer advisory lock serializes them so exactly
@@ -486,11 +488,11 @@ async function provisionTenantFromPaddlePublicCheckout({
       await client.query(
         `UPDATE tenants SET
            plan = COALESCE($1, plan),
-           subscription_status = 'trialing',
+           subscription_status = $4,
            paddle_subscription_id = COALESCE($2, paddle_subscription_id),
            updated_at = NOW()
          WHERE id = $3`,
-        [plan, paddleSubscriptionId || null, existing[0].id],
+        [plan, paddleSubscriptionId || null, existing[0].id, status],
       );
       await client.query('COMMIT');
       return existing[0].id as string;
@@ -503,9 +505,15 @@ async function provisionTenantFromPaddlePublicCheckout({
       `INSERT INTO tenants
          (company_name, plan, subscription_status,
           paddle_customer_id, paddle_subscription_id)
-       VALUES ($1, $2, 'trialing', $3, $4)
+       VALUES ($1, $2, $5, $3, $4)
        RETURNING id`,
-      [companyName, plan, paddleCustomerId, paddleSubscriptionId || null],
+      [
+        companyName,
+        plan,
+        paddleCustomerId,
+        paddleSubscriptionId || null,
+        status,
+      ],
     );
     tenantId = tenantRows[0].id as string;
 
@@ -592,6 +600,7 @@ async function provisionTenantFromPaddleEvent(
           paddleSubscriptionId: subId,
           businessName: customData.business_name || null,
           userName: customData.user_name || null,
+          status,
         });
         await notifyTenantAdmins(
           createdTenantId,
@@ -830,14 +839,23 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
+    // Postgres input errors (malformed UUID, bad enum/number) are client errors.
+    const pgCode = (err as { code?: string }).code;
+    const isPgInputError = pgCode === '22P02' || pgCode === '22007';
     const status =
       (err as { status?: number }).status ??
       (err as { statusCode?: number }).statusCode ??
-      500;
-    const message = err.message || 'Internal server error';
+      (isPgInputError ? 400 : 500);
+    let message = err.message || 'Internal server error';
+    if (isPgInputError) message = 'Invalid identifier or parameter format';
 
     if (status >= 500) {
       req.log?.error({ err }, 'unhandled_error');
+      // Never leak SQL or internal details to clients in production.
+      // Deliberate 502/503 messages (e.g. "Paddle is not configured") stay.
+      if (status === 500 && process.env.NODE_ENV === 'production') {
+        message = 'Internal server error';
+      }
     }
 
     res.status(status).json({

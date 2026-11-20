@@ -32,8 +32,41 @@ describe('Paddle configuration and webhook verification', () => {
       .digest('hex');
 
     expect(
-      verifyPaddleWebhook(body, secret, `ts=${timestamp};h1=${signature}`),
+      verifyPaddleWebhook(body, secret, `ts=${timestamp};h1=${signature}`, {
+        now: Number(timestamp) * 1000,
+      }),
     ).toEqual({ event_type: 'transaction.completed' });
+  });
+
+  it('accepts any matching h1 during secret rotation', () => {
+    const body = Buffer.from('{"event_type":"subscription.created"}');
+    const timestamp = '1700000000';
+    const signature = createHmac('sha256', 'new-secret')
+      .update(`${timestamp}:${body.toString('utf8')}`)
+      .digest('hex');
+
+    expect(
+      verifyPaddleWebhook(
+        body,
+        'new-secret',
+        `ts=${timestamp};h1=${'0'.repeat(64)};h1=${signature}`,
+        { now: Number(timestamp) * 1000 },
+      ),
+    ).toEqual({ event_type: 'subscription.created' });
+  });
+
+  it('rejects correctly signed but stale deliveries (replay)', () => {
+    const body = Buffer.from('{"event_type":"transaction.completed"}');
+    const timestamp = '1700000000';
+    const signature = createHmac('sha256', 'secret')
+      .update(`${timestamp}:${body.toString('utf8')}`)
+      .digest('hex');
+
+    expect(
+      verifyPaddleWebhook(body, 'secret', `ts=${timestamp};h1=${signature}`, {
+        now: (Number(timestamp) + 301) * 1000,
+      }),
+    ).toBeNull();
   });
 
   it('rejects malformed, unsigned, or tampered webhook data', () => {
