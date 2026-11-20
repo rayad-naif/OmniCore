@@ -58,3 +58,6 @@ lib/**/*.js.map
 
 # Replit cache
 .cache/
+
+# Runtime file uploads (written by the API at runtime)
+artifacts/uploads/*
