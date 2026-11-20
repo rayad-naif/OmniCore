@@ -7,6 +7,7 @@ import { Layout } from "@/components/layout";
 import { applyMeta, metaForPath } from "@/lib/seo";
 import Home from "@/pages/home";
 import Pricing from "@/pages/pricing";
+import Features from "@/pages/features";
 import Contact from "@/pages/contact";
 import Help from "@/pages/help";
 import HelpGoogleWorkspaceForwarding from "@/pages/help-google-workspace-forwarding";
@@ -35,6 +36,7 @@ function Router() {
       <Seo />
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/features" component={Features} />
         <Route path="/pricing" component={Pricing} />
         <Route path="/contact" component={Contact} />
         <Route path="/help" component={Help} />

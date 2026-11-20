@@ -50,12 +50,6 @@ function paddleBaseUrl() {
     : 'https://sandbox-api.paddle.com';
 }
 
-function paddleCheckoutBaseUrl() {
-  return process.env.PADDLE_ENVIRONMENT === 'production'
-    ? 'https://checkout.paddle.com'
-    : 'https://sandbox-checkout.paddle.com';
-}
-
 // ---------------------------------------------------------------------------
 // Core request — tries connector first, falls back to direct fetch with API key
 // ---------------------------------------------------------------------------
@@ -76,8 +70,8 @@ async function paddleRequest(method, path, body) {
     const key = process.env.PADDLE_API_KEY;
     if (!key) {
       const err = new Error(
-        'Paddle is not configured. Either connect the Paddle integration in Replit, ' +
-          'or set the PADDLE_API_KEY environment secret.',
+        'Paddle is not configured. Set PADDLE_API_KEY (and PADDLE_ENVIRONMENT) ' +
+          'in the API server environment and restart it.',
       );
       err.status = 503;
       throw err;
@@ -142,11 +136,14 @@ async function createCheckoutTransaction({
   });
 
   const txId = resp.data?.id;
-  // Build a fallback redirect URL (used if JS overlay isn't available)
-  const base = paddleCheckoutBaseUrl();
+  // Paddle returns checkout.url when a default payment link is configured
+  // (Paddle → Checkout → Checkout settings). Otherwise fall back to our own
+  // checkout page: Paddle.js opens the transaction automatically when a page
+  // that initialises it is loaded with ?_ptxn=<id>.
+  const appBase = (process.env.PUBLIC_APP_URL || '').replace(/\/+$/, '');
   const url =
     resp.data?.checkout?.url ||
-    `${base}/checkout/custom-checkout?_ptxn=${txId}`;
+    (appBase ? `${appBase}/checkout?_ptxn=${txId}` : null);
 
   return { url, transactionId: txId };
 }
@@ -250,32 +247,47 @@ async function archivePaddlePrice(priceId) {
  * Header format: `Paddle-Signature: ts=<unix>;h1=<hex-sha256>`
  * Returns the parsed event object on success, or null on failure.
  */
-function verifyPaddleWebhook(rawBody, secret, signatureHeader) {
+function verifyPaddleWebhook(
+  rawBody,
+  secret,
+  signatureHeader,
+  { toleranceSeconds = 300, now = Date.now() } = {},
+) {
   if (!secret || !signatureHeader) return null;
 
-  const parts = {};
+  // Header: `ts=<unix>;h1=<hex>[;h1=<hex>...]` — several h1 values may be sent
+  // while a secret is being rotated.
+  let ts = null;
+  const signatures = [];
   for (const segment of signatureHeader.split(';')) {
     const idx = segment.indexOf('=');
     if (idx < 0) continue;
-    parts[segment.slice(0, idx)] = segment.slice(idx + 1);
+    const key = segment.slice(0, idx).trim();
+    const value = segment.slice(idx + 1).trim();
+    if (key === 'ts') ts = value;
+    else if (key === 'h1') signatures.push(value);
   }
-  const ts = parts.ts;
-  const h1 = parts.h1;
-  if (!ts || !h1) return null;
+  if (!ts || !/^\d+$/.test(ts) || signatures.length === 0) return null;
 
-  const signedPayload = `${ts}:${rawBody.toString('utf8')}`;
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(signedPayload)
-    .digest('hex');
-
-  try {
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(h1))) {
-      return null;
-    }
-  } catch {
+  // Reject stale or future-dated deliveries to prevent replays.
+  if (Math.abs(Math.floor(now / 1000) - Number(ts)) > toleranceSeconds) {
     return null;
   }
+
+  const expected = Buffer.from(
+    crypto
+      .createHmac('sha256', secret)
+      .update(`${ts}:${rawBody.toString('utf8')}`)
+      .digest('hex'),
+  );
+  const valid = signatures.some((h1) => {
+    const candidate = Buffer.from(h1);
+    return (
+      candidate.length === expected.length &&
+      crypto.timingSafeEqual(candidate, expected)
+    );
+  });
+  if (!valid) return null;
 
   try {
     return JSON.parse(rawBody.toString('utf8'));

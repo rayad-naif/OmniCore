@@ -102,9 +102,9 @@ export default function Home() {
               <div className="w-12 h-12 rounded-lg bg-[#C9A450]/15 flex items-center justify-center mb-6 text-[#C9A450]">
                 <Bot className="w-6 h-6" />
               </div>
-              <h3 className="font-serif text-xl font-semibold mb-3">AI-Powered Routing</h3>
+              <h3 className="font-serif text-xl font-semibold mb-3">AI Answers & Smart Handoff</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Our intelligent agent automatically categorizes, tags, and routes incoming conversations to the right human instantly.
+                Gemini-powered replies grounded in your knowledge base resolve common questions, then hand off to the right agent with round-robin assignment and SLA tracking.
               </p>
             </motion.div>
 
@@ -117,7 +117,7 @@ export default function Home() {
               </div>
               <h3 className="font-serif text-xl font-semibold mb-3">Omnichannel Inbox</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Email, chat, and social channels unified in one beautiful, lightning-fast interface that agents love.
+                Live chat and email unified in one real-time inbox, with ticketing, attachments, canned responses and CSAT built in.
               </p>
             </motion.div>
 
@@ -133,6 +133,15 @@ export default function Home() {
                 Built from the ground up for agencies and enterprises managing multiple brands from a single login.
               </p>
             </motion.div>
+          </div>
+
+          <div className="text-center mt-12">
+            <a
+              href="/features"
+              className="inline-flex items-center gap-2 font-semibold text-[#8B6914] hover:text-[#C9A450] transition-colors"
+            >
+              Explore all features <ArrowRight className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </section>
@@ -155,7 +164,7 @@ export default function Home() {
                 One view.<br />Every conversation.
               </h2>
               <p className="text-lg text-muted-foreground mb-8 text-balance">
-                Stop switching tabs. OmniCore brings your live chat widgets, support emails, and social messages into a single, high-performance workspace. Designed for speed, built for clarity.
+                Stop switching tabs. OmniCore brings your live chat widgets and support emails into a single, high-performance workspace. Designed for speed, built for clarity.
               </p>
               
               <ul className="space-y-4 mb-8">
