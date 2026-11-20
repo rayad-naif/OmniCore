@@ -820,8 +820,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
 });
 
 app.use('/api', router);
-// ── Routes ────────────────────────────────────────────────────────────────────
-app.use('/api', router);
 
 // ── Global error handler (4-arg signature required by Express) ────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
