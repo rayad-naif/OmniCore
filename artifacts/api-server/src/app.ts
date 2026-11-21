@@ -23,6 +23,7 @@ const crypto = require('crypto');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { publicAppUrl } = require('./lib/env');
 const { ghlWebhookHandler } = require('./controllers/integrations.controller');
+const { isAgencyOrigin } = require('./lib/agencies');
 const {
   auditMiddleware,
   recordAudit,
@@ -96,7 +97,11 @@ app.use((req, res, next) => {
           if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
             return callback(null, requestOrigin || true);
           }
-          return callback(null, false);
+          // Verified white-label domains of agencies.
+          isAgencyOrigin(requestOrigin)
+            .then((ok: boolean) => callback(null, ok ? requestOrigin : false))
+            .catch(() => callback(null, false));
+          return undefined;
         };
   cors({ origin, credentials: true })(req, res, next);
 });

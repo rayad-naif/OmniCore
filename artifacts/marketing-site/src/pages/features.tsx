@@ -57,6 +57,7 @@ const groups: FeatureGroup[] = [
       'Detects when a visitor asks for a person and hands over with full context',
       'Conversation summaries for agents picking up a thread',
       'Agent copilot: rephrase any draft in the tone you choose',
+      'Built-in assistant for your team that explains every feature and performs tasks for you, always with your approval',
     ],
   },
   {
@@ -132,6 +133,7 @@ const groups: FeatureGroup[] = [
     points: [
       'Multiple brands per workspace, each with its own widget, inbox address and AI prompt',
       'Fully isolated workspaces (tenants) for agencies and resellers',
+      'White-label reselling: your app name, logo, colours, custom domain, emails and chat widget, plus your own AI provider key',
       'Platform administration: manage workspaces, limits, suspensions and user accounts',
       'View any workspace as its owner for support and onboarding',
       'Platform-wide email settings for system notifications',

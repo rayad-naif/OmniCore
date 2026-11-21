@@ -497,7 +497,7 @@ function buildDom(){
       '<button id="omni-ticket-submit">Send Ticket</button>'+
       '<p id="omni-ticket-msg" style="color:#64748b"></p>'+
     '</div>'+
-    '<div id="omni-footer">Powered by <strong>OmniCore</strong></div>'
+    '<div id="omni-footer">Powered by <strong id="omni-powered">OmniCore</strong></div>'
   );
   d.body.appendChild(root);
   els.root=root;
@@ -753,6 +753,7 @@ function startSession(forceNew){
   if(state.loading)return;
   state.loading=true;
   showLoading();
+  if(!state.brandingLoaded){state.brandingLoaded=true;fetch(API_BASE+'/widget/branding?brandId='+encodeURIComponent(BRAND_ID)).then(function(r){return r.json();}).then(function(b){var f=qs('#omni-footer'),n=qs('#omni-powered');if(!f||!b)return;if(b.hidePoweredBy){f.style.display='none';}else if(n&&b.appName){n.textContent=b.appName;}}).catch(function(){});}
   var tz='';try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch(e){}
   fetch(API_BASE+'/widget/session',{
     method:'POST',headers:{'Content-Type':'application/json'},

@@ -60,6 +60,14 @@ const integrations: {
 
 const publicApiRouter: IRouter = require('./publicApi');
 
+const agencyRoutes: {
+  router: IRouter;
+  publicRouter: IRouter;
+  adminRouter: IRouter;
+} = require('../controllers/agency.controller');
+
+const copilotRouter: IRouter = require('../controllers/copilot.controller');
+
 const router: IRouter = Router();
 
 // ── Health (unauthenticated) ──────────────────────────────────────────────────
@@ -86,9 +94,15 @@ router.use('/integrations', integrations.router);
 // Public REST API v1 (workspace API keys)
 router.use('/v1', publicApiRouter);
 
+// White-label branding (public), agency console, AI copilot
+router.use('/', agencyRoutes.publicRouter);
+router.use('/agency', agencyRoutes.router);
+router.use('/copilot', copilotRouter);
+
 router.use('/audit-logs', auditRoutes.workspaceRouter);
 // Must precede the general super-admin router so its guard handles these paths.
 router.use('/super-admin/audit-logs', auditRoutes.platformRouter);
+router.use('/super-admin/agencies', agencyRoutes.adminRouter);
 router.use('/super-admin', superAdminRouter);
 router.use('/contacts', contactsRouter);
 router.use('/canned-responses', cannedResponsesRouter);

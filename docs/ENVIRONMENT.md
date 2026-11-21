@@ -116,6 +116,22 @@ Outbound SMTP is not an environment variable: set it in **Super Admin → Platfo
 | `GHL_WEBHOOK_PUBLIC_KEY`              | —                         | PEM RSA key for the legacy `x-wh-signature` header. Set either or both.                                                                                                                                                                        |
 | `GHL_WEBHOOK_SKIP_VERIFY`             | `false`                   | Development only; ignored in production.                                                                                                                                                                                                       |
 
+## 7a. AI assistant and agencies (white-label)
+
+| Variable               | Default            | Notes                                                                                                                                                               |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COPILOT_MODEL`        | `gemini-2.5-flash` | Model for the built-in assistant on the platform key (`GEMINI_API_KEY`). Agencies can use their own provider and key instead (Agency → AI provider).                |
+| `COPILOT_DAILY_LIMIT`  | `300`              | Assistant messages per workspace per day (`0` = unlimited).                                                                                                         |
+| `CLOUDFLARE_API_TOKEN` | —                  | Optional. Token with _SSL and Certificates: Edit_ on the zone, to register agency custom domains with **Cloudflare for SaaS** so their TLS is issued automatically. |
+| `CLOUDFLARE_ZONE_ID`   | —                  | The zone of your platform domain (Cloudflare → domain → Overview → Zone ID).                                                                                        |
+
+Agency custom domains: the agency adds `app.theiragency.com` under Agency → Domains,
+creates the CNAME (to your platform host) and TXT records shown, and clicks **Verify**.
+With the two Cloudflare variables set, the hostname is registered as a Cloudflare for
+SaaS custom hostname (enable _SSL/TLS → Custom Hostnames_ on the zone and set the
+fallback origin to your platform hostname once). Without them, issue a certificate for
+each agency hostname on the server (e.g. `sudo certbot --nginx -d app.theiragency.com`).
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |

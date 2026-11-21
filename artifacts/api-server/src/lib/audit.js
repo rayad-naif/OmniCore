@@ -317,6 +317,10 @@ function auditMiddleware(req, res, next) {
           ? { body: bodySnapshot }
           : {}),
         ...(Object.keys(params).length ? { params } : {}),
+        ...(req.headers['x-omnicore-copilot'] === '1'
+          ? { via: 'ai_copilot' }
+          : {}),
+        ...(req.agent?.agencyOverride ? { via_agency: true } : {}),
         ...(req.auditExtra || {}),
       },
     }).catch((err) =>

@@ -101,7 +101,39 @@ first-response time), filterable by brand and date.
 - **Your own code:** webhooks (signed) and the REST API, documented in
   [API_AND_INTEGRATIONS.md](API_AND_INTEGRATIONS.md).
 
-## 7. Troubleshooting
+## 7. The AI assistant
+
+Click **Ask AI** (bottom right) on any screen. It knows the whole product and can:
+
+- answer "how do I…" questions and open the right screen for you;
+- look things up: conversations, tickets, contacts, team, plan and usage, knowledge
+  articles, integrations, recent activity;
+- do things for you: reply to a conversation or add a note, change status, priority or
+  assignee, create saved replies and knowledge articles, create a brand, invite a
+  colleague, add a webhook, connect Slack/Teams/Discord.
+
+It always shows exactly what it is about to change and waits for **Approve**. It acts
+with your own permissions, and everything it does is recorded in the audit log as
+_via AI assistant_.
+
+## 8. Agencies (white-label reselling)
+
+Agencies resell the platform under their own brand, like GoHighLevel's agency mode.
+The platform owner turns a workspace into an agency (Super Admin → Agencies). The
+agency's staff then get an **Agency** item in the sidebar:
+
+| Tab               | What you can do                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client workspaces | Create workspaces for clients (the client admin gets an invitation), set their plan, limits and status, and **Open** one to work inside it.     |
+| Branding          | App name, logo, favicon, colours, login text, email sender name, support links, hide "Powered by" in the chat widget, custom CSS. Live preview. |
+| Domains           | Add your own domain (e.g. `app.youragency.com`), create the DNS records shown, verify. Clients sign in there and only ever see your brand.      |
+| AI provider       | Use your own Gemini, OpenAI or Anthropic key for the assistant in all your client workspaces.                                                   |
+| Agency team       | Give colleagues from your own workspace access to the agency console.                                                                           |
+
+Your brand appears on your domains, in the dashboard after sign-in, in system emails
+(invitations, password resets, notices) and in the chat widget of your clients' brands.
+
+## 9. Troubleshooting
 
 | Problem                          | Fix                                                                                     |
 | -------------------------------- | --------------------------------------------------------------------------------------- |

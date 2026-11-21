@@ -30,7 +30,8 @@ export type Section =
   | 'contacts'
   | 'canned_responses'
   | 'audit'
-  | 'integrations';
+  | 'integrations'
+  | 'agency';
 export type StatusFilter = 'all' | Status;
 export type AuthView = 'login' | 'signup' | 'forgot' | 'reset';
 
