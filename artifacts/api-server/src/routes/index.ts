@@ -48,6 +48,18 @@ const emailWebhook: {
   setIo: (io: unknown) => void;
 } = require('../controllers/email.webhook.controller');
 
+const auditRoutes: {
+  workspaceRouter: IRouter;
+  platformRouter: IRouter;
+} = require('../controllers/audit.controller');
+
+const integrations: {
+  router: IRouter;
+  publicRouter: IRouter;
+} = require('../controllers/integrations.controller');
+
+const publicApiRouter: IRouter = require('./publicApi');
+
 const router: IRouter = Router();
 
 // ── Health (unauthenticated) ──────────────────────────────────────────────────
@@ -67,6 +79,16 @@ router.use('/tenants', tenantRouter);
 router.use('/conversations', conversationsRouter);
 router.use('/ai', aiRouter);
 router.use('/agents', agentsRouter);
+// Integrations: public OAuth callback first (no session), then the authenticated API.
+router.use('/integrations', integrations.publicRouter);
+router.use('/integrations', integrations.router);
+
+// Public REST API v1 (workspace API keys)
+router.use('/v1', publicApiRouter);
+
+router.use('/audit-logs', auditRoutes.workspaceRouter);
+// Must precede the general super-admin router so its guard handles these paths.
+router.use('/super-admin/audit-logs', auditRoutes.platformRouter);
 router.use('/super-admin', superAdminRouter);
 router.use('/contacts', contactsRouter);
 router.use('/canned-responses', cannedResponsesRouter);

@@ -22,6 +22,12 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { publicAppUrl } = require('./lib/env');
+const { ghlWebhookHandler } = require('./controllers/integrations.controller');
+const {
+  auditMiddleware,
+  recordAudit,
+  startRetentionJob: startAuditRetentionJob,
+} = require('./lib/audit');
 
 // Injects the shared pg.Pool as req.db — consumed by CJS controllers via req.db.query()
 function attachDb(
@@ -34,6 +40,25 @@ function attachDb(
 }
 
 const app: Express = express();
+
+// ── Reverse proxy trust (real client IPs) ─────────────────────────────────────
+// OCI: nginx on loopback (nginx itself restores the visitor IP from Cloudflare's
+// CF-Connecting-IP). Render/Docker: platform proxy on a private network.
+// Override with TRUST_PROXY (e.g. "1", "true", or a comma-separated CIDR list).
+{
+  const raw = (
+    process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal'
+  ).trim();
+  const value: boolean | number | string =
+    raw === 'true'
+      ? true
+      : raw === 'false'
+        ? false
+        : /^\d+$/.test(raw)
+          ? Number(raw)
+          : raw;
+  app.set('trust proxy', value);
+}
 
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
@@ -407,11 +432,39 @@ app.post(
       > | null;
 
       if (!event) {
+        void recordAudit({
+          action: 'billing.paddle.signature_invalid',
+          category: 'security',
+          actorType: 'webhook',
+          actorName: 'Paddle',
+          outcome: 'denied',
+          summary: 'Rejected Paddle webhook with an invalid or stale signature',
+          req,
+        });
         logger.warn('paddle_webhook_signature_invalid');
         return res.status(400).json({ error: 'Invalid signature' });
       }
 
       logger.info({ eventType: event.event_type }, 'paddle_webhook_verified');
+      const evData = (event.data || {}) as Record<string, unknown>;
+      void recordAudit({
+        action: `billing.paddle.${String(event.event_type || 'event')}`,
+        category: 'billing',
+        actorType: 'webhook',
+        actorName: 'Paddle',
+        tenantId:
+          ((evData.custom_data as Record<string, string> | undefined)
+            ?.tenant_id as string) || null,
+        resourceType: 'subscription',
+        resourceId: (evData.subscription_id as string) || (evData.id as string),
+        summary: `Paddle ${String(event.event_type)} (${String(evData.status || '')})`,
+        metadata: {
+          eventId: event.event_id,
+          status: evData.status,
+          customerId: evData.customer_id,
+        },
+        req,
+      });
 
       try {
         await provisionTenantFromPaddleEvent(event);
@@ -722,6 +775,13 @@ async function provisionTenantFromPaddleEvent(
   }
 }
 
+// ── GoHighLevel webhooks (raw body for signature verification) ───────────────
+app.post(
+  '/api/integrations/ghl/webhook',
+  express.raw({ type: '*/*', limit: '2mb' }),
+  ghlWebhookHandler,
+);
+
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
@@ -731,6 +791,10 @@ app.use(cookieParser());
 
 // ── Database pool injection (req.db) ──────────────────────────────────────────
 app.use(attachDb);
+
+// ── Audit trail (records every mutating API call + exports) ───────────────────
+app.use(auditMiddleware);
+startAuditRetentionJob();
 
 // ── Public checkout confirmation (webhook-independent onboarding) ─────────────
 // The marketing /checkout/success page calls this with the Paddle transaction
