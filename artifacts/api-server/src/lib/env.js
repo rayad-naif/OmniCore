@@ -35,6 +35,10 @@ function publicAppUrl(req) {
   const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
   if (domain) return `https://${domain}`;
 
+  // Render sets RENDER_EXTERNAL_URL (https://<service>.onrender.com).
+  const render = (process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (render) return render.replace(/\/+$/, '');
+
   if (req) {
     const proto = req.headers?.['x-forwarded-proto'] || req.protocol || 'https';
     const host =

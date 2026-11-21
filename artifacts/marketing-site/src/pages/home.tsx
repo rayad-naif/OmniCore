@@ -104,7 +104,7 @@ export default function Home() {
               </div>
               <h3 className="font-serif text-xl font-semibold mb-3">AI Answers & Smart Handoff</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Gemini-powered replies grounded in your knowledge base resolve common questions, then hand off to the right agent with round-robin assignment and SLA tracking.
+                Gemini-powered replies grounded in your knowledge base resolve common questions, then hand off to the right agent with automatic round-robin assignment.
               </p>
             </motion.div>
 

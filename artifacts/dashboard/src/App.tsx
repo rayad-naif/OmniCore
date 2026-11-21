@@ -4754,7 +4754,7 @@ function Dashboard() {
     // Retry forever (default) — a capped attempt count made the socket give up
     // permanently when the API server restarted, silently killing all real-time
     // updates (toasts, live messages) until the next token refresh remount.
-    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'] })
+    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], tryAllTransports: true })
     socketRef.current = socket
     // Keep auth fresh on every reconnect attempt so a retry that happens after
     // a token refresh doesn't fail with AUTH_FAILED on the stale token.

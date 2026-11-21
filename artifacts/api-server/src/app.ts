@@ -64,11 +64,15 @@ const app: Express = express();
 app.use(helmet());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
+// Default: only the app's own public origin (when known). Set ALLOWED_ORIGINS
+// to a comma-separated list for split frontend/API hosting, or "*" to allow any.
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-  : ['*'];
+  : publicAppUrl()
+    ? [publicAppUrl()]
+    : ['*'];
 
 app.use((req, res, next) => {
   // The embeddable widget is intentionally usable from customer websites
@@ -888,11 +892,66 @@ app.post(
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // Redirect root domain to the dashboard
-app.get('/', (req: express.Request, res: express.Response) => {
-  res.redirect(301, '/dashboard');
-});
+// (In SERVE_STATIC mode "/" is the marketing site instead.)
+if (process.env.SERVE_STATIC !== 'true') {
+  app.get('/', (req: express.Request, res: express.Response) => {
+    res.redirect(301, '/dashboard');
+  });
+}
 
 app.use('/api', router);
+
+// ── Single-service mode (Render / Docker / any PaaS without nginx) ────────────
+// SERVE_STATIC=true makes this process also serve the built dashboard at
+// /dashboard/ and the prerendered marketing site at /. On OCI, nginx does this.
+if (process.env.SERVE_STATIC === 'true') {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.resolve(process.env.STATIC_ROOT || process.cwd());
+  const dashboardDir = path.join(root, 'artifacts/dashboard/dist/public');
+  const marketingDir = path.join(root, 'artifacts/marketing-site/dist/public');
+  // The static sites load Paddle.js and fonts; nginx sends no CSP either.
+  const noCsp: express.RequestHandler = (_req, res, next) => {
+    res.removeHeader('Content-Security-Policy');
+    next();
+  };
+  const assetCache = {
+    setHeaders(res: express.Response, file: string) {
+      res.setHeader(
+        'Cache-Control',
+        /[\\/]assets[\\/]/.test(file)
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache',
+      );
+    },
+  };
+  // Express routing is not strict about trailing slashes, so check explicitly.
+  app.get('/dashboard', (req, res, next) =>
+    req.originalUrl.split('?')[0] === '/dashboard'
+      ? res.redirect(301, '/dashboard/')
+      : next(),
+  );
+  app.use(
+    '/dashboard',
+    noCsp,
+    express.static(dashboardDir, { index: 'index.html', ...assetCache }),
+  );
+  app.get(/^\/dashboard\/.*/, noCsp, (_req, res) =>
+    res.sendFile(path.join(dashboardDir, 'index.html')),
+  );
+  app.use(
+    noCsp,
+    express.static(marketingDir, { extensions: ['html'], ...assetCache }),
+  );
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+    const notFound = path.join(marketingDir, '404.html');
+    res.removeHeader('Content-Security-Policy');
+    if (fs.existsSync(notFound)) return res.status(404).sendFile(notFound);
+    return next();
+  });
+  logger.info({ root }, 'static_sites_enabled');
+}
 
 // ── Global error handler (4-arg signature required by Express) ────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

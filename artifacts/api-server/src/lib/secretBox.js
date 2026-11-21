@@ -17,6 +17,9 @@ const crypto = require('crypto');
 function key() {
   const hex = process.env.INTEGRATIONS_ENCRYPTION_KEY;
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return Buffer.from(hex, 'hex');
+  // Also accept 32 random bytes in base64 (e.g. Render's generateValue).
+  if (hex && Buffer.from(hex, 'base64').length === 32)
+    return Buffer.from(hex, 'base64');
   const base = process.env.JWT_SECRET;
   if (!base)
     throw new Error('INTEGRATIONS_ENCRYPTION_KEY or JWT_SECRET must be set');

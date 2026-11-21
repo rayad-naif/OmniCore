@@ -802,7 +802,7 @@ function initSio(){
   s.onerror=function(){try{s.parentNode.removeChild(s);}catch(e){}setTimeout(initSio,5000);};
   s.onload=function(){
     if(!w.io){setTimeout(initSio,5000);return;}
-    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],reconnectionDelay:1500});
+    var sk=w.io(API_ORIGIN,{path:'/api/socket.io',auth:{sessionToken:state.sessionToken},transports:['websocket','polling'],tryAllTransports:true,reconnectionDelay:1500});
     state.socket=sk;
     sk.on('connect',function(){
       state.connected=true;
