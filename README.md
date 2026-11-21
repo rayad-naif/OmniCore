@@ -13,6 +13,7 @@ Agents manage tickets across web chat, email, and future channels in a unified i
 | [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)           | Architecture, repo map, where to edit what, recipes                                |
 | [docs/API_AND_INTEGRATIONS.md](docs/API_AND_INTEGRATIONS.md) | Webhooks, REST API v1, Slack/Teams/Discord, Zapier, GoHighLevel app                |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md)                     | Workspace owners, admins and agents                                                |
+| [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md)                 | What is done, what is missing, suggested order                                     |
 
 ---
 

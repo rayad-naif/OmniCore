@@ -42,6 +42,35 @@ describe('agency branding validation', () => {
     );
   });
 
+  it('validates custom menu links', () => {
+    expect(
+      agencies.cleanBranding({
+        customLinks: [
+          { label: 'Reports', url: 'https://bi.acme.com', openIn: 'tab' },
+          { label: 'Docs', url: 'https://docs.acme.com' },
+        ],
+      }),
+    ).toEqual({
+      customLinks: [
+        { label: 'Reports', url: 'https://bi.acme.com', openIn: 'tab' },
+        { label: 'Docs', url: 'https://docs.acme.com', openIn: 'embed' },
+      ],
+    });
+    expect(() =>
+      agencies.cleanBranding({
+        customLinks: [{ label: 'x', url: 'javascript:alert(1)' }],
+      }),
+    ).toThrow(/https/);
+    expect(() =>
+      agencies.cleanBranding({
+        customLinks: Array.from({ length: 11 }, () => ({
+          label: 'a',
+          url: 'https://a.b',
+        })),
+      }),
+    ).toThrow(/10/);
+  });
+
   it('ignores unknown keys', () => {
     expect(agencies.cleanBranding({ appName: 'A', evil: 'x' })).toEqual({
       appName: 'A',

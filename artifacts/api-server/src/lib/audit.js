@@ -42,6 +42,8 @@ const SKIP_PATHS = [
   /^\/api\/paddle\/webhook/,
   /^\/api\/stripe\/webhook/,
   /^\/api\/integrations\/ghl\/webhook/,
+  // Voice provider callbacks are recorded as voice.* events by the voice module.
+  /^\/api\/voice\/(webhooks|twilio|hooks|cron)\//,
   /^\/api\/auth\/(login|refresh)$/,
 ];
 

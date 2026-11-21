@@ -31,7 +31,9 @@ export type Section =
   | 'canned_responses'
   | 'audit'
   | 'integrations'
-  | 'agency';
+  | 'agency'
+  | 'voice'
+  | 'custom';
 export type StatusFilter = 'all' | Status;
 export type AuthView = 'login' | 'signup' | 'forgot' | 'reset';
 

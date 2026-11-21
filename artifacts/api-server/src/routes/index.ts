@@ -68,6 +68,11 @@ const agencyRoutes: {
 
 const copilotRouter: IRouter = require('../controllers/copilot.controller');
 
+const voiceRoutes: {
+  router: IRouter;
+  publicRouter: IRouter;
+} = require('../voice/routes');
+
 const router: IRouter = Router();
 
 // ── Health (unauthenticated) ──────────────────────────────────────────────────
@@ -98,6 +103,10 @@ router.use('/v1', publicApiRouter);
 router.use('/', agencyRoutes.publicRouter);
 router.use('/agency', agencyRoutes.router);
 router.use('/copilot', copilotRouter);
+
+// AI Call Center: provider callbacks (public, signature-checked) before the signed-in API
+router.use('/voice', voiceRoutes.publicRouter);
+router.use('/voice', voiceRoutes.router);
 
 router.use('/audit-logs', auditRoutes.workspaceRouter);
 // Must precede the general super-admin router so its guard handles these paths.

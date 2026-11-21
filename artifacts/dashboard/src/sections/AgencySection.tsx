@@ -367,6 +367,88 @@ function BrandingForm({
           />{' '}
           Hide “Powered by” in the chat widget
         </label>
+        <div className="text-xs text-slate-600">
+          <p className="mb-1">
+            Custom menu links (your own tools, shown in every client's sidebar)
+          </p>
+          {(b.customLinks || []).map((l, i) => (
+            <div key={i} className="flex gap-2 mb-1.5">
+              <input
+                className={field}
+                placeholder="Label"
+                value={l.label}
+                onChange={(e) =>
+                  set(
+                    'customLinks',
+                    (b.customLinks || []).map((x, j) =>
+                      j === i ? { ...x, label: e.target.value } : x,
+                    ),
+                  )
+                }
+                aria-label="Link label"
+              />
+              <input
+                className={field}
+                placeholder="https://…"
+                value={l.url}
+                onChange={(e) =>
+                  set(
+                    'customLinks',
+                    (b.customLinks || []).map((x, j) =>
+                      j === i ? { ...x, url: e.target.value } : x,
+                    ),
+                  )
+                }
+                aria-label="Link URL"
+              />
+              <select
+                className="h-9 px-2 text-xs border border-slate-200 rounded-lg"
+                value={l.openIn}
+                onChange={(e) =>
+                  set(
+                    'customLinks',
+                    (b.customLinks || []).map((x, j) =>
+                      j === i
+                        ? { ...x, openIn: e.target.value as 'embed' | 'tab' }
+                        : x,
+                    ),
+                  )
+                }
+                aria-label="Open in"
+              >
+                <option value="embed">Inside the app</option>
+                <option value="tab">New tab</option>
+              </select>
+              <button
+                type="button"
+                className={danger}
+                onClick={() =>
+                  set(
+                    'customLinks',
+                    (b.customLinks || []).filter((_, j) => j !== i),
+                  )
+                }
+                aria-label="Remove link"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+          {(b.customLinks || []).length < 10 && (
+            <button
+              type="button"
+              className={ghost}
+              onClick={() =>
+                set('customLinks', [
+                  ...(b.customLinks || []),
+                  { label: '', url: '', openIn: 'embed' },
+                ])
+              }
+            >
+              <Plus size={12} /> Add link
+            </button>
+          )}
+        </div>{' '}
         <label className="block text-xs text-slate-600">
           Custom CSS (applied to your dashboard; no scripts)
           <textarea

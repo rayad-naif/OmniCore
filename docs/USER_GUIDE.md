@@ -116,24 +116,54 @@ It always shows exactly what it is about to change and waits for **Approve**. It
 with your own permissions, and everything it does is recorded in the audit log as
 _via AI assistant_.
 
-## 8. Agencies (white-label reselling)
+## 8. AI Call Center (phone agents)
+
+An AI receptionist answers your business phone and hands callers to an AI **Sales**
+agent (quotes and booking into your HighLevel calendar) or **Support** agent
+(existing customers, tickets), and can transfer to a person.
+
+**Set up** (admin): connect GoHighLevel under Integrations, then **AI Call Center → Setup**:
+
+1. Add your Twilio, Vapi and OpenAI keys (you pay them directly; checked and encrypted).
+2. Pick an industry template (HVAC, plumbing, roofing, dental, med spa, legal, real
+   estate, solar) and adjust business details, services, FAQ, pricing, hours, voice and
+   language (English, Spanish or automatic English/Spanish).
+3. Choose a booking calendar and which pipeline stage each call outcome moves to.
+4. Optional: speed-to-lead (paste the webhook into a HighLevel workflow so the AI calls
+   new leads back within seconds), SMS follow-up after calls, alert keywords.
+5. **Deploy**. You get a local number; forward your business line to it, or test it.
+
+**Every day:**
+
+| Tab          | What it does                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Command Deck | Live calls with a real-time transcript. Admins and supervisors can **listen**, **whisper** an instruction to the AI, make it **say** a line, mute it, **transfer**, end the call, or **take over** in the browser. |
+| Call history | Every call with outcome, QA score and sentiment.                                                                                                                                                                   |
+| Leads        | Speed-to-lead calls, attempts and results.                                                                                                                                                                         |
+| Reports      | Calls, bookings, booking rate, estimated revenue, return on AI cost, staff hours saved; CSV export.                                                                                                                |
+
+After each call the AI grades it (score, sentiment, outcome, summary, next steps,
+coaching) and updates the HighLevel contact (fields, transcript note, tags, opportunity stage).
+
+## 9. Agencies (white-label reselling)
 
 Agencies resell the platform under their own brand, like GoHighLevel's agency mode.
 The platform owner turns a workspace into an agency (Super Admin → Agencies). The
 agency's staff then get an **Agency** item in the sidebar:
 
-| Tab               | What you can do                                                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Client workspaces | Create workspaces for clients (the client admin gets an invitation), set their plan, limits and status, and **Open** one to work inside it.     |
-| Branding          | App name, logo, favicon, colours, login text, email sender name, support links, hide "Powered by" in the chat widget, custom CSS. Live preview. |
-| Domains           | Add your own domain (e.g. `app.youragency.com`), create the DNS records shown, verify. Clients sign in there and only ever see your brand.      |
-| AI provider       | Use your own Gemini, OpenAI or Anthropic key for the assistant in all your client workspaces.                                                   |
-| Agency team       | Give colleagues from your own workspace access to the agency console.                                                                           |
+| Tab               | What you can do                                                                                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client workspaces | Create workspaces for clients (the client admin gets an invitation), set their plan, limits and status, and **Open** one to work inside it.               |
+| Branding          | App name, logo, favicon, colours, login text, email sender name, support links, hide "Powered by" in the chat widget, custom CSS. Live preview.           |
+| Domains           | Add your own domain (e.g. `app.youragency.com`), create the DNS records shown, verify. Clients sign in there and only ever see your brand.                |
+| AI provider       | Use your own Gemini, OpenAI or Anthropic key for the assistant in all your client workspaces.                                                             |
+| Custom menu links | Add up to 10 links (your reporting, booking or internal tools) to every client's sidebar, opened inside the app or in a new tab. Set them under Branding. |
+| Agency team       | Give colleagues from your own workspace access to the agency console.                                                                                     |
 
 Your brand appears on your domains, in the dashboard after sign-in, in system emails
 (invitations, password resets, notices) and in the chat widget of your clients' brands.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Problem                          | Fix                                                                                     |
 | -------------------------------- | --------------------------------------------------------------------------------------- |

@@ -25,7 +25,7 @@ import {
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
   Brain, BookOpen, Link2, Webhook, Upload, FileText,
-  KeyRound, Plug, ScrollText,
+  KeyRound, Plug, ScrollText, PhoneCall,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -37,6 +37,7 @@ import { AuditLogSection } from './sections/AuditLogSection'
 import { useBranding, getBranding, loadBrandingForUser } from './lib/branding'
 import { IntegrationsSection } from './sections/IntegrationsSection'
 import { AgencySection } from './sections/AgencySection'
+import { VoiceSection } from './sections/VoiceSection'
 import { CopilotPanel } from './components/CopilotPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -4579,7 +4580,8 @@ function CannedResponsesSection() {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketOpen, recentActivity, onSelectConv, agent, onLogout, can }: {
+function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketOpen, recentActivity, onSelectConv, agent, onLogout, can, onOpenCustom }: {
+  onOpenCustom?: (link: { label: string; url: string }) => void
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
   ticketUnread: number; ticketOpen: number
   recentActivity: Conversation[]; onSelectConv: (id: string) => void
@@ -4589,6 +4591,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
 }) {
   const [bellOpen, setBellOpen] = useState(false)
   const [isAgencyMember, setIsAgencyMember] = useState(false)
+  const sidebarBrand = useBranding()
   const { authFetch: sidebarFetch } = useAuth() as { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }
   useEffect(() => {
     sidebarFetch('/api/agency').then(r => setIsAgencyMember(r.ok)).catch(() => setIsAgencyMember(false))
@@ -4611,6 +4614,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts', feature: 'contacts' },
     { key: 'canned_responses', icon: <Zap size={16} />,        label: 'Canned Responses', feature: 'inbox' },
     { key: 'csat',            icon: <BarChart2 size={16} />,   label: 'CSAT', feature: 'analytics' },
+    { key: 'voice',           icon: <PhoneCall size={16} />,   label: 'AI Call Center', feature: 'inbox' },
     { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', feature: 'knowledge_base' },
     { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', feature: 'settings' },
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', feature: 'brands' },
@@ -4717,6 +4721,19 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
             )}
           </button>
         ))}
+        {(sidebarBrand.customLinks || []).map(link => (
+          link.openIn === 'tab' ? (
+            <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer"
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white">
+              <Link2 size={16} /><span className="truncate">{link.label}</span>
+            </a>
+          ) : (
+            <button key={link.url} onClick={() => onOpenCustom?.(link)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white">
+              <Link2 size={16} /><span className="truncate">{link.label}</span>
+            </button>
+          )
+        ))}
       </nav>
       <div className="px-2 py-3 border-t border-slate-800">
         <div className="px-3 py-2 mb-1">
@@ -4782,6 +4799,7 @@ function Dashboard() {
   }, [agent?.id]) // eslint-disable-line
 
   const brand = useBranding()
+  const [customLink, setCustomLink] = useState<{ label: string; url: string } | null>(null)
 
   const enterWorkspace = useCallback((t: SANTenant) => {
     setWorkspaceOverride({ tenantId: t.id, name: t.company_name })
@@ -5136,10 +5154,10 @@ function Dashboard() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
-          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} /></div>
+          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} onOpenCustom={l => { setCustomLink(l); setSection('custom'); setSidebar(false) }} /></div>
         </div>
       )}
-      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} /></div>
+      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} onOpenCustom={l => { setCustomLink(l); setSection('custom'); setSidebar(false) }} /></div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">
@@ -5212,6 +5230,13 @@ function Dashboard() {
           {section === 'settings'    && <SettingsSection />}
           {section === 'integrations' && <IntegrationsSection authFetch={authFetch} tenantId={workspaceOverride?.tenantId ?? agent?.tenantId ?? ''} />}
           {section === 'audit'       && <AuditLogSection authFetch={authFetch} scope="workspace" />}
+          {section === 'custom' && customLink && (
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-4 py-2 border-b border-slate-200 bg-white text-xs text-slate-600 flex justify-between"><span className="font-medium">{customLink.label}</span><a href={customLink.url} target="_blank" rel="noopener noreferrer" className="text-sky-600">Open in new tab</a></div>
+              <iframe title={customLink.label} src={customLink.url} className="flex-1 w-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" referrerPolicy="strict-origin-when-cross-origin" />
+            </div>
+          )}
+          {section === 'voice'       && <VoiceSection authFetch={authFetch} role={agent?.role || 'agent'} />}
           {section === 'agency'      && <AgencySection authFetch={authFetch} onOpenWorkspace={(id, name) => { setWorkspaceOverride({ tenantId: id, name }); setSection('conversations') }} />}
           {section === 'team'        && <TeamSection />}
           {section === 'superadmin'  && <SuperAdminSection />}

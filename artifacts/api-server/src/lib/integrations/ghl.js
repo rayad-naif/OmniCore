@@ -46,6 +46,15 @@ const DEFAULT_SCOPES = [
   'conversations/message.readonly',
   'conversations/message.write',
   'locations.readonly',
+  // AI Call Center: booking, pipelines and AI result fields on contacts.
+  'opportunities.readonly',
+  'opportunities.write',
+  'calendars.readonly',
+  'calendars/events.readonly',
+  'calendars/events.write',
+  'locations/customFields.readonly',
+  'locations/customFields.write',
+  'users.readonly',
 ].join(' ');
 
 function configured() {
@@ -696,6 +705,7 @@ async function listConnections(tenantId) {
 }
 
 module.exports = {
+  accessToken,
   configured,
   authorizeUrl,
   completeInstall,

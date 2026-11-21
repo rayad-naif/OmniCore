@@ -23,6 +23,17 @@ tickets, contacts, ratings, integrations and billing in one dashboard at /dashbo
 - Tickets: conversations marked as tickets, with ticket numbers and priority. Created by
   converting a chat, by the widget's offline form, by email, by the REST API or from GoHighLevel.
 - Contacts: everyone who contacted the workspace, with their conversation history; CSV export.
+- AI Call Center: an AI phone receptionist with Sales and Support agents on the workspace's own
+  number (bring-your-own Twilio, Vapi and OpenAI keys). Tabs: Command Deck (live calls with
+  real-time transcript; admins and supervisors can listen in, whisper instructions to the AI,
+  make it say a line, mute it, transfer, end, or take over the call in the browser), Call history,
+  Leads (speed-to-lead: a HighLevel workflow webhook makes the AI call new leads back within
+  seconds during calling hours, with retries, a daily cap and Do-Not-Disturb handling), Reports
+  (calls, bookings, booking rate, estimated revenue, return on AI cost, staff hours saved, CSV) and
+  Setup (keys, business details, industry templates, voice and language incl. Spanish, booking
+  calendar, pipeline stage per call outcome, SMS follow-up, alert keywords, Deploy). Every call is
+  QA-graded (score, sentiment, outcome, summary, coaching) and written to the HighLevel contact.
+  Requires the GoHighLevel integration to be connected first.
 - Canned Responses: saved replies with shortcuts, inserted with "/" in the reply box.
 - CSAT: customer ratings and agent performance (assigned, closed today, average rating,
   first-response time), filter by brand and dates.
@@ -61,6 +72,9 @@ tickets, contacts, ratings, integrations and billing in one dashboard at /dashbo
   write API key under Integrations → REST API for actions.
 - GoHighLevel: Integrations → GoHighLevel → Connect → choose the sub-account → pick the brand
   and sync options.
+- Set up the AI phone agents: connect GoHighLevel (Integrations), open AI Call Center → Setup, add
+  the Twilio / Vapi / OpenAI keys, pick an industry template, fill in the business details, map
+  outcomes to pipeline stages and click Deploy. Then forward the business line to the new number.
 - Change plan or card: Billing → Upgrade / Manage subscription.
 - Find who changed something: Audit Log, filter by category, outcome, dates or search.
 - Locked workspace: a payment failed; update the card under Billing → Manage subscription.

@@ -204,7 +204,7 @@ messages. URLs are validated per provider and stored encrypted.
 2. **Basic info:** name _OmniCore_, type _Public_ (or _Private_ for your own agency),
    distribution **Sub-Account**.
 3. **Advanced Settings → Auth:**
-   - Scopes: `contacts.readonly contacts.write conversations.readonly conversations.write conversations/message.readonly conversations/message.write locations.readonly`
+   - Scopes: `contacts.readonly contacts.write conversations.readonly conversations.write conversations/message.readonly conversations/message.write locations.readonly opportunities.readonly opportunities.write calendars.readonly calendars/events.readonly calendars/events.write locations/customFields.readonly locations/customFields.write users.readonly` (the last eight are used by the AI Call Center for booking, pipelines and AI result fields)
    - Redirect URL: `https://omnicore.irofficial.com/api/integrations/ghl/callback`
    - Create a **client key** → copy _Client ID_ and _Client Secret_ into
      `GHL_CLIENT_ID` and `GHL_CLIENT_SECRET`.

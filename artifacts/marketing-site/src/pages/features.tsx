@@ -12,6 +12,7 @@ import {
   Library,
   Mail,
   MessageCircle,
+  PhoneCall,
   Plug,
   ShieldCheck,
   Users,
@@ -58,6 +59,22 @@ const groups: FeatureGroup[] = [
       'Conversation summaries for agents picking up a thread',
       'Agent copilot: rephrase any draft in the tone you choose',
       'Built-in assistant for your team that explains every feature and performs tasks for you, always with your approval',
+    ],
+  },
+  {
+    id: 'voice',
+    icon: PhoneCall,
+    title: 'AI call center',
+    summary:
+      'AI phone agents that answer, qualify, book and follow up, with your team in control.',
+    points: [
+      'AI receptionist that hands callers to Sales (quotes and booking) or Support agents, or to a person',
+      'Books real appointments in your HighLevel calendar and moves the opportunity to the right stage',
+      'Live Command Deck: listen in, whisper to the AI, or take over the call from your browser',
+      'Every call graded for quality, sentiment and outcome, and synced to the CRM contact',
+      'Speed-to-lead: new leads called back within seconds, within your calling hours',
+      'Text follow-ups, keyword alerts, ROI reports, industry templates and Spanish support',
+      'Runs on your own Twilio, Vapi and OpenAI accounts, so you only pay for what you use',
     ],
   },
   {

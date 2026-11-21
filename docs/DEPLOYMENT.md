@@ -47,6 +47,10 @@ no shell access is needed.
 6. Paddle sandbox webhook: `https://<service>.onrender.com/api/paddle/webhook`
    (events in [OCI_Deployment.md §5a](OCI_Deployment.md#5a-paddle-setup-payments)).
 
+**AI Call Center on Render:** phone calls need the server awake at all times (Vapi and
+Twilio call it during the call), so use a paid Render instance or OCI for live phone
+agents. Everything else works on the free plan for testing.
+
 **Free-plan limits:** the service sleeps after ~15 minutes idle (the first request
 then takes ~1 minute, and webhook deliveries/integration sync pause while asleep);
 the free database expires after 30 days. Upgrade the service to _Starter_ to keep it awake.

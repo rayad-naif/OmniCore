@@ -132,6 +132,23 @@ SaaS custom hostname (enable _SSL/TLS → Custom Hostnames_ on the zone and set 
 fallback origin to your platform hostname once). Without them, issue a certificate for
 each agency hostname on the server (e.g. `sudo certbot --nginx -d app.theiragency.com`).
 
+## 7b. AI Call Center (voice)
+
+Phone calls run on each account's **own** Twilio, Vapi and OpenAI keys, entered in
+the app (AI Call Center → Setup) and stored encrypted, so there are no platform-wide
+voice keys. Vapi and Twilio call back to `PUBLIC_APP_URL/api/voice/...`, so
+`PUBLIC_APP_URL` must be a public `https://` address before deploying a call center.
+
+| Variable                   | Default       | Notes                                                                                           |
+| -------------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `VOICE_AGENT_MODEL`        | `gpt-4o`      | Model the phone agents use (on the account's OpenAI key, through Vapi).                         |
+| `VOICE_GRADER_MODEL`       | `gpt-4o-mini` | Model that QA-grades every call.                                                                |
+| `VOICE_LIVE_POLL_MS`       | `1500`        | Command Deck refresh interval.                                                                  |
+| `VOICE_SWEEP_INTERVAL_SEC` | `60`          | How often queued speed-to-lead calls, CRM sync retries and stale calls are processed.           |
+| `VOICE_WORKER`             | `true`        | `false` on extra API replicas (a database lease keeps it single-run anyway).                    |
+| `CALL_RETENTION_DAYS`      | `365`         | Call records older than this are deleted.                                                       |
+| `CRON_SECRET`              | —             | Optional. Lets an external scheduler call `/api/voice/cron/sweep` (useful on hosts that sleep). |
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |

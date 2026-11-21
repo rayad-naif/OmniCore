@@ -6,6 +6,7 @@ import { createAppServer } from './app';
 import { logger } from './lib/logger';
 import { getStripeSync } from './lib/stripeClient';
 const { startIntegrationWorkers } = require('./lib/integrations/dispatcher');
+const { startVoiceWorkers } = require('./voice/context');
 
 /**
  * Initialize the Stripe schema + managed webhook and backfill synced data.
@@ -71,6 +72,8 @@ server.listen(port, () => {
   // Skip entirely when another billing provider (e.g. Paddle) is configured.
   // Integrations outbox + webhook delivery workers (disable per instance with
   // INTEGRATIONS_WORKER=false when running several API replicas).
+  // AI Call Center sweep (speed-to-lead queue, CRM sync retries, stale calls).
+  startVoiceWorkers();
   void startIntegrationWorkers().catch((err: unknown) =>
     logger.error({ err }, 'integration_workers_failed'),
   );

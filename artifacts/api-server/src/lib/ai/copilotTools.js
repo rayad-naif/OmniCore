@@ -28,6 +28,7 @@ const SECTIONS = [
   'settings',
   'audit',
   'agency',
+  'voice',
 ];
 
 const obj = (properties, required = []) => ({
@@ -202,6 +203,21 @@ const TOOLS = [
       usage: await api('GET', '/billing/usage').catch((e) => ({
         error: e.message,
       })),
+    }),
+  },
+  {
+    name: 'call_center_stats',
+    kind: 'read',
+    description:
+      'AI Call Center figures for the last 7 days (calls, minutes, bookings, QA score, cost) and live calls right now.',
+    parameters: obj({}),
+    run: async (i, api) => ({
+      week: await api('GET', '/voice/live/stats').catch((e) => ({
+        error: e.message,
+      })),
+      live_now: await api('GET', '/voice/live/calls')
+        .then((r) => (r.calls || []).length)
+        .catch(() => 0),
     }),
   },
   {

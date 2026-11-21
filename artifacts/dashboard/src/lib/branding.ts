@@ -19,6 +19,7 @@ export interface Branding {
   customCss: string;
   hidePoweredBy: boolean;
   emailFromName?: string | null;
+  customLinks?: { label: string; url: string; openIn: 'embed' | 'tab' }[];
   agencyId: string | null;
 }
 

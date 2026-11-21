@@ -33,6 +33,8 @@ const DEFAULT_BRANDING = Object.freeze({
   customCss: '',
   hidePoweredBy: false,
   emailFromName: null,
+  // GoHighLevel-style custom menu links: [{ label, url, openIn: 'embed' | 'tab' }]
+  customLinks: [],
 });
 
 const BRANDING_KEYS = Object.keys(DEFAULT_BRANDING);
@@ -135,6 +137,34 @@ function cleanBranding(input = {}) {
       });
     }
     if (k === 'hidePoweredBy') v = Boolean(v);
+    if (k === 'customLinks') {
+      if (v === null) v = [];
+      if (!Array.isArray(v) || v.length > 10) {
+        throw Object.assign(
+          new Error('customLinks must be a list of up to 10 links'),
+          { status: 400 },
+        );
+      }
+      v = v.map((l) => {
+        const label = String(l?.label || '')
+          .trim()
+          .slice(0, 40);
+        const url = String(l?.url || '').trim();
+        if (!label || !/^https:\/\/[^\s"'<>]+$/.test(url)) {
+          throw Object.assign(
+            new Error('Each custom link needs a label and an https:// URL'),
+            { status: 400 },
+          );
+        }
+        return {
+          label,
+          url: url.slice(0, 500),
+          openIn: l?.openIn === 'tab' ? 'tab' : 'embed',
+        };
+      });
+      out[k] = v;
+      continue;
+    }
     if (k === 'customCss' && v !== null) {
       v = String(v).slice(0, 20000);
       // CSS only: no markup, no imports of remote scripts, no legacy JS hooks.
