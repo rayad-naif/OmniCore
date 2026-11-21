@@ -25,7 +25,7 @@ import {
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
   Brain, BookOpen, Link2, Webhook, Upload, FileText,
-  KeyRound,
+  KeyRound, Plug, ScrollText,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -33,6 +33,8 @@ import TrialGateway from './components/TrialGateway'
 import { io, type Socket } from 'socket.io-client'
 import { BillingSection } from './sections/BillingSection'
 import { CsatSection } from './sections/CsatSection'
+import { AuditLogSection } from './sections/AuditLogSection'
+import { IntegrationsSection } from './sections/IntegrationsSection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Conversation {
@@ -2414,10 +2416,11 @@ function TeamSection() {
 // ─── Super Admin Section ──────────────────────────────────────────────────────
 function SuperAdminSection() {
   const api = useApi()
+  const { authFetch: saFetch } = useAuth() as { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2699,6 +2702,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('user_accounts')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'user_accounts' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>User Accounts</button>
             <button onClick={() => setTab('platform_smtp')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'platform_smtp' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Platform Email</button>
             <button onClick={() => setTab('billing')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'billing' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Billing</button>
+            <button onClick={() => setTab('audit')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'audit' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Audit Log</button>
           </div>
 
           {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
@@ -2771,6 +2775,8 @@ function SuperAdminSection() {
             <UserAccountsPanel api={api} />
           ) : tab === 'billing' ? (
             <BillingPanel api={api} />
+          ) : tab === 'audit' ? (
+            <AuditLogSection authFetch={saFetch} scope="platform" tenants={tenants} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
@@ -4521,7 +4527,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     return () => document.removeEventListener('mousedown', handler)
   }, [bellOpen])
 
-  const items: { key: Section; icon: React.ReactNode; label: string; feature?: string; superAdminOnly?: boolean }[] = [
+  const items: { key: Section; icon: React.ReactNode; label: string; feature?: string; superAdminOnly?: boolean; adminOnly?: boolean }[] = [
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox', feature: 'inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets', feature: 'inbox' },
     { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts', feature: 'contacts' },
@@ -4532,12 +4538,15 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', feature: 'brands' },
     { key: 'team',          icon: <Users size={16} />,         label: 'Team', feature: 'team' },
     { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing', feature: 'billing' },
+    { key: 'integrations',  icon: <Plug size={16} />,          label: 'Integrations', feature: 'settings' },
     { key: 'settings',      icon: <Settings size={16} />,      label: 'Settings', feature: 'settings' },
+    { key: 'audit',         icon: <ScrollText size={16} />,    label: 'Audit Log', adminOnly: true },
     { key: 'superadmin',    icon: <Shield size={16} />,        label: 'Super Admin', superAdminOnly: true },
   ]
 
   const visible = items.filter(i => {
     if (i.superAdminOnly) return agent?.isSuperAdmin
+    if (i.adminOnly) return agent?.role === 'admin' || agent?.isSuperAdmin
     if (i.feature) return can(i.feature, 'read')
     return true
   })
@@ -4745,7 +4754,7 @@ function Dashboard() {
     // Retry forever (default) — a capped attempt count made the socket give up
     // permanently when the API server restarted, silently killing all real-time
     // updates (toasts, live messages) until the next token refresh remount.
-    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'] })
+    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], tryAllTransports: true })
     socketRef.current = socket
     // Keep auth fresh on every reconnect attempt so a retry that happens after
     // a token refresh doesn't fail with AUTH_FAILED on the stale token.
@@ -5104,6 +5113,8 @@ function Dashboard() {
           {section === 'brands'      && <BrandsSection />}
           {section === 'billing'     && <BillingSection api={api} />}
           {section === 'settings'    && <SettingsSection />}
+          {section === 'integrations' && <IntegrationsSection authFetch={authFetch} tenantId={workspaceOverride?.tenantId ?? agent?.tenantId ?? ''} />}
+          {section === 'audit'       && <AuditLogSection authFetch={authFetch} scope="workspace" />}
           {section === 'team'        && <TeamSection />}
           {section === 'superadmin'  && <SuperAdminSection />}
         </div>

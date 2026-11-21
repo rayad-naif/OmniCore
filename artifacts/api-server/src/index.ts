@@ -5,6 +5,7 @@ verifyEnv();
 import { createAppServer } from './app';
 import { logger } from './lib/logger';
 import { getStripeSync } from './lib/stripeClient';
+const { startIntegrationWorkers } = require('./lib/integrations/dispatcher');
 
 /**
  * Initialize the Stripe schema + managed webhook and backfill synced data.
@@ -68,6 +69,11 @@ server.listen(port, () => {
   logger.info({ port }, 'Server listening');
   // Fire-and-forget: never block server startup on Stripe readiness.
   // Skip entirely when another billing provider (e.g. Paddle) is configured.
+  // Integrations outbox + webhook delivery workers (disable per instance with
+  // INTEGRATIONS_WORKER=false when running several API replicas).
+  void startIntegrationWorkers().catch((err: unknown) =>
+    logger.error({ err }, 'integration_workers_failed'),
+  );
   const billingProvider = (
     process.env['BILLING_PROVIDER'] || 'paddle'
   ).toLowerCase();

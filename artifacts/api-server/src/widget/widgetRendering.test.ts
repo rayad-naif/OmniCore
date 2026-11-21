@@ -8,9 +8,9 @@ describe('widget rendering assets', () => {
   it('keeps the emitted browser bundle byte-for-byte stable', () => {
     const emitted = WIDGET_JS.trimStart();
 
-    expect(Buffer.byteLength(emitted)).toBe(47673);
+    expect(Buffer.byteLength(emitted)).toBe(47695);
     expect(createHash('sha256').update(emitted).digest('hex')).toBe(
-      '88fb9a6ee3b538030f0464e4804fda58bfb1b13c67ce361acdb1e0f559f622bf',
+      '7babfdd45614936e203fef0bb12bd58d5c95992ea82e1f8c66a8c404aeb4719b',
     );
   });
 

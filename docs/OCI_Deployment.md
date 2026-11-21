@@ -30,6 +30,8 @@ The instance's own iptables rules are opened by the script (it does **not** use
 
 ## 3. DNS
 
+Using Cloudflare (recommended)? Follow [DEPLOYMENT.md §3](DEPLOYMENT.md#3-production-oracle-cloud--cloudflare) instead of this section: it covers the proxied DNS record, the Cloudflare Origin Certificate (`CF_ORIGIN_CERT` / `CF_ORIGIN_KEY`) and real visitor IPs.
+
 Create an **A record**: `omnicore` → `80.225.249.112`. Wait until
 `dig +short omnicore.irofficial.com` returns the IP — certbot needs it.
 

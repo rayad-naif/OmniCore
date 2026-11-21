@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const { sendPasswordResetEmail } = require('../services/email.service');
 const { effectivePermissions } = require('../lib/permissions');
 const { validateLoginInput } = require('../lib/requestValidation');
+const { recordAudit } = require('../lib/audit');
 
 const router = Router();
 
@@ -102,12 +103,44 @@ router.post('/login', async (req, res) => {
     );
 
     const agent = rows[0];
-    if (!agent) return res.status(401).json({ error: 'Invalid credentials' });
-    if (!agent.is_active)
+    const audit = (action, outcome, summary) =>
+      recordAudit({
+        action,
+        category: 'auth',
+        outcome,
+        summary,
+        tenantId: agent?.tenant_id,
+        actorType: 'agent',
+        actorId: agent?.id,
+        actorEmail: agent?.email || email.trim().toLowerCase(),
+        actorName: agent?.name,
+        resourceType: 'agent',
+        resourceId: agent?.id,
+        req,
+      });
+    if (!agent) {
+      void audit(
+        'auth.login_failed',
+        'failure',
+        'Login attempt for unknown email',
+      );
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    if (!agent.is_active) {
+      void audit(
+        'auth.login_blocked',
+        'denied',
+        'Login attempt on a deactivated account',
+      );
       return res.status(403).json({ error: 'Account is deactivated' });
+    }
 
     const valid = await bcrypt.compare(password, agent.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!valid) {
+      void audit('auth.login_failed', 'failure', 'Wrong password');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    void audit('auth.login', 'success', 'Signed in');
 
     const accessToken = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
