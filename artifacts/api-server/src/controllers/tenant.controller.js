@@ -49,13 +49,28 @@ const TENANT_MIGRATIONS = [
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS max_brands_allowed INT NOT NULL DEFAULT 5`,
   `ALTER TABLE visitors ADD COLUMN IF NOT EXISTS timezone TEXT`,
 ];
-TENANT_MIGRATIONS.forEach((sql) =>
-  pool
-    .query(sql)
-    .catch((err) =>
-      logger.warn({ err: err.message }, 'tenant_migration_warning'),
-    ),
-);
+// Run one at a time and retry: firing them all at once on a cold start
+// (a waking free-tier database) exhausted the pool and timed out, leaving the
+// columns missing until the next restart.
+(async () => {
+  let failed = 0;
+  for (const sql of TENANT_MIGRATIONS) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await pool.query(sql);
+        break;
+      } catch (err) {
+        if (attempt >= 5) {
+          logger.warn({ err: err.message, sql }, 'tenant_migration_warning');
+          failed += 1;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, attempt * 2000));
+      }
+    }
+  }
+  if (!failed) logger.info('tenant_migrations_ok');
+})();
 
 // ---------------------------------------------------------------------------
 // Super-admin guard: email matches SUPER_ADMIN_EMAIL env var OR
