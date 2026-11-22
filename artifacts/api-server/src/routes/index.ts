@@ -79,6 +79,7 @@ const hrmsModule: {
 const hrmsAdmin: {
   superAdminRouter: IRouter;
 } = require('../hrms/admin.routes');
+const rdnsRouter: IRouter = require('../rdns/routes');
 
 const router: IRouter = Router();
 
@@ -123,6 +124,8 @@ router.use('/audit-logs', auditRoutes.workspaceRouter);
 router.use('/super-admin/audit-logs', auditRoutes.platformRouter);
 router.use('/super-admin/agencies', agencyRoutes.adminRouter);
 router.use('/super-admin/hrms', hrmsAdmin.superAdminRouter);
+// Reverse DNS tool (ported reverse-dns-tool): platform super admins only.
+router.use('/super-admin/rdns', rdnsRouter);
 router.use('/super-admin', superAdminRouter);
 router.use('/contacts', contactsRouter);
 router.use('/canned-responses', cannedResponsesRouter);

@@ -8,6 +8,7 @@ import { getStripeSync } from './lib/stripeClient';
 const { startIntegrationWorkers } = require('./lib/integrations/dispatcher');
 const { startVoiceWorkers } = require('./voice/context');
 const { startHrmsWorkers } = require('./hrms');
+const { startRdnsWorker } = require('./rdns/scheduler');
 const { getIo } = require('./services/socket.service');
 
 /**
@@ -78,6 +79,8 @@ server.listen(port, () => {
   startVoiceWorkers();
   // HR module: Socket.io namespace /hrms + hourly attendance sweep (needs HRMS_MONGODB_URI).
   startHrmsWorkers({ io: getIo() });
+  // Reverse DNS watchlist scheduler + forms crawler (RDNS_WORKER=false to disable).
+  startRdnsWorker();
   void startIntegrationWorkers().catch((err: unknown) =>
     logger.error({ err }, 'integration_workers_failed'),
   );

@@ -110,6 +110,7 @@ docs/                    ← you are here
 | AI assistant: knowledge, tools, providers | `src/lib/ai/appKnowledge.js` (what it knows), `src/lib/ai/copilotTools.js` (what it can do; `kind: 'write'` needs approval), `src/lib/ai/providers/*` (Gemini, OpenAI, Anthropic), dashboard `src/components/CopilotPanel.tsx`                                                                                                                                                                                                                                  |
 | Agencies / white-label                    | `src/lib/agencies.js` (branding, domains, access), `controllers/agency.controller.js`; dashboard `src/lib/branding.ts` (theme), `src/sections/AgencySection.tsx`                                                                                                                                                                                                                                                                                                |
 | HR module (HRMS)                          | Server: `src/hrms/` — `index.js` (router, workspace resolution, plan gate), `admin.routes.js` (single sign-on, workspace keys, super admin console), `core/` (per-workspace MongoDB via `mongoose.js` + `context.js`, tokens, time zones, R2/disk storage, Socket.io namespace), `routes/`, `models/`, `controllers/`, `services/` (ported HRMS code). Front end: `artifacts/hrms/`. Dashboard: `src/sections/HrSection.tsx`, `src/sections/HrmsAdminPanel.tsx` |
+| Reverse DNS tool                          | `src/rdns/` — `sources.js` (9 passive-DNS adapters), `scheduler.js` (24/7 loop + pacing), `crawler.js` (forms-only crawler, robots.txt, SSRF guard), `routes.js` (`/api/super-admin/rdns`), `schema.js` (`rdns_*` tables); dashboard `src/sections/RdnsPanel.tsx`                                                                                                                                                                                               |
 | AI Call Center (voice)                    | `src/voice/` — `routes.js` (API + Vapi/Twilio/lead webhooks), `context.js` (wiring onto OmniCore: accounts, GoHighLevel tokens, encryption, sweep worker), `store.js` (PostgreSQL document store), `services/*` (provisioning, live calls, QA grading + CRM sync, speed-to-lead, reports, agent prompts, industry templates — ported unchanged from the AI-Call-Center repo); dashboard `src/sections/VoiceSection.tsx`                                         |
 
 ## 4. Data model (main tables)
@@ -222,6 +223,20 @@ CRM syncs and closes stale calls. Voice activity is mirrored into the audit log 
 - _Real time:_ Socket.io namespace `/hrms` on OmniCore's server; rooms are prefixed with
   the workspace id (`core/io.js`).
 - _Jobs:_ hourly attendance sweep for every HR workspace, behind a database lease.
+
+**Reverse DNS tool** (`src/rdns/`, super admins only): the former Python/Flask
+reverse-dns-tool rewritten in Node on OmniCore's Postgres. A watchlist of CNAME targets
+or IPs is polled continuously by nine passive-DNS sources (RapidDNS, crt.sh, Certspotter,
+IP.THC, Robtex, Shodan InternetDB, AlienVault OTX, and the paid SecurityTrails and
+DNSDB). Each (target, source) pair has a cursor in `rdns_cursors` with its page state and
+the next time it may run, so paginated sources are walked to the end over many turns,
+429s back off exponentially and restarts never re-burst a source. New domains are
+deduplicated per target and, if enabled, queued for the forms crawler, which records
+only form method, action, field names and a guessed purpose for pages of that domain
+(robots.txt honoured, one page per turn, 50 pages per domain, private addresses refused
+on every redirect). The scheduler runs every few seconds on one instance (database
+lease). It is polite by design: an honest User-Agent, no proxy rotation and no attempt
+to disguise traffic. It collects no WHOIS or contact data.
 
 ## 7. Recipes
 

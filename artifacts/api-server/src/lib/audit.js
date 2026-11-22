@@ -57,6 +57,7 @@ const AUDITED_READS = [
   /^\/api\/contacts\/export/,
   /^\/api\/audit-logs\/export/,
   /^\/api\/super-admin\/audit-logs\/export/,
+  /^\/api\/super-admin\/rdns\/(domains|forms)\/export/,
 ];
 
 let schemaReady = null;

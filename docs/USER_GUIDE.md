@@ -173,6 +173,23 @@ biometric terminals (paste the event URL with the key into the device) and an **
 agent key** for the desktop activity tracker. Replacing a key disconnects devices that
 still use the old one.
 
+## 8b. Reverse DNS (platform super admins)
+
+Super Admin → **Reverse DNS** finds domains that point to a host or IP you watch, for
+example every custom domain that CNAMEs to a white-label platform's host name.
+
+1. **Watchlist**: add a CNAME target (`whitelabel.example.com`) or an IP. It is checked
+   continuously; badges show each source's progress (active, finished, rate limited,
+   error). **Rescan** walks every source again now; pause or remove targets any time.
+2. **Domains found**: everything discovered, searchable, with a CSV export.
+3. **Forms found**: pages of those domains that have a form, with its purpose (contact,
+   careers, newsletter, login, search) and field names. CSV export.
+4. **Quick search**: a one-off lookup that is not saved (3 pages per source).
+5. **Sources & API keys**: switch sources on or off, set how many requests per hour each
+   may receive, and add keys for SecurityTrails and DNSDB (paid) or Certspotter (higher
+   free limit). Keys are encrypted.
+6. **Activity log**: what the scheduler and crawler did, including rate limits and errors.
+
 ## 9. Agencies (white-label reselling)
 
 Agencies resell the platform under their own brand, like GoHighLevel's agency mode.

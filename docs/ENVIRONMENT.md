@@ -178,6 +178,22 @@ Not needed any more (from the standalone HRMS): `MONGODB_URI`, `REDIS_URL` for H
 `VITE_GEMINI_API_KEY` (AI runs on the server with `GEMINI_API_KEY`), `BUSINESS_TIME_ZONE`
 (each workspace's own time zone is used).
 
+## 7d. Reverse DNS tool (super admin)
+
+Runs inside the API; no extra service or database. Source API keys (SecurityTrails,
+DNSDB, Certspotter) are entered in Super Admin → Reverse DNS → Sources and stored
+encrypted with `INTEGRATIONS_ENCRYPTION_KEY`.
+
+| Variable            | Default | Notes                                                                    |
+| ------------------- | ------- | ------------------------------------------------------------------------ |
+| `RDNS_WORKER`       | `true`  | `false` turns the watchlist scheduler and forms crawler off on a server. |
+| `RDNS_TICK_SECONDS` | `5`     | How often due sources and crawl jobs are checked.                        |
+
+Not needed any more (from the standalone tool): `SECRET_KEY`, `ADMIN_USERNAME`,
+`ADMIN_PASSWORD` (OmniCore super admins sign in instead), `DATABASE_URL` for the tool
+(it uses OmniCore's Postgres), `RUN_SCHEDULER_IN_PROCESS`, `CERTSPOTTER_API_TOKEN`
+(set it as the Certspotter key in the UI).
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |

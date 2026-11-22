@@ -40,6 +40,7 @@ import { AgencySection } from './sections/AgencySection'
 import { VoiceSection } from './sections/VoiceSection'
 import { HrSection } from './sections/HrSection'
 import { HrmsAdminPanel } from './sections/HrmsAdminPanel'
+import { RdnsPanel } from './sections/RdnsPanel'
 import { CopilotPanel } from './components/CopilotPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -2494,7 +2495,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit' | 'agencies' | 'hrms'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit' | 'agencies' | 'hrms' | 'rdns'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2782,6 +2783,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('billing')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'billing' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Billing</button>
             <button onClick={() => setTab('agencies')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'agencies' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Agencies</button>
             <button onClick={() => setTab('hrms')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'hrms' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>HR</button>
+            <button onClick={() => setTab('rdns')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'rdns' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Reverse DNS</button>
             <button onClick={() => setTab('audit')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'audit' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Audit Log</button>
           </div>
 
@@ -2861,6 +2863,8 @@ function SuperAdminSection() {
             <AgenciesPanel authFetch={saFetch} />
           ) : tab === 'hrms' ? (
             <HrmsAdminPanel authFetch={saFetch} />
+          ) : tab === 'rdns' ? (
+            <RdnsPanel authFetch={saFetch} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
