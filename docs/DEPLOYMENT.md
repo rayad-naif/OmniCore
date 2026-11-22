@@ -197,6 +197,9 @@ The API itself needs a server (OCI, Render, Docker); Workers cannot run its
 Express + Socket.io process. The OCI + Cloudflare proxy setup above already gives
 you Cloudflare's CDN and protection for the whole app.
 
+**Hosted online stores** need a separate store server: see `docs/OCI_Deployment.md` §8
+(`deploy-store-host.sh`). Connected WooCommerce stores need nothing extra.
+
 ## 4. Docker (any container host)
 
 The default `Dockerfile` target builds one image with everything:

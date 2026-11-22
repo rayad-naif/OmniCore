@@ -222,11 +222,13 @@ async function applyPlanFeatures(
       smtp_feature_enabled: boolean;
       hrms_feature_enabled?: boolean;
       payments_feature_enabled?: boolean;
+      stores_feature_enabled?: boolean;
     };
     limits: {
       max_brands_allowed: number | null;
       max_agents_allowed: number | null;
       conversation_limit: number | null;
+      max_stores?: number | null;
     };
   };
 
@@ -250,6 +252,7 @@ async function applyPlanFeatures(
          smtp_feature_enabled = false,
          hrms_feature_enabled = false,
          payments_feature_enabled = false,
+         stores_feature_enabled = false,
          updated_at           = NOW()
        WHERE id = $1`,
       [tenantId],
@@ -266,6 +269,8 @@ async function applyPlanFeatures(
        smtp_feature_enabled = $5,
        hrms_feature_enabled = $7,
        payments_feature_enabled = $8,
+       stores_feature_enabled = $9,
+       max_stores           = $10,
        updated_at           = NOW()
      WHERE id = $6`,
     [
@@ -277,6 +282,8 @@ async function applyPlanFeatures(
       tenantId,
       Boolean(row.features.hrms_feature_enabled),
       Boolean(row.features.payments_feature_enabled),
+      Boolean(row.features.stores_feature_enabled),
+      row.limits.max_stores ?? 1,
     ],
   );
   logger.info({ tenantId, plan: plan || 'free' }, 'plan_features_applied');
@@ -807,6 +814,14 @@ const paymentsPublic = require('./payments/public');
 app.use('/api/pay/webhooks', paymentsPublic.webhookRouter);
 // Customer pay pages (/pay/:token, /pay/l/:token) — strict CSP set per response.
 app.use('/pay', paymentsPublic.pageRouter);
+
+// ── Online stores: WooCommerce webhooks and the OmniCore Commerce plugin (raw body) ──
+const storesPublic = require('./stores/public');
+app.use('/api/stores', storesPublic.router);
+// Payments made for WooCommerce orders are reported back to the store.
+require('./payments/service').onPaymentEvent(
+  require('./stores/service').onPaymentEvent,
+);
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '20mb' }));

@@ -80,6 +80,8 @@ const hrmsAdmin: {
   superAdminRouter: IRouter;
 } = require('../hrms/admin.routes');
 const rdnsRouter: IRouter = require('../rdns/routes');
+const storesRouter: IRouter = require('../stores/routes');
+const storesAdminRouter: IRouter = require('../stores/admin');
 const paymentsRouter: IRouter = require('../payments/routes');
 const paymentsPublic: { router: IRouter } = require('../payments/public');
 
@@ -122,6 +124,8 @@ router.use('/voice', voiceRoutes.router);
 // signed-in workspace API (plan-gated).
 router.use('/pay', paymentsPublic.router);
 router.use('/payments', paymentsRouter);
+// Online stores (hosted WooCommerce + connected stores).
+router.use('/stores', storesRouter);
 
 // HR module (ported GHL-HRMS): own sign-in, plan-gated per workspace.
 router.use('/hrms', hrmsModule.hrmsRouter());
@@ -133,6 +137,7 @@ router.use('/super-admin/agencies', agencyRoutes.adminRouter);
 router.use('/super-admin/hrms', hrmsAdmin.superAdminRouter);
 // Reverse DNS tool (ported reverse-dns-tool): platform super admins only.
 router.use('/super-admin/rdns', rdnsRouter);
+router.use('/super-admin/stores', storesAdminRouter);
 router.use('/super-admin', superAdminRouter);
 router.use('/contacts', contactsRouter);
 router.use('/canned-responses', cannedResponsesRouter);

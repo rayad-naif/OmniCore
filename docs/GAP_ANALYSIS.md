@@ -49,11 +49,12 @@ most needs.
 
 ## 4. Requested items still blocked
 
-| Item                                                 | Status                                                                                                                 |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **HRMS** (super admin manages, plan-gated for users) | Done: HR module (`/hrms/`), plan switch "HR module", Super Admin → HR. Finance pages still assume PKR/USD (see below). |
-| **Reverse DNS tool** (super admin only)              | Done: Super Admin → Reverse DNS.                                                                                       |
-| **Invoicing & client payments** (InvoiceNow)         | Done: Invoices & Payments (plan feature). Paddle, Stripe, PayPal, Square, Authorize.net, Payoneer, bank transfer, COD. |
+| Item                                                  | Status                                                                                                                                                   |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HRMS** (super admin manages, plan-gated for users)  | Done: HR module (`/hrms/`), plan switch "HR module", Super Admin → HR. Finance pages still assume PKR/USD (see below).                                   |
+| **Reverse DNS tool** (super admin only)               | Done: Super Admin → Reverse DNS.                                                                                                                         |
+| **WooCommerce stores** (create, host, design, deploy) | Done: Online Stores (plan feature): hosted stores on store servers, AI/template design, sub-domain + custom domain, connected stores, OmniCore checkout. |
+| **Invoicing & client payments** (InvoiceNow)          | Done: Invoices & Payments (plan feature). Paddle, Stripe, PayPal, Square, Authorize.net, Payoneer, bank transfer, COD.                                   |
 
 ## 5. Repository hygiene to fix before launch
 
@@ -71,8 +72,8 @@ most needs.
 1. Section 5 (security and honesty items) before any public launch.
 2. P1 automations + SLA, P2 tags/custom fields: the most-asked helpdesk features.
 3. W1–W3 (rebilling, agency plans, snapshots) to make the agency offer complete.
-4. Next phases requested: native versions of the GoHighLevel apps (LEAF affiliates, LoyaltyLoop, App Package, Customizer), the dashboard
-   redesign, and WooCommerce store building/hosting (to be scoped).
+4. Next phases requested: native versions of the GoHighLevel apps (LEAF affiliates, LoyaltyLoop, App Package, Customizer) and the dashboard
+   redesign.
 5. HR follow-ups: the expenses/earnings and finance pages of the HR app still use PKR and a
    USD→PKR rate from the original company; make the currency a workspace setting before
    selling HR outside Pakistan. HR in-app notification links point to paths that do not
@@ -81,4 +82,7 @@ most needs.
    dashboard through the processor (today: refund in the processor, then mark refunded),
    and PDF invoices. None of the processors was exercised with a live account from the
    build environment; run one test payment per processor in sandbox mode before launch.
-7. P4 2FA/SSO, P5 data tools before selling to larger companies.
+7. Online stores follow-ups: move a store between store servers, product photos from AI,
+   off-server backup upload (today: copy the backups folder) and per-store resource graphs.
+   Starter products from templates are examples to replace when AI is off.
+8. P4 2FA/SSO, P5 data tools before selling to larger companies.

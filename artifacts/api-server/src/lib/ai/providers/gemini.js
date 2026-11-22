@@ -66,19 +66,24 @@ module.exports = {
       {
         systemInstruction: { parts: [{ text: system }] },
         contents: messages,
-        tools: [
-          {
-            // Gemini rejects OBJECT schemas without properties: omit them.
-            functionDeclarations: tools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              ...(Object.keys(t.parameters?.properties || {}).length
-                ? { parameters: geminiSchema(t.parameters) }
-                : {}),
-            })),
-          },
-        ],
-        toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+        // A plain completion (no tools) must not send an empty tool list.
+        ...(tools.length
+          ? {
+              tools: [
+                {
+                  // Gemini rejects OBJECT schemas without properties: omit them.
+                  functionDeclarations: tools.map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    ...(Object.keys(t.parameters?.properties || {}).length
+                      ? { parameters: geminiSchema(t.parameters) }
+                      : {}),
+                  })),
+                },
+              ],
+              toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+            }
+          : {}),
         generationConfig: { maxOutputTokens: 8192 },
       },
     );

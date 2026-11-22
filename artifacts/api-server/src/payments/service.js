@@ -574,6 +574,21 @@ async function markSent(tenantId, id) {
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
+// Other modules (online stores) react to payment events: recorded | confirmed | rejected | refunded.
+const paymentHooks = [];
+function onPaymentEvent(fn) {
+  if (!paymentHooks.includes(fn)) paymentHooks.push(fn);
+}
+async function emitPaymentEvent(tenantId, tx, event) {
+  for (const fn of paymentHooks) {
+    try {
+      await fn(tenantId, tx, event);
+    } catch (err) {
+      logger.warn({ err: err.message, event }, 'payment_hook_failed');
+    }
+  }
+}
+
 async function notifyPayment(tenantId, tx) {
   try {
     require('../services/socket.service').broadcastToTenant(
@@ -699,6 +714,7 @@ async function recordPayment(tenantId, p) {
   if (tx) {
     await notifyPayment(tenantId, tx);
     if (tx.status === 'succeeded') await sendReceipt(tenantId, tx);
+    await emitPaymentEvent(tenantId, tx, 'recorded');
   }
   return tx;
 }
@@ -730,6 +746,7 @@ async function confirmPending(tenantId, txId, by) {
   }
   await notifyPayment(tenantId, tx);
   await sendReceipt(tenantId, tx);
+  await emitPaymentEvent(tenantId, tx, 'confirmed');
   return tx;
 }
 
@@ -740,6 +757,7 @@ async function rejectPending(tenantId, txId, by) {
     [tenantId, txId, by || null],
   );
   if (!rows[0]) throw new PayError('No pending payment with that id', 404);
+  await emitPaymentEvent(tenantId, rows[0], 'rejected');
   return rows[0];
 }
 
@@ -771,6 +789,7 @@ async function markRefunded(tenantId, txId, by) {
       );
     }
     await client.query('COMMIT');
+    await emitPaymentEvent(tenantId, tx, 'refunded');
     return tx;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -966,6 +985,7 @@ async function stats(tenantId) {
 }
 
 module.exports = {
+  onPaymentEvent,
   PayError,
   ACTIVE_STATUSES,
   workspace,

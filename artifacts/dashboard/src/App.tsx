@@ -25,7 +25,7 @@ import {
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
   Brain, BookOpen, Link2, Webhook, Upload, FileText,
-  KeyRound, Plug, ScrollText, PhoneCall, Briefcase, Receipt,
+  KeyRound, Plug, ScrollText, PhoneCall, Briefcase, Receipt, Store,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -42,6 +42,8 @@ import { HrSection } from './sections/HrSection'
 import { HrmsAdminPanel } from './sections/HrmsAdminPanel'
 import { RdnsPanel } from './sections/RdnsPanel'
 import { PaymentsSection, fmtMoney as fmtMinorUnits } from './sections/PaymentsSection'
+import { StoresSection } from './sections/StoresSection'
+import { StoresAdminPanel } from './sections/StoresAdminPanel'
 import { CopilotPanel } from './components/CopilotPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -94,6 +96,8 @@ interface SANTenant {
   smtp_feature_enabled: boolean; conversation_limit: number
   hrms_feature_enabled?: boolean
   payments_feature_enabled?: boolean
+  stores_feature_enabled?: boolean
+  max_stores?: number
   trial_ends_at: string | null; grace_period_ends_at: string | null
   lock_notified_at: string | null
   paddle_customer_id: string | null; paddle_subscription_id: string | null
@@ -112,8 +116,8 @@ interface KnowledgeArticle {
 interface SuperAdminEntry {
   id: string; email: string; added_by: string; is_active: boolean; created_at: string
 }
-interface PlanFeatures { ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled?: boolean; payments_feature_enabled?: boolean }
-interface PlanLimits { max_brands_allowed: number | null; max_agents_allowed: number | null; conversation_limit: number | null }
+interface PlanFeatures { ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled?: boolean; payments_feature_enabled?: boolean; stores_feature_enabled?: boolean }
+interface PlanLimits { max_brands_allowed: number | null; max_agents_allowed: number | null; conversation_limit: number | null; max_stores?: number }
 interface BillingPlan {
   plan: string; name: string; description: string | null
   priceId: string; amount: number; currency: string; interval: string
@@ -394,7 +398,7 @@ function useApi() {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/purge`, { method: 'DELETE', body: JSON.stringify({ confirm_name }) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Purge failed') }
     },
-    patchTenantLimits: async (id: string, limits: Partial<{ max_brands_allowed: number; max_agents_allowed: number; ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled: boolean; payments_feature_enabled: boolean; conversation_limit: number }>): Promise<void> => {
+    patchTenantLimits: async (id: string, limits: Partial<{ max_brands_allowed: number; max_agents_allowed: number; ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled: boolean; payments_feature_enabled: boolean; stores_feature_enabled: boolean; max_stores: number; conversation_limit: number }>): Promise<void> => {
       const r = await authFetch(`${API}/super-admin/tenants/${id}/limits`, { method: 'PATCH', body: JSON.stringify(limits) })
       if (!r.ok) { const err = await r.json() as { error?: string }; throw new Error(err.error ?? 'Failed to update limits') }
     },
@@ -2497,7 +2501,7 @@ function SuperAdminSection() {
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit' | 'agencies' | 'hrms' | 'rdns'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit' | 'agencies' | 'hrms' | 'rdns' | 'stores'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2513,7 +2517,7 @@ function SuperAdminSection() {
   const [checkoutErr, setCheckoutErr] = useState<string | null>(null)
   const [saving, setSaving]           = useState(false)
   const [limitsTarget, setLimits]     = useState<SANTenant | null>(null)
-  const [limitsForm, setLimitsForm]   = useState({ max_brands_allowed: 3, max_agents_allowed: 10, ai_feature_enabled: true, smtp_feature_enabled: true, hrms_feature_enabled: false, payments_feature_enabled: false, conversation_limit: 1000 })
+  const [limitsForm, setLimitsForm]   = useState({ max_brands_allowed: 3, max_agents_allowed: 10, ai_feature_enabled: true, smtp_feature_enabled: true, hrms_feature_enabled: false, payments_feature_enabled: false, stores_feature_enabled: false, max_stores: 1, conversation_limit: 1000 })
   const [limitsSaving, setLSaving]    = useState(false)
   const [limitsErr, setLimitsErr]     = useState<string | null>(null)
   const [showCreate, setShowCreate]   = useState(false)
@@ -2671,6 +2675,13 @@ function SuperAdminSection() {
                 <div><p className="text-xs font-medium text-slate-700">Invoicing & payments</p><p className="text-[11px] text-slate-400">Invoices, payment links, gift cards, processors</p></div>
                 <button type="button" onClick={() => setLimitsForm(f => ({ ...f, payments_feature_enabled: !f.payments_feature_enabled }))} className={`${limitsForm.payments_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{limitsForm.payments_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
               </div>
+              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div><p className="text-xs font-medium text-slate-700">Online stores</p><p className="text-[11px] text-slate-400">Hosted WooCommerce stores and connected stores</p></div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} max={1000} value={limitsForm.max_stores} onChange={e => setLimitsForm(f => ({ ...f, max_stores: Number(e.target.value) }))} className="w-16 border border-slate-300 rounded px-2 py-1 text-xs" title="Max stores" />
+                  <button type="button" onClick={() => setLimitsForm(f => ({ ...f, stores_feature_enabled: !f.stores_feature_enabled }))} className={`${limitsForm.stores_feature_enabled ? 'text-sky-500' : 'text-slate-400'} transition-colors`}>{limitsForm.stores_feature_enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+                </div>
+              </div>
             </div>
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={() => setLimits(null)} className="flex-1 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
@@ -2790,6 +2801,7 @@ function SuperAdminSection() {
             <button onClick={() => setTab('agencies')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'agencies' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Agencies</button>
             <button onClick={() => setTab('hrms')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'hrms' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>HR</button>
             <button onClick={() => setTab('rdns')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'rdns' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Reverse DNS</button>
+            <button onClick={() => setTab('stores')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'stores' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Online stores</button>
             <button onClick={() => setTab('audit')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'audit' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Audit Log</button>
           </div>
 
@@ -2826,7 +2838,7 @@ function SuperAdminSection() {
                         <td className="px-4 py-3"><span className="text-xs text-slate-500">{new Date(t.created_at).toLocaleDateString()}</span></td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed, max_agents_allowed: t.max_agents_allowed, ai_feature_enabled: t.ai_feature_enabled, smtp_feature_enabled: t.smtp_feature_enabled, hrms_feature_enabled: !!t.hrms_feature_enabled, payments_feature_enabled: !!t.payments_feature_enabled, conversation_limit: t.conversation_limit }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded text-[10px]" title="Limits & Features"><Settings size={12} /></button>
+                            <button onClick={() => { setLimits(t); setLimitsForm({ max_brands_allowed: t.max_brands_allowed, max_agents_allowed: t.max_agents_allowed, ai_feature_enabled: t.ai_feature_enabled, smtp_feature_enabled: t.smtp_feature_enabled, hrms_feature_enabled: !!t.hrms_feature_enabled, payments_feature_enabled: !!t.payments_feature_enabled, stores_feature_enabled: !!t.stores_feature_enabled, max_stores: t.max_stores ?? 1, conversation_limit: t.conversation_limit }) }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded text-[10px]" title="Limits & Features"><Settings size={12} /></button>
                             <button onClick={() => { setBilling(t); setBForm({ plan: t.plan, subscription_status: t.subscription_status, trial_ends_at: t.trial_ends_at ? new Date(t.trial_ends_at).toISOString().slice(0,16) : '', reset_lock: false }); setCheckoutUrl(null); setCheckoutErr(null); setCheckoutEmail('') }} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Billing"><CreditCard size={12} /></button>
                             <button onClick={() => toggleStatus(t)} className={`p-1.5 rounded transition-colors ${t.account_status === 'active' ? 'text-amber-400 hover:text-amber-600 hover:bg-amber-50' : 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50'}`} title={t.account_status === 'active' ? 'Suspend' : 'Activate'}>{t.account_status === 'active' ? <ToggleRight size={12} /> : <ToggleLeft size={12} />}</button>
                             <button onClick={() => { setPurge(t); setPConf(''); setPurgeErr(null) }} className="p-1.5 text-red-300 hover:text-red-500 hover:bg-red-50 rounded" title="Delete"><Trash2 size={12} /></button>
@@ -2871,6 +2883,8 @@ function SuperAdminSection() {
             <HrmsAdminPanel authFetch={saFetch} />
           ) : tab === 'rdns' ? (
             <RdnsPanel authFetch={saFetch} />
+          ) : tab === 'stores' ? (
+            <StoresAdminPanel authFetch={saFetch} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
@@ -2884,7 +2898,8 @@ function SuperAdminSection() {
 type PlanFormState = {
   name: string; description: string; plan: string; amount: string
   is_free: boolean; self_serve: boolean
-  ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled: boolean; payments_feature_enabled: boolean
+  ai_feature_enabled: boolean; smtp_feature_enabled: boolean; hrms_feature_enabled: boolean; payments_feature_enabled: boolean; stores_feature_enabled: boolean
+  max_stores: string
   trial_days: string
   max_brands_allowed: string; max_agents_allowed: string; conversation_limit: string
 }
@@ -2892,7 +2907,8 @@ type PlanFormState = {
 const emptyPlanForm: PlanFormState = {
   name: '', description: '', plan: '', amount: '',
   is_free: false, self_serve: true,
-  ai_feature_enabled: false, smtp_feature_enabled: false, hrms_feature_enabled: false, payments_feature_enabled: false,
+  ai_feature_enabled: false, smtp_feature_enabled: false, hrms_feature_enabled: false, payments_feature_enabled: false, stores_feature_enabled: false,
+  max_stores: '1',
   trial_days: '14',
   max_brands_allowed: '', max_agents_allowed: '', conversation_limit: '',
 }
@@ -2938,6 +2954,8 @@ function BillingPanel({ api }: { api: ReturnType<typeof useApi> }) {
       smtp_feature_enabled: p.features.smtp_feature_enabled,
       hrms_feature_enabled: !!p.features.hrms_feature_enabled,
       payments_feature_enabled: !!p.features.payments_feature_enabled,
+      stores_feature_enabled: !!p.features.stores_feature_enabled,
+      max_stores: String(p.limits.max_stores ?? 1),
       trial_days: p.trial_days?.toString() ?? '0',
       max_brands_allowed: p.limits.max_brands_allowed?.toString() ?? '',
       max_agents_allowed: p.limits.max_agents_allowed?.toString() ?? '',
@@ -2964,6 +2982,8 @@ function BillingPanel({ api }: { api: ReturnType<typeof useApi> }) {
       smtp_feature_enabled: form.smtp_feature_enabled,
       hrms_feature_enabled: form.hrms_feature_enabled,
       payments_feature_enabled: form.payments_feature_enabled,
+      stores_feature_enabled: form.stores_feature_enabled,
+      max_stores: Number(form.max_stores || 1),
     }
     if (!editId) {
       body.is_free = form.is_free
@@ -3055,6 +3075,7 @@ function BillingPanel({ api }: { api: ReturnType<typeof useApi> }) {
                     {p.features.ai_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">AI replies</span>}
                     {p.features.hrms_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">HR</span>}
                     {p.features.payments_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">Payments</span>}
+                    {p.features.stores_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">Stores ×{p.limits.max_stores ?? 1}</span>}
                     {p.features.smtp_feature_enabled && <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">Custom SMTP</span>}
                     {p.limits.max_brands_allowed != null && <span className="text-[10px] text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded">{p.limits.max_brands_allowed} brands</span>}
                     {p.limits.max_agents_allowed != null && <span className="text-[10px] text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded">{p.limits.max_agents_allowed} agents</span>}
@@ -3106,6 +3127,7 @@ function BillingPanel({ api }: { api: ReturnType<typeof useApi> }) {
                 <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.smtp_feature_enabled} onChange={e => setForm(f => ({ ...f, smtp_feature_enabled: e.target.checked }))} className="rounded" /> Custom SMTP / email</label>
                 <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.hrms_feature_enabled} onChange={e => setForm(f => ({ ...f, hrms_feature_enabled: e.target.checked }))} className="rounded" /> HR module</label>
                 <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.payments_feature_enabled} onChange={e => setForm(f => ({ ...f, payments_feature_enabled: e.target.checked }))} className="rounded" /> Invoicing & payments</label>
+                <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={form.stores_feature_enabled} onChange={e => setForm(f => ({ ...f, stores_feature_enabled: e.target.checked }))} className="rounded" /> Online stores, up to <input type="number" min={0} value={form.max_stores} onChange={e => setForm(f => ({ ...f, max_stores: e.target.value }))} className="w-14 border border-slate-300 rounded px-1 py-0.5" /></label>
               </div>
             </div>
 
@@ -4645,6 +4667,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     { key: 'voice',           icon: <PhoneCall size={16} />,   label: 'AI Call Center', feature: 'inbox' },
     { key: 'hr',              icon: <Briefcase size={16} />,   label: 'HR' },
     { key: 'payments',        icon: <Receipt size={16} />,     label: 'Invoices & Payments' },
+    { key: 'stores',          icon: <Store size={16} />,       label: 'Online Stores' },
     { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', feature: 'knowledge_base' },
     { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', feature: 'settings' },
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', feature: 'brands' },
@@ -4800,6 +4823,7 @@ function Dashboard() {
   const [sidebarOpen, setSidebar] = useState(false)
   const [socketOk, setSocketOk]   = useState(false)
   const [payToast, setPayToast]   = useState<{ amount: number; currency: string; customer: string; status: string } | null>(null)
+  const [orderToast, setOrderToast] = useState<{ store: string; number: string; total: number; currency: string } | null>(null)
   const [toasts, setToasts]       = useState<InboxToast[]>([])
   const [agents, setAgents]       = useState<AgentRow[]>([])
   const [brands, setBrands]       = useState<Brand[]>([])
@@ -4934,6 +4958,11 @@ function Dashboard() {
         setToasts(prev => [...prev.slice(-4), t])
         setTimeout(() => setToasts(prev => prev.filter(x => x.id !== toastId)), 3000)
       }
+    })
+    socket.on('store:order', (o: { store: string; number: string; total: number; currency: string; created: boolean }) => {
+      if (!o.created) return
+      setOrderToast(o)
+      setTimeout(() => setOrderToast(null), 8000)
     })
     socket.on('payment:received', (p: { amount: number; currency: string; customer: string; status: string }) => {
       setPayToast(p)
@@ -5274,6 +5303,7 @@ function Dashboard() {
           {section === 'voice'       && <VoiceSection authFetch={authFetch} role={agent?.role || 'agent'} />}
           {section === 'hr'          && <HrSection authFetch={authFetch} role={agent?.role || 'agent'} />}
           {section === 'payments'    && <PaymentsSection authFetch={authFetch} role={agent?.role || 'agent'} />}
+          {section === 'stores'      && <StoresSection authFetch={authFetch} role={agent?.role || 'agent'} />}
           {section === 'agency'      && <AgencySection authFetch={authFetch} onOpenWorkspace={(id, name) => { setWorkspaceOverride({ tenantId: id, name }); setSection('conversations') }} />}
           {section === 'team'        && <TeamSection />}
           {section === 'superadmin'  && <SuperAdminSection />}
@@ -5282,6 +5312,12 @@ function Dashboard() {
 
       {/* Built-in AI assistant (knows the product, performs tasks with approval) */}
       <CopilotPanel authFetch={authFetch} section={section} onOpenSection={(s) => setSection(s as Section)} />
+      {orderToast && !payToast && (
+        <button type="button" onClick={() => { setOrderToast(null); setSection('stores') }} className="fixed bottom-24 right-6 z-50 rounded-xl border border-sky-200 bg-white px-4 py-3 text-left shadow-xl">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-600">New order · {orderToast.store}</p>
+          <p className="text-sm font-bold text-slate-900">#{orderToast.number} · {fmtMinorUnits(orderToast.total, orderToast.currency)}</p>
+        </button>
+      )}
       {payToast && (
         <button type="button" onClick={() => { setPayToast(null); setSection('payments') }} className="fixed bottom-24 right-6 z-50 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-left shadow-xl">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">{payToast.status === 'pending' ? 'Payment to confirm' : 'Payment received'}</p>
