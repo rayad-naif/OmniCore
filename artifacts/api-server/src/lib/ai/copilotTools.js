@@ -30,6 +30,8 @@ const SECTIONS = [
   'agency',
   'voice',
   'hr',
+  'payments',
+  'stores',
 ];
 
 const obj = (properties, required = []) => ({

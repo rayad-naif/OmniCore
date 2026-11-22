@@ -48,15 +48,19 @@ module.exports = {
     const json = await call(apiKey, '/chat/completions', {
       model: model || DEFAULT_MODEL,
       messages: [{ role: 'system', content: system }, ...messages],
-      tools: tools.map((t) => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      })),
-      tool_choice: 'auto',
+      ...(tools.length
+        ? {
+            tools: tools.map((t) => ({
+              type: 'function',
+              function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+              },
+            })),
+            tool_choice: 'auto',
+          }
+        : {}),
     });
     const msg = json.choices?.[0]?.message || {
       role: 'assistant',

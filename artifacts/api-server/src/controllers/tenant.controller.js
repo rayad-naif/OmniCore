@@ -39,6 +39,9 @@ const TENANT_MIGRATIONS = [
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ai_feature_enabled BOOLEAN NOT NULL DEFAULT true`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS smtp_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payments_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS stores_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS max_stores INTEGER NOT NULL DEFAULT 1`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS custom_domain TEXT`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS smtp_config_json JSONB NOT NULL DEFAULT '{}'`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS imap_config_json JSONB NOT NULL DEFAULT '{}'`,
@@ -232,7 +235,7 @@ router.get(
     try {
       const { rows } = await pool.query(
         `SELECT id, company_name, default_timezone, ai_auto_reply_enabled,
-              ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, custom_domain,
+              ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, payments_feature_enabled, custom_domain,
               smtp_config_json, imap_config_json, webhook_config_json, updated_at
        FROM tenants WHERE id = $1`,
         [req.agent.tenantId],
@@ -280,7 +283,7 @@ router.patch('/settings', requireRole('admin'), async (req, res, next) => {
       `UPDATE tenants SET ${setClauses}, updated_at = NOW()
        WHERE id = $${values.length}
        RETURNING id, company_name, default_timezone, ai_auto_reply_enabled,
-                 ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, custom_domain,
+                 ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, payments_feature_enabled, custom_domain,
                  smtp_config_json, imap_config_json, webhook_config_json, updated_at`,
       values,
     );

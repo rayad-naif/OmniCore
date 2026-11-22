@@ -84,8 +84,9 @@ module.exports = {
       system: [
         { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
       ],
-      tools: toolsFor(tools),
-      tool_choice: { type: 'auto' },
+      ...(tools.length
+        ? { tools: toolsFor(tools), tool_choice: { type: 'auto' } }
+        : {}),
       messages,
       ...(EFFORT_MODELS.test(m) ? { output_config: { effort: 'medium' } } : {}),
     };

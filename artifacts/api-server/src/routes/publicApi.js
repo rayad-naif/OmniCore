@@ -22,6 +22,14 @@
  *   GET    /contacts                        ?email=&q=&limit=&page=
  *   GET    /contacts/:id
  *   GET    /contacts/:id/conversations
+ *
+ *   Invoicing & payments (plans with that module):
+ *   GET    /invoices                        ?kind=invoice|estimate&status=&q=&limit=
+ *   GET    /invoices/:id
+ *   POST   /invoices                        { customer_name, customer_email, line_items:[{description, quantity, unit_price (cents), taxable?, tax_rate?}], currency?, due_date?, send? }
+ *   GET    /payments                        ?status=pending|succeeded&provider=
+ *   POST   /payments/:id/confirm            confirm a pending manual payment (e.g. cash collected on delivery)
+ *   POST   /payments/:id/reject
  */
 
 const crypto = require('crypto');
@@ -423,6 +431,115 @@ router.get(
       [req.params.id, T(req)],
     );
     res.json({ data: rows });
+  }),
+);
+
+// ── Invoicing & payments ─────────────────────────────────────────────────────
+const paySvc = require('../payments/service');
+
+const payGate = wrap(async (req, res, next) => {
+  const ws = await paySvc.workspace(T(req));
+  if (!ws?.enabled) {
+    return res.status(403).json({
+      error: "Invoicing & payments is not included in this workspace's plan",
+    });
+  }
+  return next();
+});
+
+const payError = (fn) =>
+  wrap(async (req, res, next) => {
+    try {
+      await fn(req, res, next);
+    } catch (err) {
+      if (err instanceof paySvc.PayError || err?.statusCode) {
+        return res
+          .status(err.status || err.statusCode || 400)
+          .json({ error: err.message });
+      }
+      throw err;
+    }
+  });
+
+router.get(
+  '/invoices',
+  payGate,
+  payError(async (req, res) => {
+    const kind = req.query.kind === 'estimate' ? 'estimate' : 'invoice';
+    res.json({
+      data: await paySvc.listDocuments(T(req), {
+        kind,
+        status: req.query.status,
+        q: req.query.q,
+        limit: req.query.limit,
+      }),
+    });
+  }),
+);
+
+router.get(
+  '/invoices/:id',
+  payGate,
+  payError(async (req, res) => {
+    const doc = await paySvc.getDocument(T(req), req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    res.json(doc);
+  }),
+);
+
+router.post(
+  '/invoices',
+  payGate,
+  payError(async (req, res) => {
+    const kind = req.body?.kind === 'estimate' ? 'estimate' : 'invoice';
+    let doc = await paySvc.createDocument(T(req), req.body || {}, {
+      kind,
+      by: `api:${req.apiKey.name}`,
+    });
+    if (req.body?.send) doc = await paySvc.sendDocument(T(req), doc.id, {});
+    res.status(201).json(doc);
+  }),
+);
+
+router.get(
+  '/payments',
+  payGate,
+  payError(async (req, res) => {
+    res.json({
+      data: await paySvc.listTransactions(T(req), {
+        status: req.query.status,
+        provider: req.query.provider,
+        limit: req.query.limit,
+      }),
+    });
+  }),
+);
+
+router.post(
+  '/payments/:id/confirm',
+  payGate,
+  payError(async (req, res) => {
+    res.json(
+      await paySvc.confirmPending(
+        T(req),
+        req.params.id,
+        `api:${req.apiKey.name}`,
+      ),
+    );
+  }),
+);
+
+router.post(
+  '/payments/:id/reject',
+  payGate,
+  payError(async (req, res) => {
+    res.json(
+      await paySvc.rejectPending(
+        T(req),
+        req.params.id,
+        `api:${req.apiKey.name}`,
+      ),
+    );
   }),
 );
 

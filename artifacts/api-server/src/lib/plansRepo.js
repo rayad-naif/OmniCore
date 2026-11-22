@@ -61,7 +61,10 @@ function ensureSchema() {
 
     // Optional modules sold per plan (added after the first release).
     await pool.query(
-      `ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false;
+       ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS payments_feature_enabled BOOLEAN NOT NULL DEFAULT false;
+       ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS stores_feature_enabled BOOLEAN NOT NULL DEFAULT false;
+       ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS max_stores INTEGER NOT NULL DEFAULT 1`,
     );
 
     // Seed defaults only when the table is empty, mirroring the previous Stripe
@@ -113,11 +116,14 @@ function shape(r) {
       ai_feature_enabled: r.ai_feature_enabled,
       smtp_feature_enabled: r.smtp_feature_enabled,
       hrms_feature_enabled: Boolean(r.hrms_feature_enabled),
+      payments_feature_enabled: Boolean(r.payments_feature_enabled),
+      stores_feature_enabled: Boolean(r.stores_feature_enabled),
     },
     limits: {
       max_brands_allowed: r.max_brands_allowed,
       max_agents_allowed: r.max_agents_allowed,
       conversation_limit: r.conversation_limit,
+      max_stores: r.max_stores ?? 1,
     },
   };
 }
@@ -289,8 +295,9 @@ async function createPlan(body) {
     `INSERT INTO billing_plans
        (slug, name, description, amount_cents, currency, is_free, self_serve, sort_order,
         trial_days, ai_feature_enabled, smtp_feature_enabled,
-        max_brands_allowed, max_agents_allowed, conversation_limit, hrms_feature_enabled)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        max_brands_allowed, max_agents_allowed, conversation_limit, hrms_feature_enabled,
+        payments_feature_enabled, stores_feature_enabled, max_stores)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING *`,
     [
       slug,
@@ -308,6 +315,9 @@ async function createPlan(body) {
       normInt(body.max_agents_allowed),
       normInt(body.conversation_limit),
       !!body.hrms_feature_enabled,
+      !!body.payments_feature_enabled,
+      !!body.stores_feature_enabled,
+      Math.max(0, normInt(body.max_stores) ?? 1),
     ],
   );
 
@@ -347,6 +357,12 @@ async function updatePlan(id, body) {
     next.smtp_feature_enabled = !!body.smtp_feature_enabled;
   if (body.hrms_feature_enabled !== undefined)
     next.hrms_feature_enabled = !!body.hrms_feature_enabled;
+  if (body.payments_feature_enabled !== undefined)
+    next.payments_feature_enabled = !!body.payments_feature_enabled;
+  if (body.stores_feature_enabled !== undefined)
+    next.stores_feature_enabled = !!body.stores_feature_enabled;
+  if (body.max_stores !== undefined)
+    next.max_stores = Math.max(0, normInt(body.max_stores) ?? 1);
   if (body.max_brands_allowed !== undefined)
     next.max_brands_allowed = normInt(body.max_brands_allowed);
   if (body.max_agents_allowed !== undefined)
@@ -366,7 +382,8 @@ async function updatePlan(id, body) {
        self_serve = $6, sort_order = $7, trial_days = $8,
        ai_feature_enabled = $9, smtp_feature_enabled = $10,
        max_brands_allowed = $11, max_agents_allowed = $12, conversation_limit = $13,
-       hrms_feature_enabled = $15, updated_at = NOW()
+       hrms_feature_enabled = $15, payments_feature_enabled = $16,
+       stores_feature_enabled = $17, max_stores = $18, updated_at = NOW()
      WHERE id = $14 RETURNING *`,
     [
       next.name,
@@ -384,6 +401,9 @@ async function updatePlan(id, body) {
       next.conversation_limit,
       id,
       Boolean(next.hrms_feature_enabled),
+      Boolean(next.payments_feature_enabled),
+      Boolean(next.stores_feature_enabled),
+      next.max_stores ?? 1,
     ],
   );
 

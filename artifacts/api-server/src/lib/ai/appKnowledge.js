@@ -29,6 +29,26 @@ tickets, contacts, ratings, integrations and billing in one dashboard at /dashbo
   payroll with payslips, advances, loans and salary holds, expenses and earnings, recruitment (jobs,
   candidate pipeline, AI resume screening), performance reviews and reports. Employees have their own
   HR sign-in (link under HR → Links). Attendance uses the workspace time zone (Settings → Workspace).
+- Invoices & Payments (plans with invoicing): invoices and estimates (customer, line items from
+  Products, tax, discount or coupon, due date; Send emails a pay link, Copy link for WhatsApp/SMS;
+  customers accept estimates online, Convert turns one into an invoice), payment links (fixed or
+  customer-chosen amount), coupons, gift cards, Payments (every payment; bank transfer, Payoneer
+  and cash on delivery wait for Confirm or Reject; Record payment logs cash or cheques) and
+  Customers (invoiced, paid, outstanding). Settings: currency, prefixes, tax, footer, and Connect
+  for Paddle, Stripe, PayPal, Square, Authorize.net, Payoneer, bank transfer and cash on delivery
+  (money goes straight to the workspace's own account). Cash-on-delivery apps confirm payments
+  with an API key that has the write scope (POST /api/v1/payments/:id/confirm).
+- Online Stores (plans with online stores): New store launches a hosted WooCommerce store in about a
+  minute (name, web address <name>.<store domain>, one of six designs: Boutique, Fresh market, Tech,
+  Beauty, Home & living, Minimal, optional brand colour, a description; AI writes the homepage, pages and
+  starter products when the plan has AI). Open store admin signs in to WordPress without a password.
+  Connect existing store links a WooCommerce site with a REST API key (WooCommerce → Settings → Advanced →
+  REST API, Read/Write). Orders and customers sync into OmniCore (All orders, Contacts, a New order pop-up).
+  Store tabs: Overview, Orders, Design (switch design/colour, rewrite pages), Domain (custom domain with the
+  DNS records to add; SSL automatic), Payments (OmniCore checkout "Pay online" uses the processors from
+  Invoices & Payments; other WooCommerce payment plugins also work; plugin download and connection key for
+  connected stores), Settings (rename, pause, emergency admin login, delete with DELETE typed). Super
+  admins add store servers under Super Admin → Online stores.
 - AI Call Center: an AI phone receptionist with Sales and Support agents on the workspace's own
   number (bring-your-own Twilio, Vapi and OpenAI keys). Tabs: Command Deck (live calls with
   real-time transcript; admins and supervisors can listen in, whisper instructions to the AI,
