@@ -29,8 +29,9 @@ Everything else is read when the API starts; restart after changing.
 | `JWT_SECRET`     | 128 hex chars                                   | Signs access/refresh tokens. `openssl rand -hex 64`. Rotating it signs everyone out.                |
 | `GEMINI_API_KEY` | `AIza…`                                         | [Google AI Studio](https://aistudio.google.com/app/apikey). Powers AI replies, rephrase, summaries. |
 
-The API refuses to start without `DATABASE_URL`, `JWT_SECRET` and `GEMINI_API_KEY`
-(a placeholder value is accepted if you are not using AI yet).
+The API refuses to start without `DATABASE_URL` and `JWT_SECRET`. Without
+`GEMINI_API_KEY` it starts with platform AI features off (AI replies, the assistant, AI
+store content); agencies that add their own AI key still get AI.
 
 ## 2. URLs, CORS, cookies, proxies
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-const { publicAppUrl } = require('./env.js');
+const { publicAppUrl, verifyEnv } = require('./env.js');
 const originalPublicAppUrl = process.env.PUBLIC_APP_URL;
 const originalReplitDomains = process.env.REPLIT_DOMAINS;
 
@@ -47,5 +47,21 @@ describe('public application URL resolution', () => {
       }),
     ).toBe('https://workspace.example.test');
     expect(publicAppUrl()).toBe('');
+  });
+});
+
+describe('required environment', () => {
+  it('starts without GEMINI_API_KEY but not without the database or JWT secret', () => {
+    const exits: number[] = [];
+    const exit = (code: number) => {
+      exits.push(code);
+      return false;
+    };
+    expect(
+      verifyEnv({ DATABASE_URL: 'postgres://x', JWT_SECRET: 'y' }, exit),
+    ).toBe(true);
+    expect(exits).toEqual([]);
+    verifyEnv({ DATABASE_URL: 'postgres://x' }, exit);
+    expect(exits).toEqual([1]);
   });
 });
