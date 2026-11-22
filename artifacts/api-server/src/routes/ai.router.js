@@ -191,6 +191,36 @@ router.use('/knowledge-base', requirePermissionByMethod('knowledge_base'));
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    // schema.sql and older deployments created knowledge_articles with a
+    // different column set; converge every install on the superset used by
+    // the KB API, the RAG search and the crawler.
+    await pool.query(`
+      ALTER TABLE knowledge_articles
+        ADD COLUMN IF NOT EXISTS content             TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS tags                TEXT[] DEFAULT '{}',
+        ADD COLUMN IF NOT EXISTS is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS created_by          UUID,
+        ADD COLUMN IF NOT EXISTS public_html_content TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS plain_text_content  TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS is_public           BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS is_vectorized       BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS author_agent_id     UUID,
+        ALTER COLUMN brand_id DROP NOT NULL
+    `);
+    await pool.query(`
+      UPDATE knowledge_articles
+         SET content = plain_text_content
+       WHERE content = '' AND plain_text_content <> ''
+    `);
+    // Required by the crawler's ON CONFLICT (tenant_id, brand_id, title).
+    await pool
+      .query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_articles_tenant_brand_title
+           ON knowledge_articles (tenant_id, brand_id, title)`,
+      )
+      .catch((err) =>
+        logger.warn({ err }, 'knowledge_articles_unique_index_skipped'),
+      );
     await pool.query(`
       ALTER TABLE brands
         ADD COLUMN IF NOT EXISTS ai_system_prompt TEXT

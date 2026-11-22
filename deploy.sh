@@ -31,6 +31,10 @@ API_PORT="${PORT:-8080}"
 DB_NAME="${DB_NAME:-omnicore}"
 DB_USER="${DB_USER:-omnicore}"
 PM2_APP_NAME="${PM2_APP_NAME:-omnicore-api}"
+DOMAIN="${DOMAIN:-}"                 # e.g. omnicore.irofficial.com (enables nginx server_name + HTTPS)
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"   # Let's Encrypt account email (needed for automatic HTTPS)
+RUN_USER="${RUN_USER:-ubuntu}"       # Non-root user that owns the app and runs PM2
+REPO_BRANCH="${REPO_BRANCH:-main}"
 NODE_MIN_MAJOR=24
 PNPM_MIN_MAJOR=10
 
@@ -282,7 +286,18 @@ cmd_vps_install() {
   step "System packages"
   apt-get update -qq
   apt-get install -y curl gnupg2 lsb-release ca-certificates software-properties-common \
-    git build-essential nginx certbot python3-certbot-nginx netfilter-persistent
+    git build-essential nginx certbot python3-certbot-nginx iptables-persistent openssl
+
+  step "Swap (small OCI shapes need it to build)"
+  local mem_mb
+  mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+  if [[ "$mem_mb" -lt 3500 ]] && ! swapon --show | grep -q '/swapfile'; then
+    fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    success "4G swap enabled (RAM: ${mem_mb}MB)"
+  else
+    success "Swap not needed or already present (RAM: ${mem_mb}MB)"
+  fi
 
   step "Node.js 24"
   if ! node --version 2>/dev/null | grep -q "^v24"; then
@@ -292,7 +307,7 @@ cmd_vps_install() {
   success "Node.js $(node -v)"
 
   step "pnpm + PM2"
-  npm install -g pnpm pm2
+  npm install -g pnpm@10.26.1 pm2
   success "pnpm $(pnpm -v), PM2 $(pm2 -v)"
 
   step "PostgreSQL 16 + pgvector"
@@ -329,64 +344,91 @@ SQL
   echo ""
 
   step "Clone and build application"
-  REPO_URL="${REPO_URL:-https://github.com/your-org/omnicore.git}"
+  REPO_URL="${REPO_URL:-https://github.com/rayad-naif/OmniCore.git}"
   if [[ ! -d "$APP_DIR/.git" ]]; then
-    git clone "$REPO_URL" "$APP_DIR"
+    git clone --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
   else
     git -C "$APP_DIR" pull
   fi
+  chown -R "$RUN_USER":"$RUN_USER" "$APP_DIR"
 
   cd "$APP_DIR"
-  pnpm install --frozen-lockfile
+  sudo -u "$RUN_USER" pnpm install --frozen-lockfile
   success "Dependencies installed"
 
   step "Environment file"
   local env_file="$APP_DIR/artifacts/api-server/.env"
+  local public_url="http://${DOMAIN:-localhost}"
+  [[ -n "$DOMAIN" ]] && public_url="https://${DOMAIN}"
   if [[ ! -f "$env_file" ]]; then
     cp "$APP_DIR/.env.example" "$env_file"
-    # Pre-fill DATABASE_URL
-    sed -i "s|DATABASE_URL=.*|DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}|" "$env_file"
-    warn "Edit $env_file to set JWT_SECRET, GEMINI_API_KEY, PADDLE_*, R2_* before starting"
+    set_env() { # key value — replace or append
+      if grep -q "^$1=" "$env_file"; then
+        sed -i "s|^$1=.*|$1=$2|" "$env_file"
+      else
+        echo "$1=$2" >> "$env_file"
+      fi
+    }
+    set_env NODE_ENV production
+    set_env PORT "$API_PORT"
+    set_env DATABASE_URL "postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}"
+    set_env JWT_SECRET "$(openssl rand -hex 64)"
+    set_env SESSION_SECRET "$(openssl rand -hex 32)"
+    set_env PUBLIC_APP_URL "$public_url"
+    set_env ALLOWED_ORIGINS "$public_url"
+    set_env COOKIE_SECURE "$([[ -n "$DOMAIN" ]] && echo true || echo false)"
+    set_env VITE_API_URL /api
+    chown "$RUN_USER":"$RUN_USER" "$env_file"
+    chmod 600 "$env_file"
+    warn "Edit $env_file to set GEMINI_API_KEY, PADDLE_*, R2_* (JWT/session secrets were generated)"
   else
     success "env file exists"
   fi
 
   step "Build production artifacts"
-  pnpm run build
+  sudo -u "$RUN_USER" env VITE_API_URL=/api pnpm run build
   success "All artifacts built"
 
   step "Apply database schema"
-  PGPASSWORD="$DB_PASSWORD" psql -U "$DB_USER" -d "$DB_NAME" -h localhost \
-    -f "$APP_DIR/artifacts/api-server/schema.sql"
+  # Use the URL stored in .env so re-runs keep working with the original password.
+  local db_url
+  db_url=$(grep '^DATABASE_URL=' "$env_file" | cut -d= -f2-)
+  psql "$db_url" -f "$APP_DIR/artifacts/api-server/schema.sql"
   success "Schema applied"
 
   step "nginx configuration"
-  cat > /etc/nginx/sites-available/omnicore << 'NGINX'
+  local server_name="${DOMAIN:-_}"
+  cat > /etc/nginx/sites-available/omnicore << NGINX
 server {
     listen 80;
-    server_name _;
+    server_name ${server_name};
 
     location /api/ {
-        proxy_pass         http://127.0.0.1:8080;
+        proxy_pass         http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection "upgrade";
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_read_timeout 3600s;
         client_max_body_size 50M;
     }
 
+    location = /dashboard {
+        return 301 /dashboard/;
+    }
+
     location /dashboard/ {
-        alias /srv/omnicore/artifacts/dashboard/dist/;
-        try_files $uri $uri/ /dashboard/index.html;
+        alias ${APP_DIR}/artifacts/dashboard/dist/public/;
+        try_files \$uri \$uri/ /dashboard/index.html;
     }
 
     location / {
-        root /srv/omnicore/artifacts/marketing-site/dist/public/;
-        try_files $uri $uri/ /index.html;
+        root ${APP_DIR}/artifacts/marketing-site/dist/public/;
+        try_files \$uri \$uri.html \$uri/ =404;
+        error_page 404 /404.html;
     }
 }
 NGINX
@@ -396,8 +438,21 @@ NGINX
   nginx -t && systemctl reload nginx
   success "nginx configured"
 
+  step "Firewall (OCI iptables)"
+  # Oracle's Ubuntu images ship iptables rules that REJECT everything except SSH,
+  # and Oracle advises against ufw on these images. Insert ACCEPT rules ahead of
+  # the REJECT rule and persist them. The VCN security list must ALSO allow
+  # TCP 80/443 ingress (OCI Console → Networking → VCN → Security Lists).
+  for port in 80 443; do
+    iptables -C INPUT -p tcp -m state --state NEW --dport "$port" -j ACCEPT 2>/dev/null || \
+      iptables -I INPUT 5 -p tcp -m state --state NEW --dport "$port" -j ACCEPT
+  done
+  netfilter-persistent save
+  success "iptables: ports 80, 443 open and persisted"
+
   step "PM2 ecosystem + startup"
   mkdir -p /var/log/omnicore
+  chown "$RUN_USER":"$RUN_USER" /var/log/omnicore
   cat > "$APP_DIR/ecosystem.config.cjs" << EOF
 const fs   = require('fs');
 const path = require('path');
@@ -427,29 +482,30 @@ module.exports = {
   }]
 };
 EOF
+  chown "$RUN_USER":"$RUN_USER" "$APP_DIR/ecosystem.config.cjs"
 
-  # Start as the ubuntu user if running as root
-  if id ubuntu >/dev/null 2>&1; then
-    sudo -u ubuntu pm2 start "$APP_DIR/ecosystem.config.cjs"
-    sudo -u ubuntu pm2 save
-    sudo env PATH="$PATH" pm2 startup systemd -u ubuntu --hp /home/ubuntu
-  else
-    pm2 start "$APP_DIR/ecosystem.config.cjs"
-    pm2 save
-    pm2 startup
-  fi
-  success "PM2 configured with auto-start on boot"
+  local run_home
+  run_home=$(getent passwd "$RUN_USER" | cut -d: -f6)
+  sudo -u "$RUN_USER" pm2 delete "$PM2_APP_NAME" >/dev/null 2>&1 || true
+  sudo -u "$RUN_USER" pm2 start "$APP_DIR/ecosystem.config.cjs"
+  sudo -u "$RUN_USER" pm2 save
+  env PATH="$PATH" pm2 startup systemd -u "$RUN_USER" --hp "$run_home"
+  success "PM2 configured with auto-start on boot (user: $RUN_USER)"
 
-  step "Firewall"
-  if command -v ufw >/dev/null 2>&1; then
-    ufw --force enable
-    ufw allow 22/tcp
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    success "UFW: ports 22, 80, 443 open"
+  step "HTTPS (Let's Encrypt)"
+  if [[ -n "$DOMAIN" && -n "$CERTBOT_EMAIL" ]]; then
+    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" --redirect; then
+      success "TLS certificate issued for $DOMAIN"
+    else
+      warn "certbot failed — check the DNS A record points here and VCN allows 80/443, then run:"
+      warn "  sudo certbot --nginx -d $DOMAIN"
+    fi
   else
-    warn "ufw not available — configure firewall manually"
+    warn "DOMAIN/CERTBOT_EMAIL not set — skipping HTTPS. Run later: sudo certbot --nginx -d yourdomain.com"
   fi
+
+  local base_url="http://${DOMAIN:-<server-ip>}"
+  [[ -n "$DOMAIN" ]] && base_url="https://${DOMAIN}"
 
   echo ""
   echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════${RESET}"
@@ -458,18 +514,16 @@ EOF
   echo ""
   echo "  Next steps:"
   echo "  1. Edit:   $APP_DIR/artifacts/api-server/.env"
-  echo "     Set:    JWT_SECRET, GEMINI_API_KEY, PADDLE_*, R2_*"
+  echo "     Set:    GEMINI_API_KEY, PADDLE_*, R2_*, SUPER_ADMIN_EMAIL"
   echo ""
   echo "  2. Restart the API to pick up new env:"
-  echo "     sudo -u ubuntu pm2 delete ${PM2_APP_NAME}"
-  echo "     sudo -u ubuntu pm2 start $APP_DIR/ecosystem.config.cjs"
+  echo "     sudo -u $RUN_USER pm2 restart ${PM2_APP_NAME} --update-env"
   echo ""
-  echo "  3. Set up HTTPS (once domain DNS is pointed here):"
-  echo "     sudo certbot --nginx -d yourdomain.com"
-  echo "     Then set COOKIE_SECURE=true in .env and restart"
+  echo "  3. Create the super admin:   ./deploy.sh seed-admin"
   echo ""
-  echo "  4. Register Paddle webhook:"
-  echo "     https://yourdomain.com/api/paddle/webhook"
+  echo "  4. Register Paddle webhook:  ${base_url}/api/paddle/webhook"
+  echo ""
+  echo "  Dashboard: ${base_url}/dashboard/   ·   Health: ${base_url}/api/healthz"
   echo ""
 }
 
@@ -481,7 +535,7 @@ cmd_health() {
 
   info "Checking API health endpoint..."
   local response http_code
-  response=$(curl -s -w "\n%{http_code}" "${base_url}/api/health" 2>/dev/null || echo -e "\n000")
+  response=$(curl -s -w "\n%{http_code}" "${base_url}/api/healthz" 2>/dev/null || echo -e "\n000")
   http_code=$(echo "$response" | tail -1)
   body=$(echo "$response" | head -1)
 
@@ -522,43 +576,41 @@ cmd_seed_admin() {
   if [[ -z "$ADMIN_EMAIL" ]] || [[ -z "$ADMIN_PASS" ]]; then
     error "Email and password are required"
   fi
+  [[ ${#ADMIN_PASS} -ge 12 ]] || error "Use a password of at least 12 characters"
 
-  # Generate bcrypt hash using Node.js (bcryptjs is bundled)
-  HASH=$(node -e "
-const b = require('bcryptjs');
-b.hash('${ADMIN_PASS}', 12).then(h => { process.stdout.write(h); process.exit(0); });
-" 2>/dev/null) || error "Failed to hash password — ensure bcryptjs is installed (pnpm install)"
+  # Hash inside the api-server package so pnpm resolves bcryptjs; pass the
+  # password through the environment, never through code or SQL text.
+  HASH=$(cd artifacts/api-server && ADMIN_PASS="$ADMIN_PASS" node -e "
+require('bcryptjs').hash(process.env.ADMIN_PASS, 12).then(h => process.stdout.write(h));
+") || error "Failed to hash password — run pnpm install first"
 
-  psql "$DATABASE_URL" << SQL
--- Ensure platform tenant exists
-INSERT INTO tenants (id, company_name, subdomain)
-VALUES (
-  '00000000-0000-0000-0000-000000000001',
-  'Platform Admin',
-  'admin'
-) ON CONFLICT (id) DO NOTHING;
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+    -v email="$ADMIN_EMAIL" -v hash="$HASH" << 'SQL'
+INSERT INTO tenants (id, company_name, subscription_status)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Platform Admin', 'active')
+ON CONFLICT (id) DO NOTHING;
 
--- Create super admin agent
-INSERT INTO agents (id, tenant_id, name, email, password_hash, role, is_active)
-VALUES (
-  gen_random_uuid(),
-  '00000000-0000-0000-0000-000000000001',
-  'Super Admin',
-  '${ADMIN_EMAIL}',
-  '${HASH}',
-  'admin',
-  true
-) ON CONFLICT (email) DO NOTHING;
-
--- Register super admin email
-INSERT INTO super_admin_emails (email, added_by)
-VALUES ('${ADMIN_EMAIL}', '${ADMIN_EMAIL}')
-ON CONFLICT DO NOTHING;
-
-SELECT 'Super admin created: ${ADMIN_EMAIL}' AS result;
+INSERT INTO agents (tenant_id, name, email, password_hash, role, is_active)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Super Admin',
+        lower(:'email'), :'hash', 'admin', true)
+ON CONFLICT (tenant_id, email)
+DO UPDATE SET password_hash = EXCLUDED.password_hash, is_active = true;
 SQL
 
-  success "Super admin account created: $ADMIN_EMAIL"
+  local env_file="artifacts/api-server/.env"
+  if grep -q '^SUPER_ADMIN_EMAIL=' "$env_file"; then
+    sed -i "s|^SUPER_ADMIN_EMAIL=.*|SUPER_ADMIN_EMAIL=${ADMIN_EMAIL,,}|" "$env_file"
+  else
+    echo "SUPER_ADMIN_EMAIL=${ADMIN_EMAIL,,}" >> "$env_file"
+  fi
+
+  success "Super admin account ready: $ADMIN_EMAIL (SUPER_ADMIN_EMAIL set in .env)"
+  if command -v pm2 >/dev/null 2>&1 && pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
+    pm2 delete "$PM2_APP_NAME" >/dev/null && pm2 start ecosystem.config.cjs >/dev/null && pm2 save >/dev/null
+    success "API restarted to pick up SUPER_ADMIN_EMAIL"
+  else
+    warn "Restart the API so it picks up SUPER_ADMIN_EMAIL"
+  fi
 }
 
 cmd_help() {

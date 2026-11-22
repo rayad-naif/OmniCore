@@ -708,7 +708,7 @@ router.get('/billing/status', async (req, res, next) => {
     }
 
     return res.json({
-      provider: (process.env.BILLING_PROVIDER || 'stripe').toLowerCase(),
+      provider: (process.env.BILLING_PROVIDER || 'paddle').toLowerCase(),
       connected: paddle.connected,
       environment: paddle.environment,
       error: paddle.error || null,

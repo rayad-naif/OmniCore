@@ -67,7 +67,15 @@ const server = createAppServer();
 server.listen(port, () => {
   logger.info({ port }, 'Server listening');
   // Fire-and-forget: never block server startup on Stripe readiness.
-  void initStripe();
+  // Skip entirely when another billing provider (e.g. Paddle) is configured.
+  const billingProvider = (
+    process.env['BILLING_PROVIDER'] || 'paddle'
+  ).toLowerCase();
+  if (billingProvider === 'stripe') {
+    void initStripe();
+  } else {
+    logger.info({ billingProvider }, 'stripe_init_skipped');
+  }
 });
 
 server.on('error', (err: Error) => {

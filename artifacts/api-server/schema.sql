@@ -164,8 +164,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_internal     ON messages (conversation_i
 CREATE TABLE IF NOT EXISTS knowledge_articles (
     id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id           UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    brand_id            UUID        NOT NULL REFERENCES brands (id) ON DELETE CASCADE,
+    brand_id            UUID        REFERENCES brands (id) ON DELETE CASCADE,
     title               TEXT        NOT NULL,
+    content             TEXT        NOT NULL DEFAULT '',
+    tags                TEXT[]      DEFAULT '{}',
+    is_active           BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_by          UUID,
     public_html_content TEXT        NOT NULL DEFAULT '',
     plain_text_content  TEXT        NOT NULL DEFAULT '',
     is_public           BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -176,6 +180,8 @@ CREATE TABLE IF NOT EXISTS knowledge_articles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_tenant_brand ON knowledge_articles (tenant_id, brand_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_articles_tenant_brand_title
+    ON knowledge_articles (tenant_id, brand_id, title);
 CREATE INDEX IF NOT EXISTS idx_articles_public       ON knowledge_articles (brand_id, is_public)
     WHERE is_public = TRUE;
 

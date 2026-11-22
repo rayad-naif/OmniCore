@@ -11,6 +11,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const navLinks = [
     { href: "/", label: "Home" },
+    { href: "/features", label: "Features" },
     { href: "/pricing", label: "Pricing" },
     { href: "/help", label: "Help" },
     { href: "/contact", label: "Contact" },
@@ -98,7 +99,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div>
             <h3 className="font-medium mb-4">Product</h3>
             <ul className="flex flex-col gap-3 text-sm text-muted-foreground">
-              <li><Link href="/" className="hover:text-primary transition-colors">Features</Link></li>
+              <li><Link href="/features" className="hover:text-primary transition-colors">Features</Link></li>
               <li><Link href="/pricing" className="hover:text-primary transition-colors">Pricing</Link></li>
               <li><Link href="/help" className="hover:text-primary transition-colors">Documentation</Link></li>
               <li><Link href="/contact" className="hover:text-primary transition-colors">Contact</Link></li>
