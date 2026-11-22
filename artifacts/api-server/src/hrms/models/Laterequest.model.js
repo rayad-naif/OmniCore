@@ -73,7 +73,7 @@ const lateRequestSchema = new mongoose.Schema(
       default: '',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // One late request per employee per day. The route layer upserts into this

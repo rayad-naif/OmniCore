@@ -15,9 +15,12 @@ const attributionOverrideSchema = new mongoose.Schema(
       ref: 'User',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 attributionOverrideSchema.index({ station: 1, rangeStart: 1, rangeEnd: 1 });
 
-module.exports = mongoose.model('AttributionOverride', attributionOverrideSchema);
+module.exports = mongoose.model(
+  'AttributionOverride',
+  attributionOverrideSchema,
+);

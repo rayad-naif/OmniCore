@@ -45,8 +45,14 @@ const uploadTextToCloudinary = (content, publicId) =>
   new Promise((resolve, reject) => {
     const buffer = Buffer.from(content, 'utf-8');
     const stream = cloudinary.uploader.upload_stream(
-      { public_id: publicId, resource_type: 'raw', content_type: 'text/plain; charset=utf-8', overwrite: true, invalidate: true },
-      (error, result) => (error ? reject(error) : resolve(result))
+      {
+        public_id: publicId,
+        resource_type: 'raw',
+        content_type: 'text/plain; charset=utf-8',
+        overwrite: true,
+        invalidate: true,
+      },
+      (error, result) => (error ? reject(error) : resolve(result)),
     );
     stream.end(buffer);
   });
@@ -90,7 +96,10 @@ const RE_SKIP_LINE = /^(\d+[smh](\s+\d+[smh])*|\d+(\.\d+)?%)$/;
 
 /** Pad single-digit hour so "1:41:31" → "01:41:31" */
 function normalizeTime(t) {
-  return t.split(':').map((p) => p.padStart(2, '0')).join(':');
+  return t
+    .split(':')
+    .map((p) => p.padStart(2, '0'))
+    .join(':');
 }
 
 /** Convert "HH:MM" or "HH:MM:SS" to total minutes */
@@ -107,7 +116,7 @@ function isTimeInShift(timeStr, startTime, endTime, crossDay) {
   if (!startTime || !endTime) return true; // no shift constraint → include all
   const entryMin = timeStrToMinutes(timeStr);
   const startMin = timeStrToMinutes(startTime);
-  const endMin   = timeStrToMinutes(endTime);
+  const endMin = timeStrToMinutes(endTime);
   if (!crossDay) {
     return entryMin >= startMin && entryMin <= endMin;
   }
@@ -130,7 +139,7 @@ function getShiftForDate(dateStr, assignments) {
       if (asgn.weekday === weekday) return asgn;
     } else {
       const start = new Date(asgn.startDate);
-      const end   = new Date(asgn.endDate);
+      const end = new Date(asgn.endDate);
       const check = new Date(`${dateStr}T00:00:00`);
       if (check >= start && check <= end) return asgn;
     }
@@ -146,12 +155,14 @@ function getShiftForDate(dateStr, assignments) {
     if (asgn.status && asgn.status !== 'active') continue;
     if (!asgn.crossDay) continue; // only cross-day assignments carry over
     if (asgn.recurring) {
-      if (asgn.weekday === prevWeekday) return { ...asgn, _carriedFromPrev: true };
+      if (asgn.weekday === prevWeekday)
+        return { ...asgn, _carriedFromPrev: true };
     } else {
       const start = new Date(asgn.startDate);
-      const end   = new Date(asgn.endDate);
+      const end = new Date(asgn.endDate);
       const check = new Date(`${prevDateStr}T00:00:00`);
-      if (check >= start && check <= end) return { ...asgn, _carriedFromPrev: true };
+      if (check >= start && check <= end)
+        return { ...asgn, _carriedFromPrev: true };
     }
   }
 
@@ -178,11 +189,11 @@ function getShiftForDate(dateStr, assignments) {
 function filterLogTextByShift(rawText, assignments) {
   if (!rawText || !assignments || assignments.length === 0) return rawText;
 
-  const lines   = rawText.split('\n');
-  const output  = [];
+  const lines = rawText.split('\n');
+  const output = [];
 
-  let ctxDate         = null; // last-seen date (for Format C multi-line)
-  let ctxTime         = null; // last-seen time (for Format C multi-line)
+  let ctxDate = null; // last-seen date (for Format C multi-line)
+  let ctxTime = null; // last-seen time (for Format C multi-line)
   let pendingTimeLine = null; // hold Format-C time-only line until we see its content
 
   for (const line of lines) {
@@ -192,7 +203,7 @@ function filterLogTextByShift(rawText, assignments) {
     if (!trimmed) {
       // If we had a pending Format-C time line and hit a blank, discard it
       pendingTimeLine = null;
-      ctxTime         = null;
+      ctxTime = null;
       output.push(line);
       continue;
     }
@@ -206,9 +217,9 @@ function filterLogTextByShift(rawText, assignments) {
     // ── Standalone date header (always keep — it anchors subsequent lines) ──
     const dateMatch = trimmed.match(RE_DATE_ONLY_LINE);
     if (dateMatch) {
-      ctxDate         = dateMatch[1];
+      ctxDate = dateMatch[1];
       pendingTimeLine = null;
-      ctxTime         = null;
+      ctxTime = null;
       output.push(line);
       continue;
     }
@@ -217,14 +228,17 @@ function filterLogTextByShift(rawText, assignments) {
     const tsMatch = trimmed.match(RE_TIMESTAMPED_LINE);
     if (tsMatch) {
       const [, date, time] = tsMatch;
-      ctxDate         = date;
-      ctxTime         = normalizeTime(time);
+      ctxDate = date;
+      ctxTime = normalizeTime(time);
       pendingTimeLine = null;
 
       const shift = getShiftForDate(date, assignments);
       // When a cross-day shift carries from the previous day, the "end" side
       // applies to the current date's early-morning lines (entryMin <= endMin).
-      if (!shift || isTimeInShift(ctxTime, shift.startTime, shift.endTime, shift.crossDay)) {
+      if (
+        !shift ||
+        isTimeInShift(ctxTime, shift.startTime, shift.endTime, shift.crossDay)
+      ) {
         output.push(line);
       }
       continue;
@@ -235,7 +249,7 @@ function filterLogTextByShift(rawText, assignments) {
     if (timeMatch) {
       // Flush any unmatched pending time line first (no content followed it)
       pendingTimeLine = null;
-      ctxTime         = normalizeTime(timeMatch[1]);
+      ctxTime = normalizeTime(timeMatch[1]);
       pendingTimeLine = line; // hold until we see the content line
       continue;
     }
@@ -243,14 +257,17 @@ function filterLogTextByShift(rawText, assignments) {
     // ── Format C content line ─────────────────────────────────────────────────
     // Reached when the previous line was a standalone time
     if (pendingTimeLine !== null && ctxTime) {
-      const date  = ctxDate || new Date().toISOString().slice(0, 10);
+      const date = ctxDate || new Date().toISOString().slice(0, 10);
       const shift = getShiftForDate(date, assignments);
-      if (!shift || isTimeInShift(ctxTime, shift.startTime, shift.endTime, shift.crossDay)) {
+      if (
+        !shift ||
+        isTimeInShift(ctxTime, shift.startTime, shift.endTime, shift.crossDay)
+      ) {
         output.push(pendingTimeLine); // emit the held time line
-        output.push(line);            // emit the content line
+        output.push(line); // emit the content line
       }
       pendingTimeLine = null;
-      ctxTime         = null;
+      ctxTime = null;
       continue;
     }
 
@@ -281,48 +298,53 @@ const ingestLogs = async (req, res) => {
 
     // Runtime logs identify a tracker that is still using an old upload
     // interval. Do not log activity contents or credentials.
-    console.log(`[ActivityLog] ingest station=${stationId} entries=${logs.length}`);
-   
+    console.log(
+      `[ActivityLog] ingest station=${stationId} entries=${logs.length}`,
+    );
+
     await Station.findOneAndUpdate(
       { stationId },
       { $setOnInsert: { stationId, label: stationId } },
-      { upsert: true }
+      { upsert: true },
     );
 
     const currentMonth = getCurrentMonth();
-    const publicId      = `activity-logs/station/${stationId}/${currentMonth}`;
+    const publicId = `activity-logs/station/${stationId}/${currentMonth}`;
 
     await ActivityLog.updateMany(
-      { station: stationId, status: 'active', month: { $ne: currentMonth } }, 
-      { $set: { status: 'needs-backup' } }
+      { station: stationId, status: 'active', month: { $ne: currentMonth } },
+      { $set: { status: 'needs-backup' } },
     );
 
-    let logRecord = await ActivityLog.findOne({ station: stationId, month: currentMonth });
+    let logRecord = await ActivityLog.findOne({
+      station: stationId,
+      month: currentMonth,
+    });
 
     let existingContent = '';
     if (logRecord?.cloudinaryUrl) {
       existingContent = await fetchCloudinaryText(logRecord.cloudinaryUrl);
     }
 
-    const newBlock      = logs.join('\n');
+    const newBlock = logs.join('\n');
     const mergedContent = existingContent
       ? `${existingContent.trimEnd()}\n${newBlock}`
       : newBlock;
     const uploadResult = await uploadTextToCloudinary(mergedContent, publicId);
-    const lineCount     = mergedContent.split('\n').filter(Boolean).length;
+    const lineCount = mergedContent.split('\n').filter(Boolean).length;
 
     logRecord = await ActivityLog.findOneAndUpdate(
       { station: stationId, month: currentMonth },
       {
         $set: {
           cloudinaryPublicId: uploadResult.public_id,
-          cloudinaryUrl:      uploadResult.secure_url,
+          cloudinaryUrl: uploadResult.secure_url,
           lineCount,
-          lastUpdated:        new Date(),
-          status:             'active',
+          lastUpdated: new Date(),
+          status: 'active',
         },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true },
     );
     return res.status(200).json({
       success: true,
@@ -333,7 +355,9 @@ const ingestLogs = async (req, res) => {
     });
   } catch (err) {
     console.error('[ActivityLog] ingestLogs error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to save activity log' });
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to save activity log' });
   }
 };
 
@@ -342,11 +366,17 @@ const ingestLogs = async (req, res) => {
 const getStationCurrentLog = async (req, res) => {
   try {
     const { stationId } = req.params;
-    const currentMonth  = getCurrentMonth();
+    const currentMonth = getCurrentMonth();
 
-    const record = await ActivityLog.findOne({ station: stationId, month: currentMonth });
+    const record = await ActivityLog.findOne({
+      station: stationId,
+      month: currentMonth,
+    });
     if (!record) {
-      return res.status(404).json({ success: false, message: 'No log found for this station this month' });
+      return res.status(404).json({
+        success: false,
+        message: 'No log found for this station this month',
+      });
     }
     return res.status(200).json({ success: true, data: record });
   } catch (err) {
@@ -354,37 +384,43 @@ const getStationCurrentLog = async (req, res) => {
   }
 };
 
-  /**
-   * GET /activity-logs/station/:stationId/by-shift?month=YYYY-MM
-   * Returns attributed lines grouped by assigned employee (includes confirmed
-   * and scheduleInferred lines) for the given station/month. Useful for
-   * showing logs split by shifts when a PC is shared.
-   */
-  const getStationShiftLogs = async (req, res) => {
-    try {
-      const { stationId } = req.params;
-      const month = req.query.month || getCurrentMonth();
+/**
+ * GET /activity-logs/station/:stationId/by-shift?month=YYYY-MM
+ * Returns attributed lines grouped by assigned employee (includes confirmed
+ * and scheduleInferred lines) for the given station/month. Useful for
+ * showing logs split by shifts when a PC is shared.
+ */
+const getStationShiftLogs = async (req, res) => {
+  try {
+    const { stationId } = req.params;
+    const month = req.query.month || getCurrentMonth();
 
-      const record = await ActivityLog.findOne({ station: stationId, month });
-      if (!record?.cloudinaryUrl) {
-        return res.status(200).json({ success: true, data: { byEmployee: {}, unattributed: [] } });
-      }
-
-      const rawText = await fetchCloudinaryText(record.cloudinaryUrl);
-      const result = await attributeStationMonth(stationId, month, rawText);
-
-      return res.status(200).json({ success: true, month, data: result });
-    } catch (err) {
-      console.error('[ActivityLog] getStationShiftLogs error:', err);
-      return res.status(500).json({ success: false, message: err.message });
+    const record = await ActivityLog.findOne({ station: stationId, month });
+    if (!record?.cloudinaryUrl) {
+      return res
+        .status(200)
+        .json({ success: true, data: { byEmployee: {}, unattributed: [] } });
     }
-  };
+
+    const rawText = await fetchCloudinaryText(record.cloudinaryUrl);
+    const result = await attributeStationMonth(stationId, month, rawText);
+
+    return res.status(200).json({ success: true, month, data: result });
+  } catch (err) {
+    console.error('[ActivityLog] getStationShiftLogs error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 const getAllCurrentLogs = async (req, res) => {
   try {
     const currentMonth = getCurrentMonth();
-    const records = await ActivityLog.find({ month: currentMonth }).sort({ lastUpdated: -1 });
-    return res.status(200).json({ success: true, count: records.length, data: records });
+    const records = await ActivityLog.find({ month: currentMonth }).sort({
+      lastUpdated: -1,
+    });
+    return res
+      .status(200)
+      .json({ success: true, count: records.length, data: records });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -392,30 +428,39 @@ const getAllCurrentLogs = async (req, res) => {
 
 const getAllLogs = async (req, res) => {
   try {
-    const logs = await ActivityLog.find({ cloudinaryUrl: { $exists: true, $ne: '' } });
+    const logs = await ActivityLog.find({
+      cloudinaryUrl: { $exists: true, $ne: '' },
+    });
     const stationIds = [...new Set(logs.map((record) => record.station))];
 
     const stations = await Station.find({ stationId: { $in: stationIds } });
-    const assignedIds = [...new Set(stations.flatMap((station) => (station.assignedEmployees || []).map((id) => id.toString())))];
+    const assignedIds = [
+      ...new Set(
+        stations.flatMap((station) =>
+          (station.assignedEmployees || []).map((id) => id.toString()),
+        ),
+      ),
+    ];
 
     const employees = await Employee.find({
-      $or: [
-        { _id: { $in: assignedIds } },
-        { user: { $in: assignedIds } },
-      ],
+      $or: [{ _id: { $in: assignedIds } }, { user: { $in: assignedIds } }],
     }).populate({
       path: 'user',
       select: 'firstName lastName avatar employeeId department',
     });
 
-    const employeeById = new Map(employees.map((employee) => [employee._id.toString(), employee]));
+    const employeeById = new Map(
+      employees.map((employee) => [employee._id.toString(), employee]),
+    );
     const employeeByUserId = new Map(
       employees
         .filter((employee) => employee.user)
-        .map((employee) => [employee.user.toString(), employee])
+        .map((employee) => [employee.user.toString(), employee]),
     );
 
-    const stationLogMap = new Map(logs.map((record) => [record.station, record]));
+    const stationLogMap = new Map(
+      logs.map((record) => [record.station, record]),
+    );
     const employeeMap = new Map();
 
     stations.forEach((station) => {
@@ -423,11 +468,13 @@ const getAllLogs = async (req, res) => {
       if (!logRecord) return;
 
       const lineCount = logRecord.lineCount || 0;
-      const lastUpdated = logRecord.lastUpdated || logRecord.updatedAt || logRecord.createdAt;
+      const lastUpdated =
+        logRecord.lastUpdated || logRecord.updatedAt || logRecord.createdAt;
 
       (station.assignedEmployees || []).forEach((employeeRef) => {
         const employeeId = employeeRef.toString();
-        const employee = employeeById.get(employeeId) || employeeByUserId.get(employeeId);
+        const employee =
+          employeeById.get(employeeId) || employeeByUserId.get(employeeId);
         if (!employee) return;
 
         const existing = employeeMap.get(employeeId);
@@ -444,7 +491,10 @@ const getAllLogs = async (req, res) => {
         }
 
         existing.lineCount += lineCount;
-        if (lastUpdated && new Date(lastUpdated) > new Date(existing.lastUpdated)) {
+        if (
+          lastUpdated &&
+          new Date(lastUpdated) > new Date(existing.lastUpdated)
+        ) {
           existing.lastUpdated = lastUpdated;
         }
         if (!existing.stationIds.includes(station.stationId)) {
@@ -460,11 +510,14 @@ const getAllLogs = async (req, res) => {
       .map((record) => ({
         ...record,
         stationId: record.stationIds?.[0] || null,
-        stationLabel: record.stationLabels?.[0] || record.stationIds?.[0] || null,
+        stationLabel:
+          record.stationLabels?.[0] || record.stationIds?.[0] || null,
       }))
       .sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
 
-    return res.status(200).json({ success: true, count: records.length, data: records });
+    return res
+      .status(200)
+      .json({ success: true, count: records.length, data: records });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -472,8 +525,12 @@ const getAllLogs = async (req, res) => {
 
 const getPendingBackup = async (req, res) => {
   try {
-    const records = await ActivityLog.find({ status: 'needs-backup' }).sort({ month: -1 });
-    return res.status(200).json({ success: true, count: records.length, data: records });
+    const records = await ActivityLog.find({ status: 'needs-backup' }).sort({
+      month: -1,
+    });
+    return res
+      .status(200)
+      .json({ success: true, count: records.length, data: records });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -485,16 +542,23 @@ const archiveLog = async (req, res) => {
     const { month } = req.body;
 
     if (!month) {
-      return res.status(400).json({ success: false, message: 'month (YYYY-MM) is required in body' });
+      return res.status(400).json({
+        success: false,
+        message: 'month (YYYY-MM) is required in body',
+      });
     }
 
     const record = await ActivityLog.findOne({ station: stationId, month });
     if (!record) {
-      return res.status(404).json({ success: false, message: 'Log record not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: 'Log record not found' });
     }
 
     if (record.cloudinaryPublicId) {
-      await cloudinary.uploader.destroy(record.cloudinaryPublicId, { resource_type: 'raw' });
+      await cloudinary.uploader.destroy(record.cloudinaryPublicId, {
+        resource_type: 'raw',
+      });
     }
 
     record.status = 'archived';
@@ -528,7 +592,8 @@ const getCurrentLogContent = async (req, res) => {
     if (stations.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'This employee is not assigned to any station. Assign them in the Station admin screen.',
+        message:
+          'This employee is not assigned to any station. Assign them in the Station admin screen.',
       });
     }
 
@@ -537,20 +602,25 @@ const getCurrentLogContent = async (req, res) => {
     let unattributedCount = 0;
 
     for (const station of stations) {
-      const record = await ActivityLog.findOne({ station: station.stationId, month: currentMonth });
+      const record = await ActivityLog.findOne({
+        station: station.stationId,
+        month: currentMonth,
+      });
       if (!record?.cloudinaryUrl) continue;
 
       const rawText = await fetchCloudinaryText(record.cloudinaryUrl);
       const { byEmployee, unattributed } = await attributeStationMonth(
         station.stationId,
         currentMonth,
-        rawText
+        rawText,
       );
 
       const entry = byEmployee[employeeId];
       if (entry) {
         confirmedLines = confirmedLines.concat(entry.confirmed);
-        scheduleInferredLines = scheduleInferredLines.concat(entry.scheduleInferred);
+        scheduleInferredLines = scheduleInferredLines.concat(
+          entry.scheduleInferred,
+        );
       }
       unattributedCount += unattributed.length;
     }
@@ -585,7 +655,13 @@ const getCurrentLog = async (req, res) => {
     const stations = await findStationsForEmployeeReference(employeeId);
     return res.status(200).json({
       success: true,
-      data: { employeeId, stations: stations.map((s) => ({ stationId: s.stationId, label: s.label })) },
+      data: {
+        employeeId,
+        stations: stations.map((s) => ({
+          stationId: s.stationId,
+          label: s.label,
+        })),
+      },
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -625,9 +701,12 @@ const getEmployeeLogHistory = async (req, res) => {
     // Activity endpoints receive an Employee document ID because stations
     // reference Employee. ShiftAssignment, however, references User. Resolve
     // both forms so the employee's actual assignments are always found.
-    const employeeProfile = await Employee.findById(employeeId).select('user').lean();
+    const employeeProfile = await Employee.findById(employeeId)
+      .select('user')
+      .lean();
     const shiftEmployeeRefs = [employeeId];
-    if (employeeProfile?.user) shiftEmployeeRefs.push(employeeProfile.user.toString());
+    if (employeeProfile?.user)
+      shiftEmployeeRefs.push(employeeProfile.user.toString());
 
     const shiftAssignments = await ShiftAssignment.find({
       employee: { $in: [...new Set(shiftEmployeeRefs)] },
@@ -639,19 +718,19 @@ const getEmployeeLogHistory = async (req, res) => {
     // Build a human-readable summary of shift windows (returned for UI display)
     const shiftInfo = shiftAssignments.map((a) => ({
       startTime: a.startTime,
-      endTime:   a.endTime,
-      crossDay:  a.crossDay,
+      endTime: a.endTime,
+      crossDay: a.crossDay,
       recurring: a.recurring,
-      weekday:   a.recurring ? a.weekday : null,
+      weekday: a.recurring ? a.weekday : null,
       // The dashboard uses the same assignment data to group overnight work
       // under the date the shift started, rather than splitting it at midnight.
       startDate: a.startDate ? a.startDate.toISOString().slice(0, 10) : null,
-      endDate:   a.endDate ? a.endDate.toISOString().slice(0, 10) : null,
+      endDate: a.endDate ? a.endDate.toISOString().slice(0, 10) : null,
     }));
 
     // ── Fetch log records for all assigned stations ────────────────────────────
     const records = await ActivityLog.find({
-      station:      { $in: stationIds },
+      station: { $in: stationIds },
       cloudinaryUrl: { $exists: true, $ne: '' },
     }).sort({ month: -1, station: 1 });
 
@@ -663,13 +742,13 @@ const getEmployeeLogHistory = async (req, res) => {
         // No shift assignments: return the raw Cloudinary URL as before.
         // The frontend can fetch it directly (backward-compatible behaviour).
         history.push({
-          stationId:     record.station,
-          month:         record.month,
+          stationId: record.station,
+          month: record.month,
           cloudinaryUrl: record.cloudinaryUrl,
-          lineCount:     record.lineCount || 0,
-          filteredText:  null,
+          lineCount: record.lineCount || 0,
+          filteredText: null,
           shiftFiltered: false,
-          shiftInfo:     [],
+          shiftInfo: [],
         });
         continue;
       }
@@ -682,11 +761,11 @@ const getEmployeeLogHistory = async (req, res) => {
         : 0;
 
       history.push({
-        stationId:     record.station,
-        month:         record.month,
+        stationId: record.station,
+        month: record.month,
         cloudinaryUrl: record.cloudinaryUrl, // kept for admin/audit use
-        lineCount:     record.lineCount || 0,
-        filteredText,                         // use this on the client
+        lineCount: record.lineCount || 0,
+        filteredText, // use this on the client
         filteredLineCount,
         shiftFiltered: true,
         shiftInfo,
@@ -717,7 +796,11 @@ const getUnattributed = async (req, res) => {
     }
 
     const rawText = await fetchCloudinaryText(record.cloudinaryUrl);
-    const { unattributed } = await attributeStationMonth(stationId, month, rawText);
+    const { unattributed } = await attributeStationMonth(
+      stationId,
+      month,
+      rawText,
+    );
 
     const filtered = includeIdle
       ? unattributed
@@ -751,10 +834,10 @@ const resolveAttribution = async (req, res) => {
     }
 
     const override = await AttributionOverride.create({
-      station:    stationId,
+      station: stationId,
       rangeStart: new Date(rangeStart),
-      rangeEnd:   new Date(rangeEnd),
-      employee:   employeeId,
+      rangeEnd: new Date(rangeEnd),
+      employee: employeeId,
       resolvedBy: req.user._id,
     });
 

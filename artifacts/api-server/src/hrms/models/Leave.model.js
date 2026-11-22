@@ -2,7 +2,11 @@ const mongoose = require('../core/mongoose');
 
 const leaveSchema = new mongoose.Schema(
   {
-    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
     leaveType: {
       type: String,
       enum: ['sick', 'casual', 'unpaid'],
@@ -22,7 +26,7 @@ const leaveSchema = new mongoose.Schema(
     approvedAt: { type: Date },
     comments: { type: String, default: '' },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model('Leave', leaveSchema);

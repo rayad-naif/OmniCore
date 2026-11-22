@@ -25,7 +25,12 @@ const REFRESH_TTL = () => process.env.HRMS_REFRESH_TOKEN_TTL || '30d';
 
 function signAccess(user, tenantId, extra = {}) {
   return jwt.sign(
-    { id: String(user._id || user.id), role: user.role, tid: String(tenantId), ...extra },
+    {
+      id: String(user._id || user.id),
+      role: user.role,
+      tid: String(tenantId),
+      ...extra,
+    },
     secret('access'),
     { expiresIn: ACCESS_TTL(), audience: 'omnicore-hrms' },
   );

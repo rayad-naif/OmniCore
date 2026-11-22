@@ -48,8 +48,8 @@ const TEMPLATES = {
       </div>`,
   }),
   newEmployee: (data) => ({
-  subject: `Welcome to GlitchGone HRMS – Your Account is Ready`,
-  html: `
+    subject: `Welcome to GlitchGone HRMS – Your Account is Ready`,
+    html: `
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#0f172a;color:#f1f5f9;padding:32px;border-radius:16px">
       <div style="text-align:center;margin-bottom:28px">
         <h1 style="color:#6366f1;font-size:26px;margin:0">GlitchGone HRMS</h1>
@@ -75,21 +75,33 @@ const TEMPLATES = {
             <td style="color:#64748b;font-size:12px;padding:6px 0">Temporary Password</td>
             <td style="color:#6366f1;font-weight:700;font-size:13px;letter-spacing:0.5px">${data.password}</td>
           </tr>
-          ${data.department ? `
+          ${
+            data.department
+              ? `
           <tr>
             <td style="color:#64748b;font-size:12px;padding:6px 0">Department</td>
             <td style="color:#f1f5f9;font-size:13px">${data.department}</td>
-          </tr>` : ''}
-          ${data.position ? `
+          </tr>`
+              : ''
+          }
+          ${
+            data.position
+              ? `
           <tr>
             <td style="color:#64748b;font-size:12px;padding:6px 0">Position</td>
             <td style="color:#f1f5f9;font-size:13px">${data.position}</td>
-          </tr>` : ''}
-          ${data.dateOfJoining ? `
+          </tr>`
+              : ''
+          }
+          ${
+            data.dateOfJoining
+              ? `
           <tr>
             <td style="color:#64748b;font-size:12px;padding:6px 0">Date of Joining</td>
             <td style="color:#f1f5f9;font-size:13px">${data.dateOfJoining}</td>
-          </tr>` : ''}
+          </tr>`
+              : ''
+          }
         </table>
       </div>
  
@@ -107,7 +119,7 @@ const TEMPLATES = {
         © 2026 GlitchGone HRMS. This is an automated message, please do not reply.
       </p>
     </div>`,
-}),
+  }),
   welcome: (data) => ({
     subject: `Welcome to GlitchGone HRMS, ${data.name}!`,
     html: `
@@ -211,11 +223,15 @@ const TEMPLATES = {
               <td style="color:#64748b;font-size:12px;padding:6px 0">Requested Date</td>
               <td style="color:#f1f5f9;font-size:13px">${data.requestedDate}</td>
             </tr>
-            ${data.reason ? `
+            ${
+              data.reason
+                ? `
             <tr>
               <td style="color:#64748b;font-size:12px;padding:6px 0">Reason</td>
               <td style="color:#f1f5f9;font-size:13px">${data.reason}</td>
-            </tr>` : ''}
+            </tr>`
+                : ''
+            }
           </table>
         </div>
 

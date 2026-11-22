@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { advanceAPI, loanAPI, performanceBonusAPI, employeeAPI } from '@/services/api';
 import clsx from 'clsx';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@/services/xlsxLite';
 import { payrollAPI } from '@/services/api';
 import LoanSetupModal from '@/pages/shared/LoanSetupModal';
 import toast from 'react-hot-toast';

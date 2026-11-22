@@ -14,7 +14,8 @@ const { Writable } = require('node:stream');
 const storage = require('./storage');
 
 function keyFromOptions(opts = {}, originalName = '') {
-  const folder = String(opts.folder || 'files').replace(/^gg-hrms\/?/, '') || 'files';
+  const folder =
+    String(opts.folder || 'files').replace(/^gg-hrms\/?/, '') || 'files';
   let name = String(opts.public_id || crypto.randomUUID());
   // public_id may already contain folders (e.g. "activity-logs/station/2026-07").
   const parts = name.split('/').filter(Boolean);
@@ -22,12 +23,18 @@ function keyFromOptions(opts = {}, originalName = '') {
   if (!path.extname(name)) {
     const ext = path.extname(originalName || '');
     if (ext) name += ext.toLowerCase();
-    else if (opts.resource_type === 'raw' && opts.format !== 'bin') name += '.txt';
+    else if (opts.resource_type === 'raw' && opts.format !== 'bin')
+      name += '.txt';
   }
   return storage.keyFor([folder, ...parts].join('/'), name);
 }
 
-async function uploadBuffer(buffer, opts = {}, originalName = '', mimetype = '') {
+async function uploadBuffer(
+  buffer,
+  opts = {},
+  originalName = '',
+  mimetype = '',
+) {
   const key = keyFromOptions(opts, originalName);
   const type =
     opts.content_type ||

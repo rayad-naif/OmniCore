@@ -48,6 +48,7 @@ function useR2() {
 const safeSegment = (s) =>
   String(s || '')
     .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/\.{2,}/g, '.')
     .replace(/^\.+/, '_')
     .slice(0, 120) || 'file';
 
@@ -175,7 +176,9 @@ function keyFromUrl(url) {
 async function serveFile(req, res) {
   const { k, s, e } = req.query;
   if (!verifySignedRequest({ k, s, e })) {
-    return res.status(403).json({ success: false, message: 'Invalid or expired file link' });
+    return res
+      .status(403)
+      .json({ success: false, message: 'Invalid or expired file link' });
   }
   const key = assertKey(k);
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -190,11 +193,13 @@ async function serveFile(req, res) {
   );
   if (useR2()) {
     const ok = await r2.streamFromR2(key, res);
-    if (!ok) res.status(404).json({ success: false, message: 'File not found' });
+    if (!ok)
+      res.status(404).json({ success: false, message: 'File not found' });
     return undefined;
   }
   const buf = await read(key);
-  if (!buf) return res.status(404).json({ success: false, message: 'File not found' });
+  if (!buf)
+    return res.status(404).json({ success: false, message: 'File not found' });
   res.setHeader('Content-Type', type);
   return res.send(buf);
 }

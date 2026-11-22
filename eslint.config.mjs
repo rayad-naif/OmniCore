@@ -60,4 +60,13 @@ export default tseslint.config(
       'react-hooks/exhaustive-deps': 'warn',
     },
   },
+  // HR app ported from GHL-HRMS (~30k lines of JSX): unused-import and
+  // hook-dependency hints are not reported there; every error rule still is.
+  {
+    files: ['artifacts/hrms/src/**/*.{js,jsx}'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+    },
+  },
 );

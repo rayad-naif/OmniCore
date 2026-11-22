@@ -33,7 +33,7 @@ const activityLogSchema = new mongoose.Schema(
       default: 'active',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 activityLogSchema.index({ station: 1, month: 1 }, { unique: true });

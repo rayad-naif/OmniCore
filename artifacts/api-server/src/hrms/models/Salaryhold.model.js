@@ -2,7 +2,12 @@ const mongoose = require('../core/mongoose');
 
 const salaryHoldSchema = new mongoose.Schema(
   {
-    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
 
     // The total amount being held back from this employee's salary
     amount: { type: Number, required: true, min: 0 },
@@ -44,7 +49,7 @@ const salaryHoldSchema = new mongoose.Schema(
       },
     ],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Quick lookup: "does this employee have an active hold right now"

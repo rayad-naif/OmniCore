@@ -7,14 +7,14 @@ const mongoose = require('../core/mongoose');
 // ── Schema ────────────────────────────────────────────────────────────────────
 const deptSchema = new mongoose.Schema(
   {
-    name:        { type: String, required: true, trim: true },
-    code:        { type: String, required: true, trim: true, uppercase: true },
+    name: { type: String, required: true, trim: true },
+    code: { type: String, required: true, trim: true, uppercase: true },
     description: { type: String, trim: true, default: '' },
-    location:    { type: String, trim: true, default: '' },
-    head:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    isActive:    { type: Boolean, default: true },
+    location: { type: String, trim: true, default: '' },
+    head: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const Department =
@@ -53,11 +53,15 @@ router.get(
       },
     ]);
 
-    const countMap = Object.fromEntries(counts.map((c) => [String(c._id), c.count]));
-    depts.forEach((d) => { d.employeeCount = countMap[String(d._id)] || 0; });
+    const countMap = Object.fromEntries(
+      counts.map((c) => [String(c._id), c.count]),
+    );
+    depts.forEach((d) => {
+      d.employeeCount = countMap[String(d._id)] || 0;
+    });
 
     res.json({ success: true, data: depts });
-  })
+  }),
 );
 
 // ── GET /departments/:id ──────────────────────────────────────────────────────
@@ -69,10 +73,12 @@ router.get(
       .populate('head', 'firstName lastName')
       .lean();
     if (!dept || !dept.isActive) {
-      return res.status(404).json({ success: false, message: 'Department not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: 'Department not found' });
     }
     res.json({ success: true, data: dept });
-  })
+  }),
 );
 
 // ── POST /departments  (admin only) ──────────────────────────────────────────
@@ -84,17 +90,31 @@ router.post(
     const { name, code, description, location, head } = req.body;
 
     if (!name || !code) {
-      return res.status(400).json({ success: false, message: 'Name and Code are required.' });
+      return res
+        .status(400)
+        .json({ success: false, message: 'Name and Code are required.' });
     }
 
-    const existing = await Department.findOne({ code: code.toUpperCase(), isActive: true });
+    const existing = await Department.findOne({
+      code: code.toUpperCase(),
+      isActive: true,
+    });
     if (existing) {
-      return res.status(409).json({ success: false, message: `Code "${code.toUpperCase()}" already exists.` });
+      return res.status(409).json({
+        success: false,
+        message: `Code "${code.toUpperCase()}" already exists.`,
+      });
     }
 
-    const dept = await Department.create({ name, code, description, location, head: head || null });
+    const dept = await Department.create({
+      name,
+      code,
+      description,
+      location,
+      head: head || null,
+    });
     res.status(201).json({ success: true, data: dept });
-  })
+  }),
 );
 
 // ── PUT /departments/:id  (admin only) ───────────────────────────────────────
@@ -107,29 +127,36 @@ router.put(
 
     const dept = await Department.findById(req.params.id);
     if (!dept || !dept.isActive) {
-      return res.status(404).json({ success: false, message: 'Department not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: 'Department not found' });
     }
 
     if (code && code.toUpperCase() !== dept.code) {
       const collision = await Department.findOne({
-        code: code.toUpperCase(), isActive: true, _id: { $ne: dept._id },
+        code: code.toUpperCase(),
+        isActive: true,
+        _id: { $ne: dept._id },
       });
       if (collision) {
-        return res.status(409).json({ success: false, message: `Code "${code.toUpperCase()}" already exists.` });
+        return res.status(409).json({
+          success: false,
+          message: `Code "${code.toUpperCase()}" already exists.`,
+        });
       }
     }
 
-    if (name)                    dept.name        = name;
-    if (code)                    dept.code        = code.toUpperCase();
+    if (name) dept.name = name;
+    if (code) dept.code = code.toUpperCase();
     if (description !== undefined) dept.description = description;
-    if (location    !== undefined) dept.location    = location;
-    if (head        !== undefined) dept.head        = head || null;
+    if (location !== undefined) dept.location = location;
+    if (head !== undefined) dept.head = head || null;
 
     await dept.save();
     await dept.populate('head', 'firstName lastName');
 
     res.json({ success: true, data: dept });
-  })
+  }),
 );
 
 // ── DELETE /departments/:id  (soft-delete, admin only) ───────────────────────
@@ -140,12 +167,14 @@ router.delete(
   asyncHandler(async (req, res) => {
     const dept = await Department.findById(req.params.id);
     if (!dept || !dept.isActive) {
-      return res.status(404).json({ success: false, message: 'Department not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: 'Department not found' });
     }
     dept.isActive = false;
     await dept.save();
     res.json({ success: true, message: 'Department deleted successfully.' });
-  })
+  }),
 );
 
 module.exports = router;

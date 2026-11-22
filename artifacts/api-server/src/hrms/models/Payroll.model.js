@@ -2,7 +2,11 @@ const mongoose = require('../core/mongoose');
 
 const payrollSchema = new mongoose.Schema(
   {
-    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
     payPeriod: {
       month: { type: Number, required: true, min: 1, max: 12 },
       year: { type: Number, required: true },
@@ -68,11 +72,22 @@ const payrollSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['draft', 'pending_approval', 'approved', 'processed', 'paid', 'cancelled'],
+      enum: [
+        'draft',
+        'pending_approval',
+        'approved',
+        'processed',
+        'paid',
+        'cancelled',
+      ],
       default: 'draft',
     },
     paymentDetails: {
-      method: { type: String, enum: ['bank_transfer', 'cheque', 'cash', 'upi'], default: 'bank_transfer' },
+      method: {
+        type: String,
+        enum: ['bank_transfer', 'cheque', 'cash', 'upi'],
+        default: 'bank_transfer',
+      },
       transactionId: String,
       paidAt: Date,
       payslipUrl: String,
@@ -92,7 +107,7 @@ const payrollSchema = new mongoose.Schema(
   {
     timestamps: true,
     toJSON: { virtuals: true },
-  }
+  },
 );
 
 // Auto-calculate totals before save
@@ -125,7 +140,10 @@ payrollSchema.pre('save', function (next) {
   next();
 });
 
-payrollSchema.index({ employee: 1, 'payPeriod.month': 1, 'payPeriod.year': 1 }, { unique: true });
+payrollSchema.index(
+  { employee: 1, 'payPeriod.month': 1, 'payPeriod.year': 1 },
+  { unique: true },
+);
 payrollSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Payroll', payrollSchema);

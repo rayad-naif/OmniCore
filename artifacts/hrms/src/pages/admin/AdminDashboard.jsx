@@ -357,7 +357,7 @@ export default function AdminDashboard() {
     {
       label:    'Total Employees',
       value:    loading.stats ? '…' : (dashStats?.totalEmployees?.toLocaleString() ?? '—'),
-      change:   '+12%', up: true,
+      change:   null, up: true, // (the original showed a fixed '+12%')
       icon:     Users,
       color:    'text-primary-400', bg: 'bg-primary-500/10',
     },
@@ -389,7 +389,7 @@ export default function AdminDashboard() {
       {/* Page header */}
       <motion.div {...fadeUp(0)} className="flex-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-white">Hello Admin Dashboard</h1>
+          <h1 className="font-display text-2xl font-bold text-slate-900 dark:text-white">Admin dashboard</h1>
           <p className="text-slate-400 text-sm mt-1">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>

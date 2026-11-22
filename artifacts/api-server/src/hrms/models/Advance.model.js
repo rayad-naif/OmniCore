@@ -27,7 +27,7 @@ const advanceSchema = new mongoose.Schema(
     // Which payroll period this was deducted in
     deductedIn: {
       month: { type: Number },
-      year:  { type: Number },
+      year: { type: Number },
     },
     payrollId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -45,11 +45,11 @@ const advanceSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
-    rejectedAt:  { type: Date, default: null },
+    rejectedAt: { type: Date, default: null },
     rejectionNote: { type: String, default: '' },
     requestedAt: { type: Date, default: Date.now },
   },
-  { timestamps: true, toJSON: { virtuals: true } }
+  { timestamps: true, toJSON: { virtuals: true } },
 );
 
 // Compound index — useful for "all pending advances for employee X"

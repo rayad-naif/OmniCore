@@ -1,13 +1,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-@font-face {
-  font-family: 'Mundial';
-  src: url('/path-to-your-fonts/Mundial-DemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
+
+/* Default HR palette (indigo); replaced by the agency's brand colour at runtime. */
+:root {
+  --hr-primary-50: 238 242 255;
+  --hr-primary-100: 224 231 255;
+  --hr-primary-200: 199 210 254;
+  --hr-primary-300: 165 180 252;
+  --hr-primary-400: 129 140 248;
+  --hr-primary-500: 99 102 241;
+  --hr-primary-600: 79 70 229;
+  --hr-primary-700: 67 56 202;
+  --hr-primary-800: 55 48 163;
+  --hr-primary-900: 49 46 129;
+  --hr-primary-950: 30 27 75;
 }
+
 @theme {
   --font-mundial: 'Mundial', sans-serif;
 }

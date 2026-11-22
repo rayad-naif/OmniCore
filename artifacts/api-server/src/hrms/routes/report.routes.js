@@ -5,16 +5,16 @@ const { protect, managementOnly } = require('../middleware/auth.middleware');
 const { asyncHandler } = require('../utils/errorUtils');
 
 // ─── Lazy-load models (avoids circular deps) ─────────────────────────────────
-const User        = () => mongoose.model('User');
-const Attendance   = () => mongoose.model('Attendance');
-const Payroll      = () => mongoose.model('Payroll');
-const Leave        = () => mongoose.model('Leave');
+const User = () => mongoose.model('User');
+const Attendance = () => mongoose.model('Attendance');
+const Payroll = () => mongoose.model('Payroll');
+const Leave = () => mongoose.model('Leave');
 
 // ─── Helper: parse & validate date range from query ──────────────────────────
 const parseDateRange = (query) => {
   const { startDate, endDate } = query;
   const start = startDate ? new Date(startDate) : null;
-  const end   = endDate   ? new Date(endDate)   : null;
+  const end = endDate ? new Date(endDate) : null;
   if (end) end.setHours(23, 59, 59, 999); // inclusive end
   return { start, end };
 };
@@ -41,7 +41,8 @@ const deptName = (emp) => {
   return String(d); // fallback: raw id string, better than crashing
 };
 
-const empName = (emp) => (emp ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || '—' : '—');
+const empName = (emp) =>
+  emp ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || '—' : '—';
 
 // ─── GET /reports/summary  (charts on the Reports page) ──────────────────────
 router.get(
@@ -70,7 +71,9 @@ router.get(
       {
         $project: {
           dateOfJoining: 1,
-          offboardingDate: { $arrayElemAt: ['$employeeInfo.offboardingDate', 0] },
+          offboardingDate: {
+            $arrayElemAt: ['$employeeInfo.offboardingDate', 0],
+          },
         },
       },
     ]);
@@ -81,11 +84,21 @@ router.get(
       d.setMonth(d.getMonth() - i, 1);
       d.setHours(0, 0, 0, 0);
       const label = d.toLocaleString('default', { month: 'short' });
-      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const endOfMonth = new Date(
+        d.getFullYear(),
+        d.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
 
-      const count = usersTimeline.filter(u => {
-        const hadJoinedByThen = u.dateOfJoining && new Date(u.dateOfJoining) <= endOfMonth;
-        const stillPresentThen = !u.offboardingDate || new Date(u.offboardingDate) > endOfMonth;
+      const count = usersTimeline.filter((u) => {
+        const hadJoinedByThen =
+          u.dateOfJoining && new Date(u.dateOfJoining) <= endOfMonth;
+        const stillPresentThen =
+          !u.offboardingDate || new Date(u.offboardingDate) > endOfMonth;
         return hadJoinedByThen && stillPresentThen;
       }).length;
 
@@ -105,7 +118,9 @@ router.get(
       },
       {
         $group: {
-          _id: { $ifNull: [{ $arrayElemAt: ['$deptInfo.name', 0] }, 'Unknown'] },
+          _id: {
+            $ifNull: [{ $arrayElemAt: ['$deptInfo.name', 0] }, 'Unknown'],
+          },
           count: { $sum: 1 },
         },
       },
@@ -113,7 +128,14 @@ router.get(
     ]);
 
     const total = deptAgg.reduce((s, d) => s + d.count, 0) || 1;
-    const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
+    const COLORS = [
+      '#6366f1',
+      '#10b981',
+      '#f59e0b',
+      '#ef4444',
+      '#8b5cf6',
+      '#64748b',
+    ];
     const deptDist = deptAgg.map((d, i) => ({
       name: d._id || 'Unknown',
       value: Math.round((d.count / total) * 100),
@@ -122,7 +144,7 @@ router.get(
     }));
 
     res.json({ success: true, data: { growth: months, deptDist } });
-  })
+  }),
 );
 
 // ─── GET /reports/headcount ───────────────────────────────────────────────────
@@ -137,26 +159,32 @@ router.get(
     // employeeType/workLocation). Switched to User + populated department.
     const employees = await User()
       .find({ status: 'active' })
-      .select('firstName lastName email department position dateOfJoining status')
+      .select(
+        'firstName lastName email department position dateOfJoining status',
+      )
       .populate('department', 'name')
       .lean();
 
-    const rows = employees.map(e => ({
-      Name:              `${e.firstName} ${e.lastName}`,
-      Email:             e.email,
-      Department:        deptName(e),
-      Designation:       e.position || '—',
-      'Joining Date':    e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().split('T')[0] : '—',
-      Status:            e.status,
+    const rows = employees.map((e) => ({
+      Name: `${e.firstName} ${e.lastName}`,
+      Email: e.email,
+      Department: deptName(e),
+      Designation: e.position || '—',
+      'Joining Date': e.dateOfJoining
+        ? new Date(e.dateOfJoining).toISOString().split('T')[0]
+        : '—',
+      Status: e.status,
     }));
 
     const summary = {
       total_employees: rows.length,
-      departments: new Set(employees.map(e => deptName(e)).filter(d => d !== '—')).size,
+      departments: new Set(
+        employees.map((e) => deptName(e)).filter((d) => d !== '—'),
+      ).size,
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/attendance?startDate=&endDate= ─────────────────────────────
@@ -171,7 +199,7 @@ router.get(
     if (start || end) {
       filter.date = {};
       if (start) filter.date.$gte = start;
-      if (end)   filter.date.$lte = end;
+      if (end) filter.date.$lte = end;
     }
 
     const records = await Attendance()
@@ -179,21 +207,25 @@ router.get(
       .populate(EMP_POPULATE)
       .lean();
 
-    const rows = records.map(r => ({
-      Employee:       empName(r.employee),
-      Department:     deptName(r.employee),
-      Date:           r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
+    const rows = records.map((r) => ({
+      Employee: empName(r.employee),
+      Department: deptName(r.employee),
+      Date: r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
       // checkIn/checkOut are objects ({ time, location, method }) on the
       // Attendance schema, not Date values themselves — read `.time`.
-      'Check In':     r.checkIn?.time  ? new Date(r.checkIn.time).toLocaleTimeString()  : '—',
-      'Check Out':    r.checkOut?.time ? new Date(r.checkOut.time).toLocaleTimeString() : '—',
-      Status:         r.status || '—',
+      'Check In': r.checkIn?.time
+        ? new Date(r.checkIn.time).toLocaleTimeString()
+        : '—',
+      'Check Out': r.checkOut?.time
+        ? new Date(r.checkOut.time).toLocaleTimeString()
+        : '—',
+      Status: r.status || '—',
       'Hours Worked': r.totalHours != null ? `${r.totalHours}h` : '—',
     }));
 
-    const present  = rows.filter(r => r.Status === 'present').length;
-    const absent   = rows.filter(r => r.Status === 'absent').length;
-    const late     = rows.filter(r => r.Status === 'late').length;
+    const present = rows.filter((r) => r.Status === 'present').length;
+    const absent = rows.filter((r) => r.Status === 'absent').length;
+    const late = rows.filter((r) => r.Status === 'late').length;
 
     const summary = {
       total_records: rows.length,
@@ -203,7 +235,7 @@ router.get(
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/payroll?startDate=&endDate= ────────────────────────────────
@@ -218,38 +250,41 @@ router.get(
     if (start || end) {
       filter['payPeriod.startDate'] = {};
       if (start) filter['payPeriod.startDate'].$gte = start;
-      if (end)   filter['payPeriod.startDate'].$lte = end;
+      if (end) filter['payPeriod.startDate'].$lte = end;
     }
 
-    const records = await Payroll()
-      .find(filter)
-      .populate(EMP_POPULATE)
-      .lean();
+    const records = await Payroll().find(filter).populate(EMP_POPULATE).lean();
 
-    const rows = records.map(r => ({
-      Employee:       empName(r.employee),
-      Department:     deptName(r.employee),
-      'Pay Period':   r.payPeriod?.startDate ? new Date(r.payPeriod.startDate).toISOString().split('T')[0] : '—',
-      'Basic Salary': r.earnings?.basicSalary != null ? r.earnings.basicSalary : '—',
+    const rows = records.map((r) => ({
+      Employee: empName(r.employee),
+      Department: deptName(r.employee),
+      'Pay Period': r.payPeriod?.startDate
+        ? new Date(r.payPeriod.startDate).toISOString().split('T')[0]
+        : '—',
+      'Basic Salary':
+        r.earnings?.basicSalary != null ? r.earnings.basicSalary : '—',
       'Gross Earnings': r.grossEarnings != null ? r.grossEarnings : '—',
-      Deductions:     r.totalDeductions != null ? r.totalDeductions : '—',
-      'Net Pay':      r.netSalary != null ? r.netSalary : '—',
-      Status:         r.status || '—',
+      Deductions: r.totalDeductions != null ? r.totalDeductions : '—',
+      'Net Pay': r.netSalary != null ? r.netSalary : '—',
+      Status: r.status || '—',
     }));
 
-    const totalNet        = records.reduce((s, r) => s + (r.netSalary || 0), 0);
-    const totalDeductions = records.reduce((s, r) => s + (r.totalDeductions || 0), 0);
-    const totalGross      = records.reduce((s, r) => s + (r.grossEarnings || 0), 0);
+    const totalNet = records.reduce((s, r) => s + (r.netSalary || 0), 0);
+    const totalDeductions = records.reduce(
+      (s, r) => s + (r.totalDeductions || 0),
+      0,
+    );
+    const totalGross = records.reduce((s, r) => s + (r.grossEarnings || 0), 0);
 
     const summary = {
-      total_records:      rows.length,
-      total_net_pay:      `PKR ${totalNet.toLocaleString()}`,
-      total_deductions:   `PKR ${totalDeductions.toLocaleString()}`,
+      total_records: rows.length,
+      total_net_pay: `PKR ${totalNet.toLocaleString()}`,
+      total_deductions: `PKR ${totalDeductions.toLocaleString()}`,
       total_gross_earnings: `PKR ${totalGross.toLocaleString()}`,
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/leave?startDate=&endDate= ──────────────────────────────────
@@ -264,28 +299,29 @@ router.get(
     if (start || end) {
       filter.startDate = {};
       if (start) filter.startDate.$gte = start;
-      if (end)   filter.startDate.$lte = end;
+      if (end) filter.startDate.$lte = end;
     }
 
-    const records = await Leave()
-      .find(filter)
-      .populate(EMP_POPULATE)
-      .lean();
+    const records = await Leave().find(filter).populate(EMP_POPULATE).lean();
 
-    const rows = records.map(r => ({
-      Employee:     empName(r.employee),
-      Department:   deptName(r.employee),
+    const rows = records.map((r) => ({
+      Employee: empName(r.employee),
+      Department: deptName(r.employee),
       'Leave Type': r.leaveType || '—',
-      'Start Date': r.startDate ? new Date(r.startDate).toISOString().split('T')[0] : '—',
-      'End Date':   r.endDate   ? new Date(r.endDate).toISOString().split('T')[0]   : '—',
-      Days:         r.numberOfDays != null ? r.numberOfDays : '—',
-      Status:       r.status || '—',
-      Reason:       r.reason || '—',
+      'Start Date': r.startDate
+        ? new Date(r.startDate).toISOString().split('T')[0]
+        : '—',
+      'End Date': r.endDate
+        ? new Date(r.endDate).toISOString().split('T')[0]
+        : '—',
+      Days: r.numberOfDays != null ? r.numberOfDays : '—',
+      Status: r.status || '—',
+      Reason: r.reason || '—',
     }));
 
-    const approved = rows.filter(r => r.Status === 'approved').length;
-    const pending  = rows.filter(r => r.Status === 'pending').length;
-    const rejected = rows.filter(r => r.Status === 'rejected').length;
+    const approved = rows.filter((r) => r.Status === 'approved').length;
+    const pending = rows.filter((r) => r.Status === 'pending').length;
+    const rejected = rows.filter((r) => r.Status === 'rejected').length;
     const totalDays = records.reduce((s, r) => s + (r.numberOfDays || 0), 0);
 
     const summary = {
@@ -297,7 +333,7 @@ router.get(
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/advances?startDate=&endDate= ───────────────────────────────
@@ -313,7 +349,7 @@ router.get(
     if (start || end) {
       filter.requestedAt = {};
       if (start) filter.requestedAt.$gte = start;
-      if (end)   filter.requestedAt.$lte = end;
+      if (end) filter.requestedAt.$lte = end;
     }
 
     const records = await Advance()
@@ -322,33 +358,38 @@ router.get(
       .populate('approvedBy', 'firstName lastName')
       .lean();
 
-    const rows = records.map(r => ({
-      Employee:       empName(r.employee),
-      Department:     deptName(r.employee),
-      Amount:         r.amount != null ? r.amount : '—',
-      Status:         r.status || '—',
-      'Requested On': r.requestedAt ? new Date(r.requestedAt).toISOString().split('T')[0] : '—',
-      'Approved By':  r.approvedBy ? empName(r.approvedBy) : '—',
-      'Approved On':  r.approvedAt ? new Date(r.approvedAt).toISOString().split('T')[0] : '—',
-      'Deducted In':  (r.deductedIn?.month && r.deductedIn?.year)
-        ? `${r.deductedIn.month}/${r.deductedIn.year}`
+    const rows = records.map((r) => ({
+      Employee: empName(r.employee),
+      Department: deptName(r.employee),
+      Amount: r.amount != null ? r.amount : '—',
+      Status: r.status || '—',
+      'Requested On': r.requestedAt
+        ? new Date(r.requestedAt).toISOString().split('T')[0]
         : '—',
-      Reason:         r.reason || '—',
+      'Approved By': r.approvedBy ? empName(r.approvedBy) : '—',
+      'Approved On': r.approvedAt
+        ? new Date(r.approvedAt).toISOString().split('T')[0]
+        : '—',
+      'Deducted In':
+        r.deductedIn?.month && r.deductedIn?.year
+          ? `${r.deductedIn.month}/${r.deductedIn.year}`
+          : '—',
+      Reason: r.reason || '—',
     }));
 
     const totalAmount = records.reduce((s, r) => s + (r.amount || 0), 0);
 
     const summary = {
       total_requests: rows.length,
-      total_amount:   `PKR ${totalAmount.toLocaleString()}`,
-      pending:        rows.filter(r => r.Status === 'pending').length,
-      approved:       rows.filter(r => r.Status === 'approved').length,
-      deducted:       rows.filter(r => r.Status === 'deducted').length,
-      rejected:       rows.filter(r => r.Status === 'rejected').length,
+      total_amount: `PKR ${totalAmount.toLocaleString()}`,
+      pending: rows.filter((r) => r.Status === 'pending').length,
+      approved: rows.filter((r) => r.Status === 'approved').length,
+      deducted: rows.filter((r) => r.Status === 'deducted').length,
+      rejected: rows.filter((r) => r.Status === 'rejected').length,
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/loans?startDate=&endDate= ──────────────────────────────────
@@ -365,44 +406,49 @@ router.get(
     if (start || end) {
       filter.createdAt = {};
       if (start) filter.createdAt.$gte = start;
-      if (end)   filter.createdAt.$lte = end;
+      if (end) filter.createdAt.$lte = end;
     }
 
-    const records = await Loan()
-      .find(filter)
-      .populate(EMP_POPULATE)
-      .lean();
+    const records = await Loan().find(filter).populate(EMP_POPULATE).lean();
 
-    const rows = records.map(r => {
-      const amountPaid = (r.totalRepaymentAmount || 0) - (r.remainingBalance || 0);
+    const rows = records.map((r) => {
+      const amountPaid =
+        (r.totalRepaymentAmount || 0) - (r.remainingBalance || 0);
       return {
-        Employee:            empName(r.employee),
-        Department:          deptName(r.employee),
-        'Loan Amount':       r.loanAmount != null ? r.loanAmount : '—',
-        'Interest %':        r.interestPercentage != null ? r.interestPercentage : 0,
-        'Total Repayment':   r.totalRepaymentAmount != null ? r.totalRepaymentAmount : '—',
-        'Tenure (Months)':   r.tenureMonths != null ? r.tenureMonths : '—',
-        'Monthly EMI':       r.monthlyEMI != null ? r.monthlyEMI : '—',
-        'Amount Paid':       amountPaid,
-        'Remaining Balance': r.remainingBalance != null ? r.remainingBalance : '—',
-        Status:              r.status || '—',
-        'Issued On':         r.createdAt ? new Date(r.createdAt).toISOString().split('T')[0] : '—',
+        Employee: empName(r.employee),
+        Department: deptName(r.employee),
+        'Loan Amount': r.loanAmount != null ? r.loanAmount : '—',
+        'Interest %': r.interestPercentage != null ? r.interestPercentage : 0,
+        'Total Repayment':
+          r.totalRepaymentAmount != null ? r.totalRepaymentAmount : '—',
+        'Tenure (Months)': r.tenureMonths != null ? r.tenureMonths : '—',
+        'Monthly EMI': r.monthlyEMI != null ? r.monthlyEMI : '—',
+        'Amount Paid': amountPaid,
+        'Remaining Balance':
+          r.remainingBalance != null ? r.remainingBalance : '—',
+        Status: r.status || '—',
+        'Issued On': r.createdAt
+          ? new Date(r.createdAt).toISOString().split('T')[0]
+          : '—',
       };
     });
 
-    const totalDisbursed   = records.reduce((s, r) => s + (r.loanAmount || 0), 0);
-    const totalOutstanding = records.reduce((s, r) => s + (r.remainingBalance || 0), 0);
+    const totalDisbursed = records.reduce((s, r) => s + (r.loanAmount || 0), 0);
+    const totalOutstanding = records.reduce(
+      (s, r) => s + (r.remainingBalance || 0),
+      0,
+    );
 
     const summary = {
-      total_loans:       rows.length,
-      total_disbursed:   `PKR ${totalDisbursed.toLocaleString()}`,
+      total_loans: rows.length,
+      total_disbursed: `PKR ${totalDisbursed.toLocaleString()}`,
       total_outstanding: `PKR ${totalOutstanding.toLocaleString()}`,
-      active:            rows.filter(r => r.Status === 'active').length,
-      fully_paid:        rows.filter(r => r.Status === 'fully_paid').length,
+      active: rows.filter((r) => r.Status === 'active').length,
+      fully_paid: rows.filter((r) => r.Status === 'fully_paid').length,
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/earnings?startDate=&endDate= ───────────────────────────────
@@ -421,32 +467,32 @@ router.get(
     if (start || end) {
       filter.date = {};
       if (start) filter.date.$gte = start;
-      if (end)   filter.date.$lte = end;
+      if (end) filter.date.$lte = end;
     }
 
     const records = await Earning().find(filter).lean();
 
-    const rows = records.map(r => ({
-      Date:            r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
-      Title:           r.title || '—',
-      Person:          r.person?.name || '—',
-      'Amount (PKR)':  r.amountPKR != null ? r.amountPKR : '—',
-      'Amount (USD)':  r.amountUSD != null ? r.amountUSD : '—',
-      'Commission %':  r.commissionPercent != null ? r.commissionPercent : '—',
-      Description:     r.description || '—',
+    const rows = records.map((r) => ({
+      Date: r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
+      Title: r.title || '—',
+      Person: r.person?.name || '—',
+      'Amount (PKR)': r.amountPKR != null ? r.amountPKR : '—',
+      'Amount (USD)': r.amountUSD != null ? r.amountUSD : '—',
+      'Commission %': r.commissionPercent != null ? r.commissionPercent : '—',
+      Description: r.description || '—',
     }));
 
     const totalPKR = records.reduce((s, r) => s + (r.amountPKR || 0), 0);
     const totalUSD = records.reduce((s, r) => s + (r.amountUSD || 0), 0);
 
     const summary = {
-      total_entries:     rows.length,
-      total_amount_pkr:  `PKR ${totalPKR.toLocaleString()}`,
-      total_amount_usd:  totalUSD ? `$${totalUSD.toLocaleString()}` : '—',
+      total_entries: rows.length,
+      total_amount_pkr: `PKR ${totalPKR.toLocaleString()}`,
+      total_amount_usd: totalUSD ? `$${totalUSD.toLocaleString()}` : '—',
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 // ─── GET /reports/expenses?startDate=&endDate= ───────────────────────────────
@@ -462,7 +508,7 @@ router.get(
     if (start || end) {
       filter.date = {};
       if (start) filter.date.$gte = start;
-      if (end)   filter.date.$lte = end;
+      if (end) filter.date.$lte = end;
     }
 
     const records = await Expense()
@@ -474,34 +520,39 @@ router.get(
       })
       .lean();
 
-    const rows = records.map(r => ({
-      Date:              r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
-      Title:             r.title || '—',
-      Category:          r.category || '—',
-      'Amount (PKR)':    r.amountPKR != null ? r.amountPKR : '—',
-      'Amount (USD)':    r.amountUSD != null ? r.amountUSD : '—',
-      'Paid By':         r.paidBy?.name || '—',
+    const rows = records.map((r) => ({
+      Date: r.date ? new Date(r.date).toISOString().split('T')[0] : '—',
+      Title: r.title || '—',
+      Category: r.category || '—',
+      'Amount (PKR)': r.amountPKR != null ? r.amountPKR : '—',
+      'Amount (USD)': r.amountUSD != null ? r.amountUSD : '—',
+      'Paid By': r.paidBy?.name || '—',
       'Linked Employee': r.linkedEmployee ? empName(r.linkedEmployee) : '—',
-      Description:       r.description || '—',
+      Description: r.description || '—',
     }));
 
     const totalPKR = records.reduce((s, r) => s + (r.amountPKR || 0), 0);
 
     // Category-wise breakdown so the summary card surfaces the biggest spend area
     const byCategory = {};
-    records.forEach(r => {
-      byCategory[r.category] = (byCategory[r.category] || 0) + (r.amountPKR || 0);
+    records.forEach((r) => {
+      byCategory[r.category] =
+        (byCategory[r.category] || 0) + (r.amountPKR || 0);
     });
-    const topCategory = Object.entries(byCategory).sort((a, b) => b[1] - a[1])[0];
+    const topCategory = Object.entries(byCategory).sort(
+      (a, b) => b[1] - a[1],
+    )[0];
 
     const summary = {
-      total_expenses:   rows.length,
+      total_expenses: rows.length,
       total_amount_pkr: `PKR ${totalPKR.toLocaleString()}`,
-      top_category:     topCategory ? `${topCategory[0]} (PKR ${topCategory[1].toLocaleString()})` : '—',
+      top_category: topCategory
+        ? `${topCategory[0]} (PKR ${topCategory[1].toLocaleString()})`
+        : '—',
     };
 
     res.json({ success: true, data: { rows, summary } });
-  })
+  }),
 );
 
 module.exports = router;

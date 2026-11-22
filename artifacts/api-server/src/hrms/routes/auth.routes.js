@@ -11,7 +11,13 @@ const loginValidation = [
   body('password').notEmpty().withMessage('Password required'),
 ];
 
-router.post('/login', loginLimiter, loginValidation, validate, authController.login);
+router.post(
+  '/login',
+  loginLimiter,
+  loginValidation,
+  validate,
+  authController.login,
+);
 router.post('/register', authController.register);
 router.post('/sso', loginLimiter, authController.sso);
 router.post('/refresh-token', authController.refreshToken);

@@ -12,28 +12,32 @@ const earningSchema = new mongoose.Schema(
   {
     // ── Month bucket ──────────────────────────────────────────────────────
     month: { type: Number, required: true, min: 1, max: 12 },
-    year:  { type: Number, required: true },
+    year: { type: Number, required: true },
 
     // ── Source / description ──────────────────────────────────────────────
-    title:       { type: String, required: true, trim: true },
+    title: { type: String, required: true, trim: true },
     description: { type: String, trim: true, default: '' },
-    notes:       { type: String, trim: true, default: '' },
+    notes: { type: String, trim: true, default: '' },
 
     // ── Person who earned / brought in the revenue ────────────────────────
     person: {
-      name:   { type: String, required: true, trim: true },
-      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      name: { type: String, required: true, trim: true },
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+      },
     },
 
     // ── Amount ────────────────────────────────────────────────────────────
     // The total amount entered before the earnings split. Kept for audit.
     grossAmountPKR: { type: Number, default: null, min: 0 },
     // Business earned amount (30% of gross); this is included in earnings totals.
-    amountPKR:      { type: Number, required: true, min: 0 },
+    amountPKR: { type: Number, required: true, min: 0 },
     // Person's 70% share. It is retained as a record but excluded from earnings totals.
     personAmountPKR: { type: Number, default: null, min: 0 },
     usdRateAtEntry: { type: Number, default: null },
-    amountUSD:      { type: Number, default: null },
+    amountUSD: { type: Number, default: null },
 
     /**
      * Optional: if this entry represents a commission/percentage-based earning,
@@ -48,17 +52,23 @@ const earningSchema = new mongoose.Schema(
      */
     baseAmountPKR: { type: Number, default: null },
 
-    date:      { type: Date, default: Date.now },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    isActive:  { type: Boolean, default: true },
+    date: { type: Date, default: Date.now },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Auto-compute USD
 earningSchema.pre('save', function (next) {
   if (this.usdRateAtEntry && this.usdRateAtEntry > 0) {
-    this.amountUSD = parseFloat((this.amountPKR / this.usdRateAtEntry).toFixed(2));
+    this.amountUSD = parseFloat(
+      (this.amountPKR / this.usdRateAtEntry).toFixed(2),
+    );
   }
   next();
 });

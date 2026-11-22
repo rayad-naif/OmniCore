@@ -21,7 +21,13 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, minlength: 8, select: false },
     role: {
       type: String,
-      enum: ['super_admin', 'admin', 'senior_manager', 'hr_recruiter', 'employee'],
+      enum: [
+        'super_admin',
+        'admin',
+        'senior_manager',
+        'hr_recruiter',
+        'employee',
+      ],
       default: 'employee',
     },
     department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
@@ -55,7 +61,14 @@ const userSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'on_leave', 'probation', 'suspended', 'resigned', 'terminated'],
+      enum: [
+        'active',
+        'on_leave',
+        'probation',
+        'suspended',
+        'resigned',
+        'terminated',
+      ],
       default: 'active',
     },
     roles: [{ type: String }],
@@ -73,7 +86,11 @@ const userSchema = new mongoose.Schema(
     twoFactorEnabled: { type: Boolean, default: false },
     twoFactorSecret: { type: String, select: false },
     preferences: {
-      theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
+      theme: {
+        type: String,
+        enum: ['light', 'dark', 'system'],
+        default: 'system',
+      },
       notifications: { type: Boolean, default: true },
       language: { type: String, default: 'en' },
     },
@@ -93,7 +110,7 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Virtual: full name

@@ -145,7 +145,10 @@ async function resolveTenant(req) {
   }
   const p = req.path;
   if (p.startsWith('/v1/activity-logs/') && req.headers['x-api-key']) {
-    const tid = await tenants.tenantForKey('activity', String(req.headers['x-api-key']));
+    const tid = await tenants.tenantForKey(
+      'activity',
+      String(req.headers['x-api-key']),
+    );
     if (tid) req.hrmsAuthKind = 'activity';
     return tid;
   }
@@ -182,7 +185,8 @@ function buildRouter() {
       return res.status(503).json({
         success: false,
         code: 'hrms_not_configured',
-        message: 'The HR module is not set up on this server yet (HRMS_MONGODB_URI).',
+        message:
+          'The HR module is not set up on this server yet (HRMS_MONGODB_URI).',
       });
     }
     sanitize(req.body);
@@ -195,7 +199,9 @@ function buildRouter() {
       if (!tid) return next();
       const ws = await tenants.workspaceInfo(tid);
       if (!ws) {
-        return res.status(401).json({ success: false, message: 'Unknown workspace.' });
+        return res
+          .status(401)
+          .json({ success: false, message: 'Unknown workspace.' });
       }
       if (!ws.enabled) {
         return res.status(403).json({
@@ -229,13 +235,16 @@ function hrmsRouter() {
 let workersStarted = false;
 function startHrmsWorkers({ io } = {}) {
   if (io) attachSockets(io);
+  // The plan switch column must exist even when the HR database is not set up.
+  tenants
+    .ensureSchema()
+    .catch((err) => logger.error(`HR schema failed: ${err.message}`));
   if (workersStarted || process.env.HRMS_WORKER === 'false') return;
   if (!hrms.isConfigured()) {
     logger.info('HR module: HRMS_MONGODB_URI not set — HR features stay off');
     return;
   }
   workersStarted = true;
-  tenants.ensureSchema().catch((err) => logger.error(`HR schema failed: ${err.message}`));
   const { initAttendanceCron } = require('./services/jobs/attendanceCron');
   initAttendanceCron();
   logger.info('HR module workers started');

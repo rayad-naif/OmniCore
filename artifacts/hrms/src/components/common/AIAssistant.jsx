@@ -101,7 +101,7 @@ export default function AIAssistant() {
       const trimmedLine = line.trim();
 
       // Check if line is a bullet point (starts with * or - followed by space)
-      const isBullet = /^[\*\-]\s+(.*)/.test(trimmedLine);
+      const isBullet = /^[*-]\s+(.*)/.test(trimmedLine);
       // Check if line is a numbered list item (starts with a number followed by dot and space)
       const isNumbered = /^\d+\.\s+(.*)/.test(trimmedLine);
 
@@ -114,7 +114,7 @@ export default function AIAssistant() {
           htmlLines.push('<ul class="list-disc pl-4 space-y-1 my-1.5">');
           inList = true;
         }
-        const content = trimmedLine.replace(/^[\*\-]\s+/, '');
+        const content = trimmedLine.replace(/^[*-]\s+/, '');
         htmlLines.push(`<li class="text-slate-300">${formatInlineMarkdown(content)}</li>`);
       } else if (isNumbered) {
         if (inList) {

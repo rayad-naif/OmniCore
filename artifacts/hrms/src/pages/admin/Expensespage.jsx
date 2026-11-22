@@ -880,33 +880,15 @@ function EarningForm({ onSave, onClose, persons, usdRate, initial }) {
   const [liveRate, setLiveRate] = useState(Number(initial?.usdRateAtEntry || usdRate) || 278);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  useEffect(() => {
-    let active = true;
-    const refreshRate = async () => {
-      setIsRefreshingRate(true);
-      try {
-        const data = { data: { rate: liveRate, isFallback: true } };
-        const nextRate = Number(data?.data?.rate);
-        if (active && Number.isFinite(nextRate) && nextRate > 0) {
-          setLiveRate(nextRate);
-          setRateSource(data.data.isFallback ? 'Saved finance rate (live source unavailable)' : 'Live USD → PKR rate');
-        }
-      } catch {
-        if (active) setRateSource('Saved finance rate (live source unavailable)');
-      } finally {
-        if (active) {
-          setIsRefreshingRate(false);
-          setSecondsToRefresh(5);
-        }
-      }
-    };
-
-    return () => {
-      active = false;
-    };
-  }, []);
+  // (A live USD→PKR refresh effect in the original was never started and
+  // referenced undefined state; removed. The saved finance rate is used.)
 
   const rateIsValid = Number.isFinite(Number(liveRate)) && Number(liveRate) > 0;
+  // Commission mode: amount = base × percent (same formula as the earnings API).
+  const autoAmount =
+    form.useCommission && Number(form.baseAmountPKR) > 0 && Number(form.commissionPercent) > 0
+      ? Number(((Number(form.baseAmountPKR) * Number(form.commissionPercent)) / 100).toFixed(2))
+      : null;
   const grossAmountPKR = form.amountUSD && Number.isFinite(Number(form.amountUSD)) && rateIsValid
     ? Number(form.amountUSD) * Number(liveRate)
     : '';

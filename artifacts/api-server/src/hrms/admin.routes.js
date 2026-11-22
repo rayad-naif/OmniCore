@@ -76,7 +76,8 @@ workspaceRouter.post(
   wrap(async (req, res) => {
     if (!hrms.isConfigured()) {
       return res.status(503).json({
-        error: 'The HR module is not set up on this server yet (HRMS_MONGODB_URI).',
+        error:
+          'The HR module is not set up on this server yet (HRMS_MONGODB_URI).',
       });
     }
     const tenantId = req.agent.tenantId;
@@ -116,8 +117,12 @@ workspaceRouter.get(
       const keys = await tenants.keyStatus(tenantId);
       result.links = {
         employeeLogin: `${hrmsAppUrl()}/login?w=${tenantId}`,
-        jobApplications: publicUrl(`/api/hrms/v1/recruitment/applications?w=${tenantId}`),
-        biometricWebhook: publicUrl('/api/hrms/v1/attendance/biometric-webhook?key=<device key>'),
+        jobApplications: publicUrl(
+          `/api/hrms/v1/recruitment/applications?w=${tenantId}`,
+        ),
+        biometricWebhook: publicUrl(
+          '/api/hrms/v1/attendance/biometric-webhook?key=<device key>',
+        ),
         activityAgent: publicUrl('/api/hrms/v1/activity-logs/ingest'),
       };
       result.keys = keys;
@@ -132,7 +137,9 @@ workspaceRouter.post(
   applyWorkspaceOverride,
   wrap(async (req, res) => {
     if (!(req.agent.role === 'admin' || req.agent.workspaceOverride)) {
-      return res.status(403).json({ error: 'Only workspace admins can manage HR keys.' });
+      return res
+        .status(403)
+        .json({ error: 'Only workspace admins can manage HR keys.' });
     }
     const kind = req.params.kind;
     if (!['activity', 'device'].includes(kind)) {
@@ -140,10 +147,16 @@ workspaceRouter.post(
     }
     const ws = await tenants.workspaceInfo(req.agent.tenantId);
     if (!ws?.enabled) {
-      return res.status(403).json({ error: "The HR module is not included in this workspace's plan." });
+      return res.status(403).json({
+        error: "The HR module is not included in this workspace's plan.",
+      });
     }
     const key = await tenants.rotateKey(req.agent.tenantId, kind);
-    return res.json({ kind, key, note: 'Copy this key now: it is not shown again.' });
+    return res.json({
+      kind,
+      key,
+      note: 'Copy this key now: it is not shown again.',
+    });
   }),
 );
 
@@ -201,14 +214,16 @@ superAdminRouter.patch(
   '/workspaces/:id',
   wrap(async (req, res) => {
     const id = req.params.id;
-    if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid workspace id' });
+    if (!UUID_RE.test(id))
+      return res.status(400).json({ error: 'Invalid workspace id' });
     await tenants.ensureSchema();
     const enabled = Boolean(req.body?.enabled);
     const { rowCount } = await pool.query(
       `UPDATE tenants SET hrms_feature_enabled = $2, updated_at = NOW() WHERE id = $1`,
       [id, enabled],
     );
-    if (!rowCount) return res.status(404).json({ error: 'Workspace not found' });
+    if (!rowCount)
+      return res.status(404).json({ error: 'Workspace not found' });
     tenants.forgetWorkspace(id);
     return res.json({ id, enabled });
   }),
@@ -218,14 +233,17 @@ superAdminRouter.post(
   '/workspaces/:id/open',
   wrap(async (req, res) => {
     const id = req.params.id;
-    if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid workspace id' });
+    if (!UUID_RE.test(id))
+      return res.status(400).json({ error: 'Invalid workspace id' });
     if (!hrms.isConfigured()) {
       return res.status(503).json({ error: 'HRMS_MONGODB_URI is not set' });
     }
     const ws = await tenants.workspaceInfo(id);
     if (!ws) return res.status(404).json({ error: 'Workspace not found' });
     if (!ws.enabled) {
-      return res.status(409).json({ error: 'Turn the HR module on for this workspace first.' });
+      return res
+        .status(409)
+        .json({ error: 'Turn the HR module on for this workspace first.' });
     }
     const url = await startSso(req.agent, id, { support: true });
     recordAudit({
@@ -251,15 +269,18 @@ superAdminRouter.delete(
   '/workspaces/:id/data',
   wrap(async (req, res) => {
     const id = req.params.id;
-    if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid workspace id' });
+    if (!UUID_RE.test(id))
+      return res.status(400).json({ error: 'Invalid workspace id' });
     const { rows } = await pool.query(
       `SELECT company_name FROM tenants WHERE id = $1`,
       [id],
     );
-    if (!rows.length) return res.status(404).json({ error: 'Workspace not found' });
+    if (!rows.length)
+      return res.status(404).json({ error: 'Workspace not found' });
     if (String(req.body?.confirm || '') !== rows[0].company_name) {
       return res.status(400).json({
-        error: 'Type the workspace name exactly to confirm deleting its HR data.',
+        error:
+          'Type the workspace name exactly to confirm deleting its HR data.',
       });
     }
     if (hrms.isConfigured()) await hrms.dropTenantDatabase(id);

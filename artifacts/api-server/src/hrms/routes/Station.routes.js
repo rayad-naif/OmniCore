@@ -1,5 +1,5 @@
 const express = require('express');
-const router  = express.Router();
+const router = express.Router();
 const { protect, adminOnly } = require('../middleware/auth.middleware');
 const Station = require('../models/Station.model');
 
@@ -21,7 +21,9 @@ router.get('/', protect, adminOnly, async (req, res) => {
 router.post('/', protect, adminOnly, async (req, res) => {
   const { stationId, label, assignedEmployees, isActive } = req.body;
   if (!stationId) {
-    return res.status(400).json({ success: false, message: 'stationId is required' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'stationId is required' });
   }
 
   try {
@@ -34,7 +36,9 @@ router.post('/', protect, adminOnly, async (req, res) => {
     return res.status(201).json({ success: true, data: station });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(409).json({ success: false, message: 'Station ID already exists' });
+      return res
+        .status(409)
+        .json({ success: false, message: 'Station ID already exists' });
     }
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -46,13 +50,14 @@ router.patch('/:stationId', protect, adminOnly, async (req, res) => {
   const { label, assignedEmployees, isActive } = req.body;
   const update = {};
   if (label !== undefined) update.label = label;
-  if (assignedEmployees !== undefined) update.assignedEmployees = assignedEmployees;
+  if (assignedEmployees !== undefined)
+    update.assignedEmployees = assignedEmployees;
   if (isActive !== undefined) update.isActive = isActive;
 
   const station = await Station.findOneAndUpdate(
     { stationId: req.params.stationId },
     { $set: update },
-    { new: true, upsert: true }
+    { new: true, upsert: true },
   );
   res.json({ success: true, data: station });
 });

@@ -9,7 +9,7 @@ const permissionSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 module.exports = mongoose.model('Permission', permissionSchema);

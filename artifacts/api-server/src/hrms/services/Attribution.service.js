@@ -67,19 +67,32 @@ const timeStringToMinutes = (t) => {
 const getShiftForDate = (assignments, targetDate) => {
   // Use local calendar dates (server+PCs are expected to be on the same local TZ).
   const dayOfWeek = targetDate.getDay();
-  const dateOnly = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  const dateOnly = new Date(
+    targetDate.getFullYear(),
+    targetDate.getMonth(),
+    targetDate.getDate(),
+  );
 
   for (const a of assignments) {
     if (!a.recurring && a.startDate && a.endDate) {
       const sDate = new Date(a.startDate);
       const eDate = new Date(a.endDate);
-      const s = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
-      const e = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
+      const s = new Date(
+        sDate.getFullYear(),
+        sDate.getMonth(),
+        sDate.getDate(),
+      );
+      const e = new Date(
+        eDate.getFullYear(),
+        eDate.getMonth(),
+        eDate.getDate(),
+      );
       if (dateOnly >= s && dateOnly <= e) return a;
     }
   }
   for (const a of assignments) {
-    if (a.recurring && typeof a.weekday === 'number' && a.weekday === dayOfWeek) return a;
+    if (a.recurring && typeof a.weekday === 'number' && a.weekday === dayOfWeek)
+      return a;
   }
   return null;
 };
@@ -116,7 +129,9 @@ const getScheduledWindowsForDay = (assignments, ts) => {
     const startMin = timeStringToMinutes(yesterdayShift.startTime);
     const endMin = timeStringToMinutes(yesterdayShift.endTime);
     const startDate = new Date(prevDay.getTime() + startMin * 60000);
-    const endDate = new Date(prevDay.getTime() + (endMin <= startMin ? endMin + 1440 : endMin) * 60000);
+    const endDate = new Date(
+      prevDay.getTime() + (endMin <= startMin ? endMin + 1440 : endMin) * 60000,
+    );
     windows.push({ start: startDate, end: endDate });
   }
 
@@ -149,12 +164,15 @@ const findOverride = (overrides, ts) =>
  */
 const attributeStationMonth = async (stationId, month, rawText) => {
   const station = await Station.findOne({ stationId });
-  const candidateIds = (station?.assignedEmployees || []).map((id) => id.toString());
+  const candidateIds = (station?.assignedEmployees || []).map((id) =>
+    id.toString(),
+  );
 
   const byEmployee = {};
   const unattributed = [];
   const addLine = (employeeId, raw, source) => {
-    if (!byEmployee[employeeId]) byEmployee[employeeId] = { confirmed: [], scheduleInferred: [] };
+    if (!byEmployee[employeeId])
+      byEmployee[employeeId] = { confirmed: [], scheduleInferred: [] };
     byEmployee[employeeId][source].push(raw);
   };
 
@@ -167,7 +185,9 @@ const attributeStationMonth = async (stationId, month, rawText) => {
   if (candidateIds.length === 0) {
     // Nobody registered for this station yet — everything is unattributed
     // until an admin assigns employees to it (see Station admin screen).
-    parsed.forEach((p) => unattributed.push({ ...p, candidateCount: 0, reason: 'idle' }));
+    parsed.forEach((p) =>
+      unattributed.push({ ...p, candidateCount: 0, reason: 'idle' }),
+    );
     return { byEmployee, unattributed };
   }
 
@@ -203,7 +223,10 @@ const attributeStationMonth = async (stationId, month, rawText) => {
   }
   for (const { raw, timestamp } of parsed) {
     // Tier 1: attendance
-    const attendanceMatches = findCoveringEmployees(attendanceRecords, timestamp);
+    const attendanceMatches = findCoveringEmployees(
+      attendanceRecords,
+      timestamp,
+    );
     if (attendanceMatches.length === 1) {
       addLine(attendanceMatches[0], raw, 'confirmed');
       continue;
@@ -212,9 +235,15 @@ const attributeStationMonth = async (stationId, month, rawText) => {
     // Tier 2: schedule (only meaningful when tier 1 didn't already resolve it)
     const scheduleByEmployee = {};
     for (const employeeId of candidateIds) {
-      scheduleByEmployee[employeeId] = getScheduledWindowsForDay(assignmentsByEmployee[employeeId], timestamp);
+      scheduleByEmployee[employeeId] = getScheduledWindowsForDay(
+        assignmentsByEmployee[employeeId],
+        timestamp,
+      );
     }
-    const scheduleMatches = findScheduledEmployees(scheduleByEmployee, timestamp);
+    const scheduleMatches = findScheduledEmployees(
+      scheduleByEmployee,
+      timestamp,
+    );
     if (scheduleMatches.length === 1) {
       addLine(scheduleMatches[0], raw, 'scheduleInferred');
       continue;
@@ -227,7 +256,10 @@ const attributeStationMonth = async (stationId, month, rawText) => {
       continue;
     }
 
-    const candidateCount = Math.max(attendanceMatches.length, scheduleMatches.length);
+    const candidateCount = Math.max(
+      attendanceMatches.length,
+      scheduleMatches.length,
+    );
     unattributed.push({
       raw,
       timestamp,

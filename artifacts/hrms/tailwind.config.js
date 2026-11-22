@@ -5,18 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
+        // White-label: driven by CSS variables (see src/services/brand.js).
         primary: {
-          50:  '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#6366f1',
-          600: '#4f46e5',
-          700: '#4338ca',
-          800: '#3730a3',
-          900: '#312e81',
-          950: '#1e1b4b',
+          50: 'rgb(var(--hr-primary-50) / <alpha-value>)',
+          100: 'rgb(var(--hr-primary-100) / <alpha-value>)',
+          200: 'rgb(var(--hr-primary-200) / <alpha-value>)',
+          300: 'rgb(var(--hr-primary-300) / <alpha-value>)',
+          400: 'rgb(var(--hr-primary-400) / <alpha-value>)',
+          500: 'rgb(var(--hr-primary-500) / <alpha-value>)',
+          600: 'rgb(var(--hr-primary-600) / <alpha-value>)',
+          700: 'rgb(var(--hr-primary-700) / <alpha-value>)',
+          800: 'rgb(var(--hr-primary-800) / <alpha-value>)',
+          900: 'rgb(var(--hr-primary-900) / <alpha-value>)',
+          950: 'rgb(var(--hr-primary-950) / <alpha-value>)',
         },
         accent: {
           400: '#34d399',
@@ -34,7 +35,7 @@ export default {
           600: '#d97706',
         },
         surface: {
-          50:  '#f8fafc',
+          50: '#f8fafc',
           100: '#f1f5f9',
           200: '#e2e8f0',
           300: '#cbd5e1',
@@ -55,9 +56,9 @@ export default {
       },
       boxShadow: {
         'glow-primary': '0 0 20px rgba(99, 102, 241, 0.35)',
-        'glow-accent':  '0 0 20px rgba(16, 185, 129, 0.35)',
-        'card':         '0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06)',
-        'card-hover':   '0 4px 6px rgba(0,0,0,.05), 0 16px 40px rgba(0,0,0,.10)',
+        'glow-accent': '0 0 20px rgba(16, 185, 129, 0.35)',
+        card: '0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06)',
+        'card-hover': '0 4px 6px rgba(0,0,0,.05), 0 16px 40px rgba(0,0,0,.10)',
       },
       borderRadius: {
         '2xl': '1rem',
@@ -65,22 +66,37 @@ export default {
         '4xl': '2rem',
       },
       animation: {
-        'fade-in':      'fadeIn 0.3s ease-out',
-        'slide-up':     'slideUp 0.4s ease-out',
-        'slide-right':  'slideRight 0.3s ease-out',
-        'pulse-slow':   'pulse 3s ease-in-out infinite',
-        'spin-slow':    'spin 3s linear infinite',
-        'float':        'float 3s ease-in-out infinite',
-        'shimmer':      'shimmer 2s linear infinite',
-        'bounce-soft':  'bounceSoft 1s ease-in-out infinite',
+        'fade-in': 'fadeIn 0.3s ease-out',
+        'slide-up': 'slideUp 0.4s ease-out',
+        'slide-right': 'slideRight 0.3s ease-out',
+        'pulse-slow': 'pulse 3s ease-in-out infinite',
+        'spin-slow': 'spin 3s linear infinite',
+        float: 'float 3s ease-in-out infinite',
+        shimmer: 'shimmer 2s linear infinite',
+        'bounce-soft': 'bounceSoft 1s ease-in-out infinite',
       },
       keyframes: {
-        fadeIn:     { from: { opacity: 0 }, to: { opacity: 1 } },
-        slideUp:    { from: { opacity: 0, transform: 'translateY(20px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
-        slideRight: { from: { opacity: 0, transform: 'translateX(-20px)' }, to: { opacity: 1, transform: 'translateX(0)' } },
-        float:      { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-8px)' } },
-        shimmer:    { from: { backgroundPosition: '-200% 0' }, to: { backgroundPosition: '200% 0' } },
-        bounceSoft: { '0%,100%': { transform: 'translateY(-5%)' }, '50%': { transform: 'translateY(0)' } },
+        fadeIn: { from: { opacity: 0 }, to: { opacity: 1 } },
+        slideUp: {
+          from: { opacity: 0, transform: 'translateY(20px)' },
+          to: { opacity: 1, transform: 'translateY(0)' },
+        },
+        slideRight: {
+          from: { opacity: 0, transform: 'translateX(-20px)' },
+          to: { opacity: 1, transform: 'translateX(0)' },
+        },
+        float: {
+          '0%,100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-8px)' },
+        },
+        shimmer: {
+          from: { backgroundPosition: '-200% 0' },
+          to: { backgroundPosition: '200% 0' },
+        },
+        bounceSoft: {
+          '0%,100%': { transform: 'translateY(-5%)' },
+          '50%': { transform: 'translateY(0)' },
+        },
       },
       backdropBlur: { xs: '2px' },
       screens: {
@@ -88,6 +104,6 @@ export default {
       },
     },
   },
-  
+
   plugins: [],
 };

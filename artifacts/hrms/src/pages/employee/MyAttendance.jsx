@@ -147,7 +147,7 @@ export default function MyAttendance() {
 
   useEffect(() => {
     fetchStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [month, year]);
 
   // Today's check-in/out state doesn't depend on the month/year selector —
@@ -157,7 +157,7 @@ export default function MyAttendance() {
     fetchToday();
     const clock = setInterval(() => setTick(Date.now()), 30000);
     return () => clearInterval(clock);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const handleCheckIn = async () => {

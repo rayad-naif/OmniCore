@@ -14,7 +14,8 @@ exports.protect = asyncHandler(async (req, res, next) => {
     token = req.headers.authorization.split(' ')[1];
   }
 
-  if (!token) return next(new AppError('Not authenticated. Please log in.', 401));
+  if (!token)
+    return next(new AppError('Not authenticated. Please log in.', 401));
 
   let decoded;
   try {
@@ -32,12 +33,15 @@ exports.protect = asyncHandler(async (req, res, next) => {
   }
 
   if (await tenants.isTokenRevoked(token)) {
-    return next(new AppError('Token has been invalidated. Please log in again.', 401));
+    return next(
+      new AppError('Token has been invalidated. Please log in again.', 401),
+    );
   }
 
   const user = await User.findById(decoded.id).select('+isActive');
   if (!user) return next(new AppError('User no longer exists.', 401));
-  if (!user.isActive) return next(new AppError('Account has been deactivated.', 403));
+  if (!user.isActive)
+    return next(new AppError('Account has been deactivated.', 403));
 
   req.user = user;
   req.hrmsToken = token;
@@ -58,7 +62,12 @@ exports.protect = asyncHandler(async (req, res, next) => {
 exports.authorize = (...roles) => {
   return (req, _res, next) => {
     if (!roles.includes(req.user.role)) {
-      return next(new AppError(`Role '${req.user.role}' is not authorized for this action.`, 403));
+      return next(
+        new AppError(
+          `Role '${req.user.role}' is not authorized for this action.`,
+          403,
+        ),
+      );
     }
     next();
   };
@@ -82,8 +91,17 @@ exports.authorizeOrSelf = (...roles) => {
 exports.adminOnly = exports.authorize('super_admin', 'admin');
 
 // Management-level access
-exports.managementOnly = exports.authorize('super_admin', 'admin', 'senior_manager');
+exports.managementOnly = exports.authorize(
+  'super_admin',
+  'admin',
+  'senior_manager',
+);
 
 // HR and above
-exports.hrAndAbove = exports.authorize('super_admin', 'admin', 'senior_manager', 'hr_recruiter');
+exports.hrAndAbove = exports.authorize(
+  'super_admin',
+  'admin',
+  'senior_manager',
+  'hr_recruiter',
+);
 exports.employeeonly = exports.authorize('employee');

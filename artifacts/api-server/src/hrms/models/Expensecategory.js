@@ -34,7 +34,7 @@ const expenseCategorySchema = new mongoose.Schema(
       ref: 'User',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 expenseCategorySchema.index({ isActive: 1 });

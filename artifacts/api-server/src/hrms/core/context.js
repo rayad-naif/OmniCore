@@ -37,4 +37,10 @@ function requireTenantId() {
   return id;
 }
 
-module.exports = { als, runAsTenant, currentContext, currentTenantId, requireTenantId };
+module.exports = {
+  als,
+  runAsTenant,
+  currentContext,
+  currentTenantId,
+  requireTenantId,
+};

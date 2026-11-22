@@ -96,7 +96,10 @@ async function candidateWorkspaces(email, requested) {
   if (found.length) return found;
 
   // First login after an import/upgrade: look through enabled workspaces.
-  const ids = (await tenants.enabledWorkspaceIds()).slice(0, MAX_SCAN_WORKSPACES);
+  const ids = (await tenants.enabledWorkspaceIds()).slice(
+    0,
+    MAX_SCAN_WORKSPACES,
+  );
   const hits = [];
   for (const id of ids) {
     const exists = await runAsTenant(id, () =>
@@ -111,14 +114,16 @@ async function candidateWorkspaces(email, requested) {
   return hits;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function withWorkspace(tenantId, fn) {
   if (!UUID_RE.test(String(tenantId || ''))) {
     throw new AppError('Unknown workspace.', 400);
   }
   const ws = await tenants.workspaceInfo(tenantId);
-  if (!ws || !ws.enabled) throw new AppError('The HR module is not enabled for this workspace.', 403);
+  if (!ws || !ws.enabled)
+    throw new AppError('The HR module is not enabled for this workspace.', 403);
   return runAsTenant(tenantId, fn, { timezone: ws.timezone });
 }
 
@@ -158,7 +163,10 @@ exports.login = asyncHandler(async (req, res, next) => {
   if (!matches.length) {
     if (locked) {
       return next(
-        new AppError('Account locked due to too many failed attempts. Try again in 2 hours.', 423),
+        new AppError(
+          'Account locked due to too many failed attempts. Try again in 2 hours.',
+          423,
+        ),
       );
     }
     return next(new AppError('Invalid credentials', 401));
@@ -173,7 +181,9 @@ exports.login = asyncHandler(async (req, res, next) => {
   }
 
   const { ws, user } = matches[0];
-  logger.info(`HR user logged in: ${user.email} [${user.role}] workspace=${ws.id}`);
+  logger.info(
+    `HR user logged in: ${user.email} [${user.role}] workspace=${ws.id}`,
+  );
   await withWorkspace(ws.id, () => sendTokenResponse(user, 200, res));
 });
 
@@ -190,7 +200,13 @@ exports.register = asyncHandler(async (_req, _res, next) => {
 // @route   POST /api/hrms/v1/auth/sso   { code }  (one-time code from the OmniCore dashboard)
 exports.sso = asyncHandler(async (req, res, next) => {
   const grant = await tenants.consumeSsoCode(req.body.code);
-  if (!grant) return next(new AppError('This sign-in link has expired. Open HR again from the dashboard.', 401));
+  if (!grant)
+    return next(
+      new AppError(
+        'This sign-in link has expired. Open HR again from the dashboard.',
+        401,
+      ),
+    );
 
   await withWorkspace(grant.tenantId, async () => {
     const email = tenants.normEmail(grant.email);
@@ -203,18 +219,24 @@ exports.sso = asyncHandler(async (req, res, next) => {
           403,
         );
       }
-      const [firstName, ...rest] = String(grant.name || email.split('@')[0]).trim().split(/\s+/);
+      const [firstName, ...rest] = String(grant.name || email.split('@')[0])
+        .trim()
+        .split(/\s+/);
       user = await User.create({
         firstName: (firstName || 'Admin').slice(0, 50),
         lastName: rest.join(' ').slice(0, 50),
         email,
         password: crypto.randomBytes(24).toString('base64url') + 'aA1!',
         role: grant.provisionRole,
-        position: grant.support ? 'Platform support' : 'Workspace administrator',
+        position: grant.support
+          ? 'Platform support'
+          : 'Workspace administrator',
         isEmailVerified: true,
       });
       await Employee.create({ user: user._id }).catch(() => {});
-      logger.info(`HR account provisioned by single sign-on: ${email} [${user.role}]`);
+      logger.info(
+        `HR account provisioned by single sign-on: ${email} [${user.role}]`,
+      );
     } else if (!user.isActive) {
       throw new AppError('Your HR account has been deactivated.', 403);
     } else if (
@@ -249,8 +271,11 @@ exports.refreshToken = asyncHandler(async (req, res, next) => {
   }
 
   await withWorkspace(decoded.tid, async () => {
-    const user = await User.findById(decoded.id).select('+refreshToken +isActive');
-    if (!user || !user.isActive) throw new AppError('User not found or inactive', 401);
+    const user = await User.findById(decoded.id).select(
+      '+refreshToken +isActive',
+    );
+    if (!user || !user.isActive)
+      throw new AppError('User not found or inactive', 401);
     if (!user.refreshToken || user.refreshToken !== token) {
       throw new AppError('Refresh token expired or revoked', 401);
     }
@@ -268,7 +293,10 @@ exports.logout = asyncHandler(async (req, res) => {
 
 // @route   GET /api/hrms/v1/auth/me
 exports.getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).populate('department', 'name code');
+  const user = await User.findById(req.user.id).populate(
+    'department',
+    'name code',
+  );
   res.json({
     success: true,
     data: user,
@@ -280,7 +308,9 @@ exports.getMe = asyncHandler(async (req, res) => {
 exports.changePassword = asyncHandler(async (req, res, next) => {
   const { currentPassword, newPassword } = req.body;
   if (!newPassword || String(newPassword).length < 8) {
-    return next(new AppError('The new password must be at least 8 characters', 400));
+    return next(
+      new AppError('The new password must be at least 8 characters', 400),
+    );
   }
 
   const user = await User.findById(req.user.id).select('+password');
@@ -302,13 +332,18 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
   const email = tenants.normEmail(req.body.email);
   const requested = req.body.workspace || null;
   if (email) {
-    const workspaces = await candidateWorkspaces(email, requested).catch(() => []);
+    const workspaces = await candidateWorkspaces(email, requested).catch(
+      () => [],
+    );
     for (const ws of workspaces) {
       await withWorkspace(ws.id, async () => {
         const user = await User.findOne({ email, isActive: true });
         if (!user) return;
         const resetToken = crypto.randomBytes(32).toString('hex');
-        const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const hashedToken = crypto
+          .createHash('sha256')
+          .update(resetToken)
+          .digest('hex');
         await User.findByIdAndUpdate(user._id, {
           passwordResetToken: hashedToken,
           passwordResetExpires: Date.now() + 30 * 60 * 1000,
@@ -325,18 +360,32 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
   }
   res.json({
     success: true,
-    message: 'If that email has an HR account, a password reset link is on its way.',
+    message:
+      'If that email has an HR account, a password reset link is on its way.',
   });
 });
 
 // @route   POST /api/hrms/v1/auth/reset-password   { token, password, workspace }
 exports.resetPassword = asyncHandler(async (req, res, next) => {
   const workspace = req.body.workspace || req.query.w;
-  if (!workspace) return next(new AppError('Invalid or expired reset link', 400));
-  if (!req.body.token || !req.body.password || String(req.body.password).length < 8) {
-    return next(new AppError('A token and a password of at least 8 characters are required', 400));
+  if (!workspace)
+    return next(new AppError('Invalid or expired reset link', 400));
+  if (
+    !req.body.token ||
+    !req.body.password ||
+    String(req.body.password).length < 8
+  ) {
+    return next(
+      new AppError(
+        'A token and a password of at least 8 characters are required',
+        400,
+      ),
+    );
   }
-  const hashedToken = crypto.createHash('sha256').update(String(req.body.token)).digest('hex');
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(String(req.body.token))
+    .digest('hex');
 
   await withWorkspace(workspace, async () => {
     const user = await User.findOne({

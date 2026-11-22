@@ -76,7 +76,9 @@ const voiceRoutes: {
 const hrmsModule: {
   hrmsRouter: () => IRouter;
 } = require('../hrms');
-const hrmsAdmin: { superAdminRouter: IRouter } = require('../hrms/admin.routes');
+const hrmsAdmin: {
+  superAdminRouter: IRouter;
+} = require('../hrms/admin.routes');
 
 const router: IRouter = Router();
 

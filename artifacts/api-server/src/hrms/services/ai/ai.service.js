@@ -8,7 +8,7 @@ const { pdfText } = require('../../../lib/pdfText');
 const storage = require('../../core/storage');
 const { currentTenantId } = require('../../core/context');
 const { workspaceInfo } = require('../../core/tenants');
-const logger   = require('../../utils/logger');
+const logger = require('../../utils/logger');
 const { Application, Job } = require('../../models/Recruitment.model');
 const Leave = require('../../models/Leave.model');
 const User = require('../../models/User.model');
@@ -24,12 +24,16 @@ function getBusinessDate(offsetDays = 0) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date()).reduce((result, part) => {
-    if (part.type !== 'literal') result[part.type] = part.value;
-    return result;
-  }, {});
+  })
+    .formatToParts(new Date())
+    .reduce((result, part) => {
+      if (part.type !== 'literal') result[part.type] = part.value;
+      return result;
+    }, {});
 
-  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  const date = new Date(
+    Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)),
+  );
   date.setUTCDate(date.getUTCDate() + offsetDays);
   return date;
 }
@@ -45,28 +49,63 @@ function parseLeaveDate(message) {
 
   const iso = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
   if (iso) {
-    const date = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
+    const date = new Date(
+      Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])),
+    );
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
   const months = {
-    jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
-    apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
-    aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9,
-    october: 9, nov: 10, november: 10, dec: 11, december: 11,
+    jan: 0,
+    january: 0,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    march: 2,
+    apr: 3,
+    april: 3,
+    may: 4,
+    jun: 5,
+    june: 5,
+    jul: 6,
+    july: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    sept: 8,
+    september: 8,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    november: 10,
+    dec: 11,
+    december: 11,
   };
   const monthNames = Object.keys(months).join('|');
-  const dayFirst = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames})(?:\\s*,?\\s*(\\d{4}))?\\b`));
-  const monthFirst = text.match(new RegExp(`\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(\\d{4}))?\\b`));
+  const dayFirst = text.match(
+    new RegExp(
+      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames})(?:\\s*,?\\s*(\\d{4}))?\\b`,
+    ),
+  );
+  const monthFirst = text.match(
+    new RegExp(
+      `\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(\\d{4}))?\\b`,
+    ),
+  );
   const match = dayFirst || monthFirst;
   if (!match) return null;
 
   const isDayFirst = Boolean(dayFirst);
   const day = Number(isDayFirst ? match[1] : match[2]);
   const month = months[isDayFirst ? match[2] : match[1]];
-  const year = Number(isDayFirst ? match[3] : match[3]) || new Date().getUTCFullYear();
+  const year =
+    Number(isDayFirst ? match[3] : match[3]) || new Date().getUTCFullYear();
   const date = new Date(Date.UTC(year, month, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day ? date : null;
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month &&
+    date.getUTCDate() === day
+    ? date
+    : null;
 }
 
 async function getLeaveLookupContext(message, context) {
@@ -76,13 +115,19 @@ async function getLeaveLookupContext(message, context) {
 
   const dayEnd = new Date(date);
   dayEnd.setUTCHours(23, 59, 59, 999);
-  const query = { status: 'approved', startDate: { $lte: dayEnd }, endDate: { $gte: date } };
+  const query = {
+    status: 'approved',
+    startDate: { $lte: dayEnd },
+    endDate: { $gte: date },
+  };
   let scope = 'your own';
 
   if (COMPANY_LEAVE_ROLES.has(context.role)) {
     scope = 'company-wide';
   } else if (context.role === 'senior_manager') {
-    const teamIds = await User.find({ reportingManager: context.userId }).distinct('_id');
+    const teamIds = await User.find({
+      reportingManager: context.userId,
+    }).distinct('_id');
     query.employee = { $in: [...teamIds, context.userId] };
     scope = 'your team';
   } else {
@@ -94,9 +139,16 @@ async function getLeaveLookupContext(message, context) {
     .select('employee leaveType startDate endDate totalDays')
     .lean();
 
-  const dateLabel = date.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+  const dateLabel = date.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
   const rows = leaves.map((leave) => ({
-    employee: `${leave.employee?.firstName || ''} ${leave.employee?.lastName || ''}`.trim() || 'Unknown employee',
+    employee:
+      `${leave.employee?.firstName || ''} ${leave.employee?.lastName || ''}`.trim() ||
+      'Unknown employee',
     employeeId: leave.employee?.employeeId || '',
     leaveType: leave.leaveType,
     startDate: new Date(leave.startDate).toISOString().slice(0, 10),
@@ -118,21 +170,26 @@ const assertAiAllowed = async () => {
   const tenantId = currentTenantId();
   const ws = tenantId ? await workspaceInfo(tenantId) : null;
   if (!ws?.aiEnabled) {
-    const err = new Error('AI features are not included in this workspace\'s plan.');
+    const err = new Error(
+      "AI features are not included in this workspace's plan.",
+    );
     err.statusCode = 403;
     throw err;
   }
 };
 
 const getClient = () => {
-  if (!process.env.GEMINI_API_KEY) throw new Error('AI is not configured on this server (GEMINI_API_KEY).');
+  if (!process.env.GEMINI_API_KEY)
+    throw new Error('AI is not configured on this server (GEMINI_API_KEY).');
   return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 };
 
 const getModel = (pro = false) => {
   const genAI = getClient();
   const defaultModel = pro ? 'gemini-pro-latest' : 'gemini-flash-latest';
-  const modelName = pro ? (process.env.GEMINI_PRO_MODEL || defaultModel) : (process.env.GEMINI_MODEL || defaultModel);
+  const modelName = pro
+    ? process.env.GEMINI_PRO_MODEL || defaultModel
+    : process.env.GEMINI_MODEL || defaultModel;
   return genAI.getGenerativeModel({
     model: modelName,
     generationConfig: { temperature: 0.4, maxOutputTokens: 2048 },
@@ -142,13 +199,16 @@ const getModel = (pro = false) => {
 /** Call Gemini and parse JSON from the response */
 const callGemini = async (prompt, { pro = false, json = true } = {}) => {
   await assertAiAllowed();
-  const model    = getModel(pro);
-  const result   = await model.generateContent(prompt);
-  const text     = result.response.text().trim();
+  const model = getModel(pro);
+  const result = await model.generateContent(prompt);
+  const text = result.response.text().trim();
   if (!json) return text;
 
   // Strip possible markdown code fences
-  const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const clean = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
   return JSON.parse(clean);
 };
 
@@ -204,17 +264,19 @@ Be objective. Do not discriminate based on name, gender, or ethnicity.
     const result = await callGemini(prompt);
 
     await Application.findByIdAndUpdate(applicationId, {
-      'aiScreening.score':          result.score,
-      'aiScreening.summary':        result.summary,
-      'aiScreening.strengths':      result.strengths,
-      'aiScreening.weaknesses':     result.weaknesses,
+      'aiScreening.score': result.score,
+      'aiScreening.summary': result.summary,
+      'aiScreening.strengths': result.strengths,
+      'aiScreening.weaknesses': result.weaknesses,
       'aiScreening.recommendation': result.recommendation,
-      'aiScreening.skillMatch':     result.skillMatch,
-      'aiScreening.processedAt':    new Date(),
+      'aiScreening.skillMatch': result.skillMatch,
+      'aiScreening.processedAt': new Date(),
       stage: result.score >= 70 ? 'shortlisted' : 'rejected',
     });
 
-    logger.info(`✅ Gemini resume screening done for ${applicationId}: Score ${result.score}`);
+    logger.info(
+      `✅ Gemini resume screening done for ${applicationId}: Score ${result.score}`,
+    );
     return result;
   } catch (error) {
     logger.error(`Resume screening failed: ${error.message}`);
@@ -237,19 +299,33 @@ const chatWithHR = async (messages, context = {}) => {
         const Department = mongoose.model('Department');
 
         // Fetch User details
-        const employee = await User.findById(context.userId).populate('department');
+        const employee = await User.findById(context.userId).populate(
+          'department',
+        );
 
         // Calculate attendance stats for this user
-        const attendanceRecords = await Attendance.find({ employee: context.userId });
+        const attendanceRecords = await Attendance.find({
+          employee: context.userId,
+        });
         const totalAttendance = attendanceRecords.length;
-        const presentCount = attendanceRecords.filter(r => ['present', 'late', 'work_from_home'].includes(r.status)).length;
-        const wfhCount = attendanceRecords.filter(r => r.status === 'work_from_home').length;
-        const absentCount = attendanceRecords.filter(r => r.status === 'absent').length;
-        const attendancePercentage = totalAttendance > 0 ? Math.round((presentCount / totalAttendance) * 100) : 100;
+        const presentCount = attendanceRecords.filter((r) =>
+          ['present', 'late', 'work_from_home'].includes(r.status),
+        ).length;
+        const wfhCount = attendanceRecords.filter(
+          (r) => r.status === 'work_from_home',
+        ).length;
+        const absentCount = attendanceRecords.filter(
+          (r) => r.status === 'absent',
+        ).length;
+        const attendancePercentage =
+          totalAttendance > 0
+            ? Math.round((presentCount / totalAttendance) * 100)
+            : 100;
 
         // Fetch latest payroll
-        const latestPayroll = await Payroll.findOne({ employee: context.userId })
-          .sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
+        const latestPayroll = await Payroll.findOne({
+          employee: context.userId,
+        }).sort({ 'payPeriod.year': -1, 'payPeriod.month': -1 });
 
         userStats = {
           employeeId: employee?.employeeId || 'N/A',
@@ -257,7 +333,9 @@ const chatWithHR = async (messages, context = {}) => {
           role: employee?.role || context.role,
           position: employee?.position || 'N/A',
           department: employee?.department?.name || context.department || 'N/A',
-          dateOfJoining: employee?.dateOfJoining ? new Date(employee.dateOfJoining).toLocaleDateString() : 'N/A',
+          dateOfJoining: employee?.dateOfJoining
+            ? new Date(employee.dateOfJoining).toLocaleDateString()
+            : 'N/A',
           skills: employee?.skills || [],
           salaryBasic: employee?.salary?.basic || 0,
           attendance: {
@@ -265,25 +343,36 @@ const chatWithHR = async (messages, context = {}) => {
             present: presentCount,
             absent: absentCount,
             wfh: wfhCount,
-            totalRecords: totalAttendance
+            totalRecords: totalAttendance,
           },
-          latestPayroll: latestPayroll ? {
-            month: latestPayroll.payPeriod.month,
-            year: latestPayroll.payPeriod.year,
-            grossEarnings: latestPayroll.grossEarnings,
-            totalDeductions: latestPayroll.totalDeductions,
-            netSalary: latestPayroll.netSalary,
-            status: latestPayroll.status
-          } : null
+          latestPayroll: latestPayroll
+            ? {
+                month: latestPayroll.payPeriod.month,
+                year: latestPayroll.payPeriod.year,
+                grossEarnings: latestPayroll.grossEarnings,
+                totalDeductions: latestPayroll.totalDeductions,
+                netSalary: latestPayroll.netSalary,
+                status: latestPayroll.status,
+              }
+            : null,
         };
 
         // Company-wide figures are available only to HR-level roles.
         if (COMPANY_LEAVE_ROLES.has(context.role)) {
           const totalEmployees = await User.countDocuments({ isActive: true });
-          const today = new Date(); today.setHours(0, 0, 0, 0);
-          const presentToday = await Attendance.countDocuments({ date: { $gte: today }, status: { $in: ['present', 'late', 'work_from_home'] } });
-          const wfhToday = await Attendance.countDocuments({ date: { $gte: today }, status: 'work_from_home' });
-          const deptsCount = await Department.countDocuments({ isActive: true });
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const presentToday = await Attendance.countDocuments({
+            date: { $gte: today },
+            status: { $in: ['present', 'late', 'work_from_home'] },
+          });
+          const wfhToday = await Attendance.countDocuments({
+            date: { $gte: today },
+            status: 'work_from_home',
+          });
+          const deptsCount = await Department.countDocuments({
+            isActive: true,
+          });
 
           companyStats = {
             name: await companyName(),
@@ -299,7 +388,10 @@ const chatWithHR = async (messages, context = {}) => {
       }
     }
 
-    const leaveLookup = await getLeaveLookupContext(messages[messages.length - 1]?.content, context);
+    const leaveLookup = await getLeaveLookupContext(
+      messages[messages.length - 1]?.content,
+      context,
+    );
 
     const systemContext = `
 You are ARIA (AI Recruitment & HR Intelligence Assistant) for ${await companyName()}.
@@ -307,7 +399,9 @@ You are a professional, empathetic HR assistant.
 
 IMPORTANT: You are directly integrated with this company's HR databases. Only use the authorized data supplied below. Never invent employee records, names, leave status, salaries, or company statistics. Do not disclose information outside the user's authorized scope.
 
-${userStats ? `CURRENT USER REAL-TIME DATABASE PROFILE:
+${
+  userStats
+    ? `CURRENT USER REAL-TIME DATABASE PROFILE:
 - Full Name: ${userStats.fullName}
 - Employee ID: ${userStats.employeeId}
 - Role: ${userStats.role}
@@ -322,23 +416,33 @@ USER ATTENDANCE STATS:
 - Logged Days: ${userStats.attendance.present} Present/Late/WFH, ${userStats.attendance.wfh} Work From Home, ${userStats.attendance.absent} Absent.
 
 USER LATEST PAYROLL STATS:
-${userStats.latestPayroll ? `- Pay Period: ${userStats.latestPayroll.month}/${userStats.latestPayroll.year}
+${
+  userStats.latestPayroll
+    ? `- Pay Period: ${userStats.latestPayroll.month}/${userStats.latestPayroll.year}
 - Net Salary: ${userStats.latestPayroll.netSalary}
 - Gross Earnings: ${userStats.latestPayroll.grossEarnings}
 - Total Deductions: ${userStats.latestPayroll.totalDeductions}
-- Payroll Status: ${userStats.latestPayroll.status}` : `- No processed payroll records found.`}
-` : `USER CONTEXT:
+- Payroll Status: ${userStats.latestPayroll.status}`
+    : `- No processed payroll records found.`
+}
+`
+    : `USER CONTEXT:
 - Role: ${context.role || 'employee'}
 - Name: ${context.name || 'User'}
-- Department: ${context.department || 'Unknown'}`}
+- Department: ${context.department || 'Unknown'}`
+}
 
-${companyStats ? `COMPANY REAL-TIME STATS:
+${
+  companyStats
+    ? `COMPANY REAL-TIME STATS:
 - Company Name: ${companyStats.name}
 - Total Active Employees: ${companyStats.totalEmployees}
 - Attendance Status Today: ${companyStats.presentToday} checked-in employees (${companyStats.wfhToday} working remotely)
 - Active Departments: ${companyStats.activeDepartments}
 - Open/Active Job Postings: ${companyStats.activeJobPostings}
-` : ''}
+`
+    : ''
+}
 
 ${leaveLookup || ''}
 
@@ -361,7 +465,7 @@ Be concise, helpful, and professional. Use bullet points when listing items. For
       if (m.role === 'user') foundUserMsg = true;
       if (foundUserMsg) {
         history.push({
-          role:  m.role === 'assistant' ? 'model' : 'user',
+          role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.content }],
         });
       }
@@ -369,13 +473,13 @@ Be concise, helpful, and professional. Use bullet points when listing items. For
 
     await assertAiAllowed();
     const model = getModel(false);
-    const chat  = model.startChat({
+    const chat = model.startChat({
       history,
       systemInstruction: { parts: [{ text: systemContext }] },
     });
 
     const lastMsg = messages[messages.length - 1];
-    const result  = await chat.sendMessage(lastMsg.content);
+    const result = await chat.sendMessage(lastMsg.content);
     return result.response.text();
   } catch (error) {
     logger.error(`ARIA chat failed: ${error.message}`);

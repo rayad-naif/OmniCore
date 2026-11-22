@@ -2,7 +2,12 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+// Served by OmniCore at /hrms/. In development the API runs separately
+// (default http://localhost:8080; override with API_ORIGIN).
+const API_ORIGIN = process.env.API_ORIGIN || 'http://localhost:8080';
+
 export default defineConfig({
+  base: '/hrms/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -19,19 +24,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: Number(process.env.PORT) || 5175,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: API_ORIGIN,
         changeOrigin: true,
-      },
-      '/socket.io': {
-        target: 'http://localhost:5000',
         ws: true,
-      },
-      '/uploads': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
       },
     },
   },
@@ -42,7 +40,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts', 'chart.js'],
+          charts: ['recharts'],
           redux: ['@reduxjs/toolkit', 'react-redux'],
         },
       },

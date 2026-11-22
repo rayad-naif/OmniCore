@@ -59,6 +59,11 @@ function ensureSchema() {
       )
     `);
 
+    // Optional modules sold per plan (added after the first release).
+    await pool.query(
+      `ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false`,
+    );
+
     // Seed defaults only when the table is empty, mirroring the previous Stripe
     // plan definitions so existing tenants keep their expected limits.
     const { rows } = await pool.query(
@@ -107,6 +112,7 @@ function shape(r) {
     features: {
       ai_feature_enabled: r.ai_feature_enabled,
       smtp_feature_enabled: r.smtp_feature_enabled,
+      hrms_feature_enabled: Boolean(r.hrms_feature_enabled),
     },
     limits: {
       max_brands_allowed: r.max_brands_allowed,
@@ -283,8 +289,8 @@ async function createPlan(body) {
     `INSERT INTO billing_plans
        (slug, name, description, amount_cents, currency, is_free, self_serve, sort_order,
         trial_days, ai_feature_enabled, smtp_feature_enabled,
-        max_brands_allowed, max_agents_allowed, conversation_limit)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        max_brands_allowed, max_agents_allowed, conversation_limit, hrms_feature_enabled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      RETURNING *`,
     [
       slug,
@@ -301,6 +307,7 @@ async function createPlan(body) {
       normInt(body.max_brands_allowed),
       normInt(body.max_agents_allowed),
       normInt(body.conversation_limit),
+      !!body.hrms_feature_enabled,
     ],
   );
 
@@ -338,6 +345,8 @@ async function updatePlan(id, body) {
     next.ai_feature_enabled = !!body.ai_feature_enabled;
   if (body.smtp_feature_enabled !== undefined)
     next.smtp_feature_enabled = !!body.smtp_feature_enabled;
+  if (body.hrms_feature_enabled !== undefined)
+    next.hrms_feature_enabled = !!body.hrms_feature_enabled;
   if (body.max_brands_allowed !== undefined)
     next.max_brands_allowed = normInt(body.max_brands_allowed);
   if (body.max_agents_allowed !== undefined)
@@ -357,7 +366,7 @@ async function updatePlan(id, body) {
        self_serve = $6, sort_order = $7, trial_days = $8,
        ai_feature_enabled = $9, smtp_feature_enabled = $10,
        max_brands_allowed = $11, max_agents_allowed = $12, conversation_limit = $13,
-       updated_at = NOW()
+       hrms_feature_enabled = $15, updated_at = NOW()
      WHERE id = $14 RETURNING *`,
     [
       next.name,
@@ -374,6 +383,7 @@ async function updatePlan(id, body) {
       next.max_agents_allowed,
       next.conversation_limit,
       id,
+      Boolean(next.hrms_feature_enabled),
     ],
   );
 

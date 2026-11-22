@@ -3,7 +3,11 @@ const mongoose = require('../core/mongoose');
 const jobSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
-    department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', required: true },
+    department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      required: true,
+    },
     description: { type: String, required: true },
     requirements: [{ type: String }],
     responsibilities: [{ type: String }],
@@ -20,11 +24,23 @@ const jobSchema = new mongoose.Schema(
       isConfidential: { type: Boolean, default: false },
     },
     location: { type: String },
-    workType: { type: String, enum: ['full_time', 'part_time', 'contract', 'intern'], default: 'full_time' },
-    workMode: { type: String, enum: ['office', 'remote', 'hybrid'], default: 'office' },
+    workType: {
+      type: String,
+      enum: ['full_time', 'part_time', 'contract', 'intern'],
+      default: 'full_time',
+    },
+    workMode: {
+      type: String,
+      enum: ['office', 'remote', 'hybrid'],
+      default: 'office',
+    },
     openings: { type: Number, default: 1 },
     closingDate: { type: Date },
-    status: { type: String, enum: ['draft', 'open', 'closed', 'on_hold'], default: 'draft' },
+    status: {
+      type: String,
+      enum: ['draft', 'open', 'closed', 'on_hold'],
+      default: 'draft',
+    },
     postedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     aiScreeningEnabled: { type: Boolean, default: true },
     aiScreeningCriteria: {
@@ -43,7 +59,7 @@ const jobSchema = new mongoose.Schema(
     ],
     tags: [String],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const applicationSchema = new mongoose.Schema(
@@ -91,13 +107,19 @@ const applicationSchema = new mongoose.Schema(
       summary: String,
       strengths: [String],
       weaknesses: [String],
-      recommendation: { type: String, enum: ['strong_yes', 'yes', 'maybe', 'no'] },
+      recommendation: {
+        type: String,
+        enum: ['strong_yes', 'yes', 'maybe', 'no'],
+      },
       processedAt: Date,
       skillMatch: [{ skill: String, matched: Boolean, score: Number }],
     },
     interviews: [
       {
-        type: { type: String, enum: ['hr', 'technical', 'managerial', 'cultural', 'final'] },
+        type: {
+          type: String,
+          enum: ['hr', 'technical', 'managerial', 'cultural', 'final'],
+        },
         scheduledAt: Date,
         conductedAt: Date,
         interviewers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
@@ -130,7 +152,15 @@ const applicationSchema = new mongoose.Schema(
     ],
     source: {
       type: String,
-      enum: ['portal', 'linkedin', 'referral', 'naukri', 'direct', 'agency', 'other'],
+      enum: [
+        'portal',
+        'linkedin',
+        'referral',
+        'naukri',
+        'direct',
+        'agency',
+        'other',
+      ],
       default: 'portal',
     },
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -145,7 +175,7 @@ const applicationSchema = new mongoose.Schema(
     ],
     rating: { type: Number, min: 1, max: 5 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 applicationSchema.index({ job: 1, 'candidate.email': 1 });

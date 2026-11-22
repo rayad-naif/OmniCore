@@ -6,13 +6,15 @@ const Station = require('../models/Station.model');
 const ActivityScreenshot = require('../models/ActivityScreenshot.model');
 const ShiftAssignment = require('../models/ShiftAssignment.model');
 
-
-const SHIFT_LENGTH_HOURS = Math.min(Math.max(Number(process.env.SCREENSHOT_SHIFT_LENGTH_HOURS) || 8, 1), 16);
+const SHIFT_LENGTH_HOURS = Math.min(
+  Math.max(Number(process.env.SCREENSHOT_SHIFT_LENGTH_HOURS) || 8, 1),
+  16,
+);
 // Set only for a short controlled test, then remove it. A value of 60 spreads
 // the ten captures across one minute instead of the normal shift duration.
 const SCREENSHOT_TEST_WINDOW_SECONDS = Math.min(
   Math.max(Number(process.env.SCREENSHOT_TEST_WINDOW_SECONDS) || 0, 0),
-  3600
+  3600,
 );
 
 // Applies an "HH:mm" string onto the given date, in the server's local timezone.
@@ -31,7 +33,15 @@ const applyTimeToDate = (baseDate, timeStr) => {
 
   // Build the intended Karachi wall-clock instant, then convert to the
   // correct UTC instant by subtracting the offset.
-  const localAsUtcMs = Date.UTC(year, month, day, hours || 0, minutes || 0, 0, 0);
+  const localAsUtcMs = Date.UTC(
+    year,
+    month,
+    day,
+    hours || 0,
+    minutes || 0,
+    0,
+    0,
+  );
   return new Date(localAsUtcMs - KARACHI_OFFSET_MINUTES * 60000);
 };
 
@@ -45,7 +55,11 @@ const resolveShiftTiming = async (employeeId, referenceDate) => {
     employee: employeeId,
     status: 'active',
     $or: [
-      { recurring: false, startDate: { $lte: referenceDate }, endDate: { $gte: referenceDate } },
+      {
+        recurring: false,
+        startDate: { $lte: referenceDate },
+        endDate: { $gte: referenceDate },
+      },
       { recurring: true, weekday },
     ],
   })
@@ -64,16 +78,28 @@ const resolveShiftTiming = async (employeeId, referenceDate) => {
 
 const resolveActiveAttendance = async (stationId, at) => {
   const station = await Station.findOne({ stationId, isActive: true }).lean();
-  if (!station) return { error: 'This workstation is not registered or is inactive.', status: 404 };
+  if (!station)
+    return {
+      error: 'This workstation is not registered or is inactive.',
+      status: 404,
+    };
 
   const stationRefs = (station.assignedEmployees || []).map(String);
-  if (!stationRefs.length) return { error: 'No employees are assigned to this workstation.', status: 409 };
+  if (!stationRefs.length)
+    return {
+      error: 'No employees are assigned to this workstation.',
+      status: 409,
+    };
 
-  const employees = await Employee.find({ _id: { $in: stationRefs } }).select('user').lean();
-  const candidateUserIds = [...new Set([
-    ...stationRefs,
-    ...employees.map((employee) => String(employee.user)).filter(Boolean),
-  ])];
+  const employees = await Employee.find({ _id: { $in: stationRefs } })
+    .select('user')
+    .lean();
+  const candidateUserIds = [
+    ...new Set([
+      ...stationRefs,
+      ...employees.map((employee) => String(employee.user)).filter(Boolean),
+    ]),
+  ];
 
   const active = await Attendance.find({
     employee: { $in: candidateUserIds },
@@ -83,11 +109,15 @@ const resolveActiveAttendance = async (stationId, at) => {
       { 'checkOut.time': null },
       { 'checkOut.time': { $gte: at } },
     ],
-  }).select('employee checkIn.time').lean();
+  })
+    .select('employee checkIn.time')
+    .lean();
 
   if (active.length !== 1) {
     return {
-      error: active.length ? 'More than one assigned employee is active at this workstation.' : 'No assigned employee has an active attendance record.',
+      error: active.length
+        ? 'More than one assigned employee is active at this workstation.'
+        : 'No assigned employee has an active attendance record.',
       status: 409,
     };
   }
@@ -97,10 +127,14 @@ const resolveActiveAttendance = async (stationId, at) => {
 
 const getScreenshotContext = async (req, res) => {
   const stationId = String(req.query.stationId || '').trim();
-  if (!stationId) return res.status(400).json({ success: false, message: 'stationId is required' });
+  if (!stationId)
+    return res
+      .status(400)
+      .json({ success: false, message: 'stationId is required' });
 
   const result = await resolveActiveAttendance(stationId, new Date());
-  if (!result.attendance) return res.json({ success: true, active: false, reason: result.error });
+  if (!result.attendance)
+    return res.json({ success: true, active: false, reason: result.error });
 
   let shiftStart;
   let shiftEnd;
@@ -109,17 +143,24 @@ const getScreenshotContext = async (req, res) => {
     // A test window starts when the tracker requests its context, so testing
     // works even if the employee checked in earlier in the day.
     shiftStart = new Date();
-    shiftEnd = new Date(shiftStart.getTime() + SCREENSHOT_TEST_WINDOW_SECONDS * 1000);
+    shiftEnd = new Date(
+      shiftStart.getTime() + SCREENSHOT_TEST_WINDOW_SECONDS * 1000,
+    );
   } else {
     const checkInDate = new Date(result.attendance.checkIn.time);
-    const assignedShift = await resolveShiftTiming(result.attendance.employee, checkInDate);
+    const assignedShift = await resolveShiftTiming(
+      result.attendance.employee,
+      checkInDate,
+    );
     if (assignedShift) {
       ({ shiftStart, shiftEnd } = assignedShift);
     } else {
       // No ShiftAssignment found for this employee/day; fall back to the
       // legacy fixed-length window anchored on their actual check-in time.
       shiftStart = checkInDate;
-      shiftEnd = new Date(shiftStart.getTime() + SHIFT_LENGTH_HOURS * 60 * 60 * 1000);
+      shiftEnd = new Date(
+        shiftStart.getTime() + SHIFT_LENGTH_HOURS * 60 * 60 * 1000,
+      );
     }
   }
 
@@ -137,11 +178,17 @@ const getScreenshotContext = async (req, res) => {
 
 // Screenshots are stored in OmniCore's file storage (R2 or local disk) instead
 // of ImageKit. The imagekitFileId / imagekitFilePath fields hold the storage key.
-const uploadToImageKit = async (file, { stationId, employeeId, capturedAt }) => {
+const uploadToImageKit = async (
+  file,
+  { stationId, employeeId, capturedAt },
+) => {
   const safeStation = stationId.replace(/[^a-zA-Z0-9_-]/g, '_');
   const ext = file.mimetype === 'image/png' ? 'png' : 'jpg';
   const filename = `capture-${capturedAt.toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const key = storage.keyFor(`activity-screenshots/${employeeId}/${safeStation}`, filename);
+  const key = storage.keyFor(
+    `activity-screenshots/${employeeId}/${safeStation}`,
+    filename,
+  );
   await storage.put(key, file.buffer, file.mimetype);
   return { fileId: key, filePath: key };
 };
@@ -151,12 +198,22 @@ const uploadScreenshot = async (req, res) => {
     const stationId = String(req.body.stationId || '').trim();
     const capturedAt = new Date(req.body.capturedAt || Date.now());
     if (!stationId || Number.isNaN(capturedAt.getTime())) {
-      return res.status(400).json({ success: false, message: 'stationId and a valid capturedAt are required' });
+      return res.status(400).json({
+        success: false,
+        message: 'stationId and a valid capturedAt are required',
+      });
     }
-    if (!req.file) return res.status(400).json({ success: false, message: 'A JPEG or PNG screenshot file is required' });
+    if (!req.file)
+      return res.status(400).json({
+        success: false,
+        message: 'A JPEG or PNG screenshot file is required',
+      });
 
     const resolved = await resolveActiveAttendance(stationId, capturedAt);
-    if (!resolved.attendance) return res.status(resolved.status).json({ success: false, message: resolved.error });
+    if (!resolved.attendance)
+      return res
+        .status(resolved.status)
+        .json({ success: false, message: resolved.error });
 
     const uploaded = await uploadToImageKit(req.file, {
       stationId,
@@ -173,10 +230,18 @@ const uploadScreenshot = async (req, res) => {
       mimeType: req.file.mimetype,
       bytes: req.file.size,
     });
-    return res.status(201).json({ success: true, data: { id: screenshot._id, capturedAt: screenshot.capturedAt } });
+    return res.status(201).json({
+      success: true,
+      data: { id: screenshot._id, capturedAt: screenshot.capturedAt },
+    });
   } catch (error) {
-    console.error('[ActivityScreenshot] upload failed:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Unable to store screenshot' });
+    console.error(
+      '[ActivityScreenshot] upload failed:',
+      error.response?.data || error.message,
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: 'Unable to store screenshot' });
   }
 };
 
@@ -190,7 +255,9 @@ const getScreenshots = async (req, res) => {
     const requestedEmployeeId = String(req.query.employeeId);
     const employee = await Employee.findOne({
       $or: [{ _id: requestedEmployeeId }, { user: requestedEmployeeId }],
-    }).select('user').lean();
+    })
+      .select('user')
+      .lean();
     const employeeIds = [requestedEmployeeId];
     if (employee?.user) employeeIds.push(String(employee.user));
     query.employee = { $in: [...new Set(employeeIds)] };
@@ -225,15 +292,25 @@ const getScreenshots = async (req, res) => {
 const STORAGE_RATE_WINDOW_DAYS = 7;
 
 const getScreenshotStorageStats = async (req, res) => {
-  const windowStart = new Date(Date.now() - STORAGE_RATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const windowStart = new Date(
+    Date.now() - STORAGE_RATE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
 
   const [stats] = await ActivityScreenshot.aggregate([
-    { $group: { _id: null, count: { $sum: 1 }, totalBytes: { $sum: { $ifNull: ['$bytes', 0] } } } },
+    {
+      $group: {
+        _id: null,
+        count: { $sum: 1 },
+        totalBytes: { $sum: { $ifNull: ['$bytes', 0] } },
+      },
+    },
   ]);
 
   const [recent] = await ActivityScreenshot.aggregate([
     { $match: { capturedAt: { $gte: windowStart } } },
-    { $group: { _id: null, recentBytes: { $sum: { $ifNull: ['$bytes', 0] } } } },
+    {
+      $group: { _id: null, recentBytes: { $sum: { $ifNull: ['$bytes', 0] } } },
+    },
   ]);
 
   const recentBytes = recent?.recentBytes || 0;
@@ -256,38 +333,69 @@ const deleteFromImageKit = async (fileId) => {
 
 const deleteScreenshot = async (req, res) => {
   try {
-    const screenshot = await ActivityScreenshot.findById(req.params.screenshotId);
-    if (!screenshot) return res.status(404).json({ success: false, message: 'Screenshot not found.' });
+    const screenshot = await ActivityScreenshot.findById(
+      req.params.screenshotId,
+    );
+    if (!screenshot)
+      return res
+        .status(404)
+        .json({ success: false, message: 'Screenshot not found.' });
 
     await deleteFromImageKit(screenshot.imagekitFileId);
     await screenshot.deleteOne();
-    return res.json({ success: true, message: 'Screenshot permanently deleted.' });
+    return res.json({
+      success: true,
+      message: 'Screenshot permanently deleted.',
+    });
   } catch (error) {
-    console.error('[ActivityScreenshot] delete failed:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Unable to delete the screenshot.' });
+    console.error(
+      '[ActivityScreenshot] delete failed:',
+      error.response?.data || error.message,
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: 'Unable to delete the screenshot.' });
   }
 };
 
 const deleteEmployeeScreenshots = async (req, res) => {
   try {
     const requestedEmployeeId = String(req.query.employeeId || '').trim();
-    if (!requestedEmployeeId) return res.status(400).json({ success: false, message: 'employeeId is required.' });
+    if (!requestedEmployeeId)
+      return res
+        .status(400)
+        .json({ success: false, message: 'employeeId is required.' });
 
     const employee = await Employee.findOne({
       $or: [{ _id: requestedEmployeeId }, { user: requestedEmployeeId }],
-    }).select('user').lean();
+    })
+      .select('user')
+      .lean();
     const employeeIds = [requestedEmployeeId];
     if (employee?.user) employeeIds.push(String(employee.user));
-    const screenshots = await ActivityScreenshot.find({ employee: { $in: [...new Set(employeeIds)] } });
+    const screenshots = await ActivityScreenshot.find({
+      employee: { $in: [...new Set(employeeIds)] },
+    });
 
     for (const screenshot of screenshots) {
       await deleteFromImageKit(screenshot.imagekitFileId);
     }
-    await ActivityScreenshot.deleteMany({ _id: { $in: screenshots.map((screenshot) => screenshot._id) } });
-    return res.json({ success: true, deletedCount: screenshots.length, message: 'All screenshots permanently deleted.' });
+    await ActivityScreenshot.deleteMany({
+      _id: { $in: screenshots.map((screenshot) => screenshot._id) },
+    });
+    return res.json({
+      success: true,
+      deletedCount: screenshots.length,
+      message: 'All screenshots permanently deleted.',
+    });
   } catch (error) {
-    console.error('[ActivityScreenshot] bulk delete failed:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Unable to delete all screenshots.' });
+    console.error(
+      '[ActivityScreenshot] bulk delete failed:',
+      error.response?.data || error.message,
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: 'Unable to delete all screenshots.' });
   }
 };
 // Direct-to-ImageKit uploads are not used with OmniCore storage: the desktop
@@ -295,13 +403,15 @@ const deleteEmployeeScreenshots = async (req, res) => {
 const getScreenshotUploadAuth = async (_req, res) =>
   res.status(410).json({
     success: false,
-    message: 'Direct uploads are not available. Upload with POST /api/hrms/v1/activity-logs/screenshots.',
+    message:
+      'Direct uploads are not available. Upload with POST /api/hrms/v1/activity-logs/screenshots.',
   });
 
 const confirmScreenshot = async (_req, res) =>
   res.status(410).json({
     success: false,
-    message: 'Direct uploads are not available. Upload with POST /api/hrms/v1/activity-logs/screenshots.',
+    message:
+      'Direct uploads are not available. Upload with POST /api/hrms/v1/activity-logs/screenshots.',
   });
 
 module.exports = {

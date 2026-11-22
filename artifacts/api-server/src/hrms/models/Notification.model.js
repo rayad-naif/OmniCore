@@ -7,7 +7,14 @@ const notificationSchema = new mongoose.Schema(
     message: { type: String, required: true },
     type: {
       type: String,
-      enum: ['leave', 'late', 'shift_swap', 'attendance', 'calendar_event', 'system'],
+      enum: [
+        'leave',
+        'late',
+        'shift_swap',
+        'attendance',
+        'calendar_event',
+        'system',
+      ],
       default: 'system',
     },
     link: { type: String, default: '' },
@@ -15,7 +22,7 @@ const notificationSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 module.exports = mongoose.model('Notification', notificationSchema);

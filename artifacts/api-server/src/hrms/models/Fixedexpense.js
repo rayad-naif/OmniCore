@@ -40,7 +40,7 @@ const fixedExpenseSchema = new mongoose.Schema(
       ref: 'User',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 fixedExpenseSchema.index({ isActive: 1 });

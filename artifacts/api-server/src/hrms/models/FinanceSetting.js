@@ -11,16 +11,24 @@ const mongoose = require('../core/mongoose');
 const financeSettingSchema = new mongoose.Schema(
   {
     // ── Currency ──────────────────────────────────────────────────────────
-    usdToPkrRate: { type: Number, default: 278, min: 1 },  // PKR per 1 USD
+    usdToPkrRate: { type: Number, default: 278, min: 1 }, // PKR per 1 USD
     rateUpdatedAt: { type: Date, default: Date.now },
-    rateUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    rateUpdatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
 
     // ── Owners list ───────────────────────────────────────────────────────
     // Profit is split equally among all active owners (Total Profit / owners.length)
     owners: [
       {
-        name:   { type: String, required: true, trim: true },
-        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        name: { type: String, required: true, trim: true },
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: null,
+        },
         isActive: { type: Boolean, default: true },
       },
     ],
@@ -29,14 +37,18 @@ const financeSettingSchema = new mongoose.Schema(
     // Keeps a global roster so dropdowns stay consistent
     persons: [
       {
-        name:   { type: String, required: true, trim: true },
-        role:   { type: String, default: '' },   // e.g. "Owner", "Manager"
-        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        name: { type: String, required: true, trim: true },
+        role: { type: String, default: '' }, // e.g. "Owner", "Manager"
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          default: null,
+        },
         isActive: { type: Boolean, default: true },
       },
     ],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Ensure only one document exists

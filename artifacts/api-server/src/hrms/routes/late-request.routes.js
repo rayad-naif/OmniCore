@@ -6,9 +6,16 @@ const { asyncHandler } = require('../utils/errorUtils');
 const LateRequest = require('../models/Laterequest.model');
 const User = require('../models/User.model');
 const { sendEmail } = require('../services/notification/email.service');
-const { createNotificationsForRoles } = require('../services/notification/notification.service');
+const {
+  createNotificationsForRoles,
+} = require('../services/notification/notification.service');
 
-const ADMIN_NOTIFICATION_TARGET_ROLES = ['super_admin', 'admin', 'senior_manager', 'hr_recruiter'];
+const ADMIN_NOTIFICATION_TARGET_ROLES = [
+  'super_admin',
+  'admin',
+  'senior_manager',
+  'hr_recruiter',
+];
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const toMinutes = (t) => {
@@ -19,7 +26,9 @@ const toMinutes = (t) => {
 // Business-date bucket — same convention as Attendance.date (UTC midnight).
 function dayBucket(input) {
   const d = new Date(input);
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
 }
 
 // ─── Notify all super_admin users that a new/revised late request came in ──
@@ -27,7 +36,9 @@ function dayBucket(input) {
 // the employee's submission itself.
 async function _notifySuperAdminsOfLateRequest(request, employee) {
   try {
-    const superAdmins = await User.find({ role: 'super_admin' }).select('email');
+    const superAdmins = await User.find({ role: 'super_admin' }).select(
+      'email',
+    );
     if (!superAdmins.length) return;
 
     const employeeName = `${employee.firstName} ${employee.lastName}`;
@@ -42,11 +53,18 @@ async function _notifySuperAdminsOfLateRequest(request, employee) {
 
     await Promise.all(
       superAdmins.map((super_admin) =>
-        sendEmail({ to: super_admin.email, template: 'lateRequestSubmitted', data })
-      )
+        sendEmail({
+          to: super_admin.email,
+          template: 'lateRequestSubmitted',
+          data,
+        }),
+      ),
     );
   } catch (err) {
-    console.error('Failed to notify super_admin(s) of new late request:', err.message);
+    console.error(
+      'Failed to notify super_admin(s) of new late request:',
+      err.message,
+    );
   }
 }
 
@@ -65,20 +83,29 @@ router.post(
       });
     }
     if (!TIME_RE.test(lateFrom) || !TIME_RE.test(lateTo)) {
-      return res.status(400).json({ success: false, message: 'lateFrom/lateTo must be in HH:MM format.' });
+      return res.status(400).json({
+        success: false,
+        message: 'lateFrom/lateTo must be in HH:MM format.',
+      });
     }
     if (toMinutes(lateTo) <= toMinutes(lateFrom)) {
-      return res.status(400).json({ success: false, message: 'lateTo must be after lateFrom.' });
+      return res
+        .status(400)
+        .json({ success: false, message: 'lateTo must be after lateFrom.' });
     }
 
     const targetDate = dayBucket(date);
-    let request = await LateRequest.findOne({ employee: req.user._id, date: targetDate });
+    let request = await LateRequest.findOne({
+      employee: req.user._id,
+      date: targetDate,
+    });
 
     if (request) {
       if (request.status === 'approved') {
         return res.status(400).json({
           success: false,
-          message: 'This date already has an approved late request. Contact HR if it needs to change.',
+          message:
+            'This date already has an approved late request. Contact HR if it needs to change.',
         });
       }
       // Revise an existing pending/rejected request and reset it to pending.
@@ -100,7 +127,9 @@ router.post(
       });
     }
 
-    const employeeName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || req.user.email;
+    const employeeName =
+      [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') ||
+      req.user.email;
 
     if (req.io) {
       ADMIN_NOTIFICATION_TARGET_ROLES.forEach((role) =>
@@ -110,7 +139,7 @@ router.post(
           type: 'late',
           link: `/manager/laterequestsapprovals`,
           requestId: request._id,
-        })
+        }),
       );
     }
 
@@ -126,11 +155,18 @@ router.post(
         link: `/manager/laterequestsapprovals`,
       });
     } catch (err) {
-      console.error('Failed to persist late request notification:', err.message);
+      console.error(
+        'Failed to persist late request notification:',
+        err.message,
+      );
     }
 
-    res.status(201).json({ success: true, message: 'Late request submitted.', data: request });
-  })
+    res.status(201).json({
+      success: true,
+      message: 'Late request submitted.',
+      data: request,
+    });
+  }),
 );
 
 // ─── GET /late-requests/mine ───────────────────────────────────────────────
@@ -150,7 +186,7 @@ router.get(
     }
     const requests = await LateRequest.find(query).sort({ date: -1 });
     res.json({ success: true, data: requests });
-  })
+  }),
 );
 
 // ─── GET /late-requests ────────────────────────────────────────────────────
@@ -172,12 +208,15 @@ router.get(
     }
 
     const requests = await LateRequest.find(query)
-      .populate('employee', 'firstName lastName employeeId department position avatar')
+      .populate(
+        'employee',
+        'firstName lastName employeeId department position avatar',
+      )
       .populate('reviewedBy', 'firstName lastName')
       .sort({ createdAt: -1 });
 
     res.json({ success: true, data: requests });
-  })
+  }),
 );
 
 // ─── PATCH /late-requests/:id/approve ──────────────────────────────────────
@@ -187,9 +226,14 @@ router.patch(
   hrAndAbove,
   asyncHandler(async (req, res) => {
     const request = await LateRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ success: false, message: 'Late request not found.' });
+    if (!request)
+      return res
+        .status(404)
+        .json({ success: false, message: 'Late request not found.' });
     if (request.status === 'approved') {
-      return res.status(400).json({ success: false, message: 'This request is already approved.' });
+      return res
+        .status(400)
+        .json({ success: false, message: 'This request is already approved.' });
     }
 
     request.status = 'approved';
@@ -199,15 +243,22 @@ router.patch(
     await request.save();
 
     if (req.io) {
-      req.io.to('role:admin').emit('late-request:updated', { requestId: request._id, status: 'approved' });
+      req.io.to('role:admin').emit('late-request:updated', {
+        requestId: request._id,
+        status: 'approved',
+      });
       req.io.to(`user:${request.employee}`).emit('late-request:approved', {
         requestId: request._id,
         date: request.date,
       });
     }
 
-    res.json({ success: true, message: 'Late request approved.', data: request });
-  })
+    res.json({
+      success: true,
+      message: 'Late request approved.',
+      data: request,
+    });
+  }),
 );
 
 // ─── PATCH /late-requests/:id/reject ───────────────────────────────────────
@@ -217,11 +268,15 @@ router.patch(
   hrAndAbove,
   asyncHandler(async (req, res) => {
     const request = await LateRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ success: false, message: 'Late request not found.' });
+    if (!request)
+      return res
+        .status(404)
+        .json({ success: false, message: 'Late request not found.' });
     if (request.status === 'approved') {
       return res.status(400).json({
         success: false,
-        message: 'This request is already approved. Cancel/revoke it before rejecting.',
+        message:
+          'This request is already approved. Cancel/revoke it before rejecting.',
       });
     }
 
@@ -232,7 +287,10 @@ router.patch(
     await request.save();
 
     if (req.io) {
-      req.io.to('role:admin').emit('late-request:updated', { requestId: request._id, status: 'rejected' });
+      req.io.to('role:admin').emit('late-request:updated', {
+        requestId: request._id,
+        status: 'rejected',
+      });
       req.io.to(`user:${request.employee}`).emit('late-request:rejected', {
         requestId: request._id,
         date: request.date,
@@ -240,8 +298,12 @@ router.patch(
       });
     }
 
-    res.json({ success: true, message: 'Late request rejected.', data: request });
-  })
+    res.json({
+      success: true,
+      message: 'Late request rejected.',
+      data: request,
+    });
+  }),
 );
 
 // ─── DELETE /late-requests/:id ──────────────────────────────────────────────
@@ -251,16 +313,25 @@ router.delete(
   protect,
   asyncHandler(async (req, res) => {
     const request = await LateRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ success: false, message: 'Late request not found.' });
+    if (!request)
+      return res
+        .status(404)
+        .json({ success: false, message: 'Late request not found.' });
     if (request.employee.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'You can only cancel your own requests.' });
+      return res.status(403).json({
+        success: false,
+        message: 'You can only cancel your own requests.',
+      });
     }
     if (request.status !== 'pending') {
-      return res.status(400).json({ success: false, message: 'Only pending requests can be cancelled.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Only pending requests can be cancelled.',
+      });
     }
     await request.deleteOne();
     res.json({ success: true, message: 'Late request cancelled.' });
-  })
+  }),
 );
 
 module.exports = router;

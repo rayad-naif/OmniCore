@@ -4,7 +4,11 @@ const mongoose = require('../core/mongoose');
 const shiftSwapRequestSchema = new mongoose.Schema(
   {
     // Employee who is initiating the swap request
-    requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    requester: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
 
     // The requester's own shift assignment they want to give away
     requesterAssignment: {
@@ -35,13 +39,17 @@ const shiftSwapRequestSchema = new mongoose.Schema(
     },
 
     // Admin who resolved (approved/rejected) the request
-    resolvedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    resolvedAt:  { type: Date,   default: null },
-    adminNotes:  { type: String, trim: true },
+    resolvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    resolvedAt: { type: Date, default: null },
+    adminNotes: { type: String, trim: true },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 shiftSwapRequestSchema.index({ requester: 1, status: 1 });

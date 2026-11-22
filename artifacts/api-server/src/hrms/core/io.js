@@ -43,7 +43,8 @@ function attach(io) {
       const decoded = tokens.verifyAccess(token);
       const ws = await tenants.workspaceInfo(decoded.tid);
       if (!ws?.enabled) return next(new Error('HR module disabled'));
-      if (await tenants.isTokenRevoked(token)) return next(new Error('Invalid token'));
+      if (await tenants.isTokenRevoked(token))
+        return next(new Error('Invalid token'));
       socket.data.tid = decoded.tid;
       socket.data.userId = decoded.id;
       socket.data.role = decoded.role;
@@ -77,7 +78,10 @@ function attach(io) {
         .emit('notification:updated', { id: notificationId, read: true });
     });
     socket.on('leave:request', (data) =>
-      io.to('role:hr_recruiter').to('role:senior_manager').emit('leave:pending', data),
+      io
+        .to('role:hr_recruiter')
+        .to('role:senior_manager')
+        .emit('leave:pending', data),
     );
     socket.on('payroll:process', (data) =>
       io.to('role:admin').emit('payroll:update', data),

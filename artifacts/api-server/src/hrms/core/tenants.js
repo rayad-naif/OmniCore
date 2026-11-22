@@ -24,7 +24,7 @@ function ensureSchema() {
       .query(
         `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false;
          ALTER TABLE tenants ADD COLUMN IF NOT EXISTS default_timezone TEXT NOT NULL DEFAULT 'UTC';
-         ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ai_feature_enabled BOOLEAN NOT NULL DEFAULT false;
+         ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ai_feature_enabled BOOLEAN NOT NULL DEFAULT true;
          CREATE TABLE IF NOT EXISTS hrms_directory (
            email      TEXT NOT NULL,
            tenant_id  UUID NOT NULL,
@@ -66,7 +66,8 @@ function ensureSchema() {
   return ready;
 }
 
-const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+const sha256 = (s) =>
+  crypto.createHash('sha256').update(String(s)).digest('hex');
 const normEmail = (e) =>
   String(e || '')
     .trim()

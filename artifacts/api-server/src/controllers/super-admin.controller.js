@@ -90,6 +90,7 @@ async function notifyTenantAdmins(tenantId, subject, heading, message) {
         ADD COLUMN IF NOT EXISTS max_agents_allowed   INTEGER NOT NULL DEFAULT 10,
         ADD COLUMN IF NOT EXISTS ai_feature_enabled   BOOLEAN NOT NULL DEFAULT true,
         ADD COLUMN IF NOT EXISTS smtp_feature_enabled BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false,
         ADD COLUMN IF NOT EXISTS conversation_limit   INTEGER NOT NULL DEFAULT 1000,
         ADD COLUMN IF NOT EXISTS plan                 TEXT    NOT NULL DEFAULT 'free'
     `);
@@ -130,7 +131,7 @@ router.get('/tenants', async (req, res, next) => {
         t.id, t.company_name, t.account_status,
         t.subscription_status, t.plan,
         t.max_brands_allowed, t.max_agents_allowed,
-        t.ai_feature_enabled, t.smtp_feature_enabled,
+        t.ai_feature_enabled, t.smtp_feature_enabled, t.hrms_feature_enabled,
         t.conversation_limit, t.created_at,
         t.trial_ends_at, t.grace_period_ends_at, t.lock_notified_at,
         t.paddle_customer_id, t.paddle_subscription_id,
@@ -309,6 +310,7 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
       max_agents_allowed,
       ai_feature_enabled,
       smtp_feature_enabled,
+      hrms_feature_enabled,
       conversation_limit,
     } = req.body || {};
 
@@ -342,6 +344,10 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
       updates.push(`smtp_feature_enabled = $${i++}`);
       values.push(Boolean(smtp_feature_enabled));
     }
+    if (hrms_feature_enabled !== undefined) {
+      updates.push(`hrms_feature_enabled = $${i++}`);
+      values.push(Boolean(hrms_feature_enabled));
+    }
     if (conversation_limit !== undefined) {
       const val = parseInt(conversation_limit, 10);
       if (isNaN(val) || val < 1)
@@ -359,7 +365,7 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
     const { rows } = await pool.query(
       `UPDATE tenants SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = $${i}
-       RETURNING id, company_name, max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, conversation_limit`,
+       RETURNING id, company_name, max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, conversation_limit`,
       values,
     );
     if (!rows.length)

@@ -634,7 +634,14 @@ async function sendSystemEmail({
  * module): the workspace's own SMTP when it has one, otherwise platform SMTP.
  * Returns false (and logs) when no mail server is configured.
  */
-async function sendWorkspaceEmail({ tenantId, to, subject, html, text, fromName }) {
+async function sendWorkspaceEmail({
+  tenantId,
+  to,
+  subject,
+  html,
+  text,
+  fromName,
+}) {
   if (!to) return false;
   let cfg = null;
   if (tenantId) cfg = await getTenantSmtpConfig(tenantId).catch(() => null);
@@ -644,7 +651,9 @@ async function sendWorkspaceEmail({ tenantId, to, subject, html, text, fromName 
     return false;
   }
   await buildTransporter(cfg).sendMail({
-    from: fromName ? { name: fromName, address: fromAddress(cfg) } : fromAddress(cfg),
+    from: fromName
+      ? { name: fromName, address: fromAddress(cfg) }
+      : fromAddress(cfg),
     to,
     subject,
     html,

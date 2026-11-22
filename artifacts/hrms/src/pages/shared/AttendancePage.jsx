@@ -11,7 +11,7 @@ import {
   Tooltip, ResponsiveContainer,
 } from 'recharts';
 import clsx from 'clsx';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@/services/xlsxLite';
 import { attendanceAPI, employeeAPI } from '@/services/api';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1139,7 +1139,7 @@ export default function AttendancePage() {
     if (isDateFiltered && startDate && endDate) {
       applyDateRange(startDate, endDate, page);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [page]);
 
   const totalPages = Math.max(1, Math.ceil((isDateFiltered ? totalRecords : filtered.length) / TABLE_PAGE_SIZE));

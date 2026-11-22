@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock, Shield, LogIn } from 'lucide-react';
 import { loginUser, selectAuth, clearError } from '@/store/slices/authSlice';
@@ -13,10 +11,14 @@ import { fadeUp, spring } from '@/motion/variants';
 import LoginHeroVisual from '@/components/auth/LoginHeroVisual';
 
 
-const schema = z.object({
-  email:    z.string().email('Invalid email address'),
-  password: z.string().min(1, 'Password required'),
-});
+// Validation rules (react-hook-form built-ins).
+const RULES = {
+  email: {
+    required: 'Invalid email address',
+    pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/, message: 'Invalid email address' },
+  },
+  password: { required: 'Password required' },
+};
 
 const formContainer = {
   hidden: {},
@@ -36,7 +38,6 @@ export default function LoginPage() {
   const [focusedField, setFocusedField] = useState(null);
 
   const { register, handleSubmit, formState: { errors } } = useForm({
-    resolver: zodResolver(schema),
   });
 
   useEffect(() => {
@@ -132,7 +133,7 @@ export default function LoginPage() {
                 <div className="relative">
                   <Mail className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${focusedField === 'email' ? 'text-primary-400' : 'text-slate-500'}`} />
                   <motion.input
-                    {...register('email')}
+                    {...register('email', RULES.email)}
                     type="email"
                     placeholder="you@company.com"
                     autoComplete="email"
@@ -172,7 +173,7 @@ export default function LoginPage() {
                 <div className="relative">
                   <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors ${focusedField === 'password' ? 'text-primary-400' : 'text-slate-500'}`} />
                   <motion.input
-                    {...register('password')}
+                    {...register('password', RULES.password)}
                     type={showPassword ? 'text' : 'password'}
                     placeholder="Enter your password"
                     autoComplete="current-password"
