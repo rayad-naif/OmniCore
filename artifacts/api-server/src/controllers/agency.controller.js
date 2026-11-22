@@ -183,7 +183,7 @@ async function applyPlan(client, tenantId, plan) {
   await client.query(
     `UPDATE tenants SET plan = $2, max_brands_allowed = $3, max_agents_allowed = $4, conversation_limit = $5,
        ai_feature_enabled = $6, smtp_feature_enabled = $7, hrms_feature_enabled = $8,
-       updated_at = NOW() WHERE id = $1`,
+       payments_feature_enabled = $9, updated_at = NOW() WHERE id = $1`,
     [
       tenantId,
       row.slug || plan,
@@ -193,6 +193,7 @@ async function applyPlan(client, tenantId, plan) {
       Boolean(row.features?.ai_feature_enabled),
       Boolean(row.features?.smtp_feature_enabled),
       Boolean(row.features?.hrms_feature_enabled),
+      Boolean(row.features?.payments_feature_enabled),
     ],
   );
 }

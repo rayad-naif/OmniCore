@@ -80,6 +80,8 @@ const hrmsAdmin: {
   superAdminRouter: IRouter;
 } = require('../hrms/admin.routes');
 const rdnsRouter: IRouter = require('../rdns/routes');
+const paymentsRouter: IRouter = require('../payments/routes');
+const paymentsPublic: { router: IRouter } = require('../payments/public');
 
 const router: IRouter = Router();
 
@@ -115,6 +117,11 @@ router.use('/copilot', copilotRouter);
 // AI Call Center: provider callbacks (public, signature-checked) before the signed-in API
 router.use('/voice', voiceRoutes.publicRouter);
 router.use('/voice', voiceRoutes.router);
+
+// Invoicing & payments (ported InvoiceNow): customer pay API (public) and the
+// signed-in workspace API (plan-gated).
+router.use('/pay', paymentsPublic.router);
+router.use('/payments', paymentsRouter);
 
 // HR module (ported GHL-HRMS): own sign-in, plan-gated per workspace.
 router.use('/hrms', hrmsModule.hrmsRouter());

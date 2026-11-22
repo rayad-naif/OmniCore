@@ -49,6 +49,7 @@ const SKIP_PATHS = [
   /^\/api\/hrms\/v1\/activity-logs\/(ingest|screenshots)/,
   /^\/api\/hrms\/v1\/attendance\/biometric-webhook/,
   /^\/api\/hrms\/v1\/auth\/refresh-token/,
+  /^\/api\/pay\/webhooks\//,
 ];
 
 // Read-only routes that still matter for compliance (bulk data leaving the app).
