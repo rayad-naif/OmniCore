@@ -61,3 +61,4 @@ lib/**/*.js.map
 
 # Runtime file uploads (written by the API at runtime)
 artifacts/uploads/*
+.vercel

@@ -4,6 +4,7 @@ const {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -84,4 +85,39 @@ async function getPresignedGetUrl(key, expiresIn = 3600) {
   return await getSignedUrl(client(), command, { expiresIn });
 }
 
-module.exports = { R2_ENABLED, uploadToR2, streamFromR2, getPresignedGetUrl };
+/**
+ * Read an R2 object into a Buffer (null when it does not exist).
+ * @param {string} key
+ * @returns {Promise<Buffer|null>}
+ */
+async function readFromR2(key) {
+  try {
+    const obj = await client().send(
+      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    );
+    const chunks = [];
+    for await (const chunk of obj.Body) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404)
+      return null;
+    throw err;
+  }
+}
+
+/**
+ * Delete an R2 object (no error when it is already gone).
+ * @param {string} key
+ */
+async function deleteFromR2(key) {
+  await client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+}
+
+module.exports = {
+  R2_ENABLED,
+  uploadToR2,
+  streamFromR2,
+  getPresignedGetUrl,
+  readFromR2,
+  deleteFromR2,
+};

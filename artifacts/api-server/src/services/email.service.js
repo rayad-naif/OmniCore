@@ -126,11 +126,25 @@ function stripHtml(html) {
 }
 
 /** Build a branded wrapper for transactional HTML emails */
-function brandedEmail({ title, preview, bodyHtml, footer = '' }) {
+function escapeHtml(s) {
+  return String(s ?? '').replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        c
+      ],
+  );
+}
+
+function brandedEmail({ title, preview, bodyHtml, footer = '', brand = null }) {
+  const color = brand?.primaryColor || '#0284c7';
+  const header = brand?.logoUrl
+    ? `<img src="${escapeHtml(brand.logoUrl)}" alt="${escapeHtml(brand.appName)}" style="max-height:32px;display:block;"/>`
+    : `<h1 style="margin:0;font-size:18px;color:#fff;letter-spacing:-0.3px;">${escapeHtml(brand?.appName || 'OmniCore')}</h1>`;
   return `
   <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:0;color:#1e293b;">
-    <div style="background:#0284c7;padding:20px 28px;">
-      <h1 style="margin:0;font-size:18px;color:#fff;letter-spacing:-0.3px;">OmniCore</h1>
+    <div style="background:${color};padding:20px 28px;">
+      ${header}
     </div>
     <div style="padding:28px;">
       <h2 style="margin:0 0 12px;font-size:15px;color:#0f172a;">${title}</h2>
@@ -581,17 +595,30 @@ async function sendSystemEmail({
     logger.info({ to, subject }, 'system_email_no_platform_smtp_skipped');
     return false;
   }
+  // White-label: recipients in an agency's workspaces see the agency's name,
+  // colours, logo, sender name and domain instead of the platform's.
+  const {
+    brandingForEmail,
+    rebrandText,
+    rebrandLinks,
+  } = require('../lib/agencies');
+  const wl = await brandingForEmail(to);
+  const rb = (s) => (wl ? rebrandText(s, wl.branding) : s);
   const html = brandedEmail({
-    title: title || subject,
-    preview,
-    bodyHtml: bodyHtml || '',
-    footer,
+    title: rb(title || subject),
+    preview: rb(preview),
+    bodyHtml: wl ? rebrandLinks(rb(bodyHtml || ''), wl.appUrl) : bodyHtml || '',
+    footer: rb(footer),
+    brand: wl ? wl.branding : null,
   });
+  const fromName = wl?.branding?.emailFromName || wl?.branding?.appName;
   try {
     await buildTransporter(cfg).sendMail({
-      from: fromAddress(cfg),
+      from: fromName
+        ? { name: fromName, address: fromAddress(cfg) }
+        : fromAddress(cfg),
       to,
-      subject,
+      subject: rb(subject),
       html,
     });
     logger.info({ to, subject }, 'system_email_sent');
@@ -600,6 +627,40 @@ async function sendSystemEmail({
     logger.warn({ err: err.message, to, subject }, 'system_email_failed');
     return false;
   }
+}
+
+/**
+ * Send a fully rendered email on behalf of a workspace (used by the HR
+ * module): the workspace's own SMTP when it has one, otherwise platform SMTP.
+ * Returns false (and logs) when no mail server is configured.
+ */
+async function sendWorkspaceEmail({
+  tenantId,
+  to,
+  subject,
+  html,
+  text,
+  fromName,
+}) {
+  if (!to) return false;
+  let cfg = null;
+  if (tenantId) cfg = await getTenantSmtpConfig(tenantId).catch(() => null);
+  if (!cfg) cfg = await getPlatformSmtpConfig();
+  if (!cfg) {
+    logger.info({ to, subject }, 'workspace_email_no_smtp_skipped');
+    return false;
+  }
+  await buildTransporter(cfg).sendMail({
+    from: fromName
+      ? { name: fromName, address: fromAddress(cfg) }
+      : fromAddress(cfg),
+    to,
+    subject,
+    html,
+    text,
+  });
+  logger.info({ to, subject, tenantId }, 'workspace_email_sent');
+  return true;
 }
 
 /**
@@ -758,6 +819,7 @@ module.exports = {
   sendSmtpTestEmail,
   getPlatformSmtpConfig,
   sendSystemEmail,
+  sendWorkspaceEmail,
   sendPlatformSmtpTestEmail,
   sendAgentInviteEmail,
   sendAccountUpdateEmail,

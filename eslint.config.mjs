@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/coverage/**',
       '**/.vite/**',
       '**/build/**',
+      '.vercel/**',
       '**/*.min.js',
       '.local/**',
       'artifacts/api-server/public/**',
@@ -32,7 +33,12 @@ export default tseslint.config(
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'warn',
-        { argsIgnorePattern: '^_' },
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+        },
       ],
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-require-imports': 'off',
@@ -52,6 +58,15 @@ export default tseslint.config(
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
+  // HR app ported from GHL-HRMS (~30k lines of JSX): unused-import and
+  // hook-dependency hints are not reported there; every error rule still is.
+  {
+    files: ['artifacts/hrms/src/**/*.{js,jsx}'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+      'react-hooks/exhaustive-deps': 'off',
     },
   },
 );

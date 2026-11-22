@@ -30,6 +30,8 @@ The instance's own iptables rules are opened by the script (it does **not** use
 
 ## 3. DNS
 
+Using Cloudflare (recommended)? Follow [DEPLOYMENT.md §3](DEPLOYMENT.md#3-production-oracle-cloud--cloudflare) instead of this section: it covers the proxied DNS record, the Cloudflare Origin Certificate (`CF_ORIGIN_CERT` / `CF_ORIGIN_KEY`) and real visitor IPs.
+
 Create an **A record**: `omnicore` → `80.225.249.112`. Wait until
 `dig +short omnicore.irofficial.com` returns the IP — certbot needs it.
 
@@ -140,6 +142,41 @@ cd /srv/omnicore && sudo -u ubuntu ./deploy.sh deploy
 
 This pulls, installs, typechecks, builds, re-applies the schema, restarts PM2 and
 runs the health check.
+
+## 8. Store server (hosted WooCommerce stores)
+
+Hosted online stores run on their own VM so a busy or compromised store can never affect
+the CRM. One Ampere A1 Flex VM with 4 OCPU / 24 GB holds roughly 30–40 small stores
+(512 MB each); add more servers as you grow.
+
+1. Create the VM (Ubuntu 24.04), open TCP 80 and 443 in its security list, and clone
+   this repository on it.
+2. DNS for the store domain (e.g. `stores.example.com`): `A *.stores.example.com`,
+   `A agent.stores.example.com` and `A edge.stores.example.com`, all to the VM's IP.
+   Proxied through Cloudflare is fine (SSL mode **Full**).
+3. Install:
+
+   ```bash
+   sudo STORES_DOMAIN=stores.example.com ACME_EMAIL=ops@example.com \
+        OMNICORE_IPS=<OmniCore server IP> ./deploy-store-host.sh install
+   ```
+
+   Optional: `CF_ORIGIN_CERT=/path/origin.pem CF_ORIGIN_KEY=/path/origin.key` (a Cloudflare
+   origin certificate for `*.stores.example.com`) to serve every store sub-domain without
+   issuing one certificate per store.
+
+4. In OmniCore: Super Admin → **Online stores** → Add server, with the values the script
+   prints (agent URL `https://agent.stores.example.com`, the agent secret, the store
+   domain, `edge.stores.example.com` as CNAME target and the public IP). The server shows
+   a green tick when OmniCore can reach it.
+5. Give plans the **Online stores** switch (Super Admin → Billing → plan) and a store limit.
+
+The server keeps a nightly backup of every store (database + `wp-content`) in
+`/var/lib/omnicore-stores/backups` for 14 days, and a final backup when a store is deleted.
+Copy that folder to Object Storage (for example with `rclone`) for off-server copies.
+Monthly: `sudo ./deploy-store-host.sh update` refreshes the WooCommerce, Storefront and
+OmniCore plugin packages used for new stores; existing stores update themselves
+(WordPress, plugin and theme auto-updates are on).
 
 ## Troubleshooting
 

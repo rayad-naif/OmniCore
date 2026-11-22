@@ -51,7 +51,15 @@ async function applyWorkspaceOverride(req, res, next) {
     const ws = req.headers['x-workspace-id'];
     if (!ws || !req.agent) return next();
     if (ws === req.agent.tenantId) return next();
-    const allowed = await isSuperAdminAgent(req.agent);
+    let allowed = await isSuperAdminAgent(req.agent);
+    if (!allowed) {
+      // Agency staff may switch into their own agency's client workspaces.
+      const { canAgencyAccessTenant } = require('../lib/agencies');
+      allowed = await canAgencyAccessTenant(req.agent.id, ws).catch(
+        () => false,
+      );
+      if (allowed) req.agent.agencyOverride = true;
+    }
     if (allowed) {
       req.agent.tenantId = ws;
       req.agent.workspaceOverride = true;

@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const { sendPasswordResetEmail } = require('../services/email.service');
 const { effectivePermissions } = require('../lib/permissions');
 const { validateLoginInput } = require('../lib/requestValidation');
+const { recordAudit } = require('../lib/audit');
 
 const router = Router();
 
@@ -44,6 +45,19 @@ function getSecret() {
   return s;
 }
 
+/**
+ * Platform super admin = SUPER_ADMIN_EMAIL or an active row in
+ * super_admin_emails (the list managed under Super Admin → Super Admins).
+ * Previously only the env email unlocked the console in the dashboard.
+ */
+async function withSuperAdminFlag(agent) {
+  const { isSuperAdminAgent } = require('../middleware/auth');
+  return {
+    ...agent,
+    is_super_admin: await isSuperAdminAgent(agent).catch(() => false),
+  };
+}
+
 function signAccess(agent) {
   return jwt.sign(
     {
@@ -52,10 +66,7 @@ function signAccess(agent) {
       email: agent.email,
       name: agent.name,
       permissions: agent.permissions_json || {},
-      isSuperAdmin: !!(
-        process.env.SUPER_ADMIN_EMAIL &&
-        agent.email === process.env.SUPER_ADMIN_EMAIL
-      ),
+      isSuperAdmin: Boolean(agent.is_super_admin),
     },
     getSecret(),
     { subject: String(agent.id), expiresIn: ACCESS_TTL },
@@ -70,9 +81,7 @@ function signRefresh(agentId, tenantId) {
 }
 
 function safeAgent(row) {
-  const isSuperAdmin = !!(
-    process.env.SUPER_ADMIN_EMAIL && row.email === process.env.SUPER_ADMIN_EMAIL
-  );
+  const isSuperAdmin = Boolean(row.is_super_admin);
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -101,14 +110,47 @@ router.post('/login', async (req, res) => {
       [email.trim().toLowerCase()],
     );
 
-    const agent = rows[0];
-    if (!agent) return res.status(401).json({ error: 'Invalid credentials' });
-    if (!agent.is_active)
+    let agent = rows[0];
+    const audit = (action, outcome, summary) =>
+      recordAudit({
+        action,
+        category: 'auth',
+        outcome,
+        summary,
+        tenantId: agent?.tenant_id,
+        actorType: 'agent',
+        actorId: agent?.id,
+        actorEmail: agent?.email || email.trim().toLowerCase(),
+        actorName: agent?.name,
+        resourceType: 'agent',
+        resourceId: agent?.id,
+        req,
+      });
+    if (!agent) {
+      void audit(
+        'auth.login_failed',
+        'failure',
+        'Login attempt for unknown email',
+      );
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    if (!agent.is_active) {
+      void audit(
+        'auth.login_blocked',
+        'denied',
+        'Login attempt on a deactivated account',
+      );
       return res.status(403).json({ error: 'Account is deactivated' });
+    }
 
     const valid = await bcrypt.compare(password, agent.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!valid) {
+      void audit('auth.login_failed', 'failure', 'Wrong password');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    void audit('auth.login', 'success', 'Signed in');
 
+    agent = await withSuperAdminFlag(agent);
     const accessToken = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
 
@@ -150,12 +192,13 @@ router.post('/refresh', async (req, res) => {
       [payload.sub],
     );
 
-    const agent = rows[0];
+    let agent = rows[0];
     if (!agent || !agent.is_active) {
       res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTS, maxAge: 0 });
       return res.status(401).json({ error: 'Agent not found or deactivated' });
     }
 
+    agent = await withSuperAdminFlag(agent);
     const accessToken = signAccess(agent);
     const refreshToken = signRefresh(agent.id, agent.tenant_id);
     res.cookie(COOKIE_NAME, refreshToken, COOKIE_OPTS);

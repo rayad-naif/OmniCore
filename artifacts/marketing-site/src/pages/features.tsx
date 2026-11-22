@@ -12,8 +12,13 @@ import {
   Library,
   Mail,
   MessageCircle,
+  PhoneCall,
+  Plug,
   ShieldCheck,
   Users,
+  Briefcase,
+  Receipt,
+  Store,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -37,7 +42,7 @@ const groups: FeatureGroup[] = [
       'Live updates over WebSockets: new messages, assignments and status changes appear instantly',
       'Open, Pending, AI-handled and Closed views with full-text search across names, emails and messages',
       'Turn any conversation into a ticket with priority, or let visitors file tickets from the widget',
-      'Round-robin auto-assignment with per-brand SLA targets and automatic escalation of breaches',
+      'Automatic round-robin or least-busy assignment when the AI hands a conversation to your team',
       'File and image attachments for agents and visitors',
       'Edit or delete sent messages, assign owners and set priority in one click',
       'Auto-close idle conversations after a configurable period',
@@ -56,6 +61,71 @@ const groups: FeatureGroup[] = [
       'Detects when a visitor asks for a person and hands over with full context',
       'Conversation summaries for agents picking up a thread',
       'Agent copilot: rephrase any draft in the tone you choose',
+      'Built-in assistant for your team that explains every feature and performs tasks for you, always with your approval',
+    ],
+  },
+  {
+    id: 'voice',
+    icon: PhoneCall,
+    title: 'AI call center',
+    summary:
+      'AI phone agents that answer, qualify, book and follow up, with your team in control.',
+    points: [
+      'AI receptionist that hands callers to Sales (quotes and booking) or Support agents, or to a person',
+      'Books real appointments in your HighLevel calendar and moves the opportunity to the right stage',
+      'Live Command Deck: listen in, whisper to the AI, or take over the call from your browser',
+      'Every call graded for quality, sentiment and outcome, and synced to the CRM contact',
+      'Speed-to-lead: new leads called back within seconds, within your calling hours',
+      'Text follow-ups, keyword alerts, ROI reports, industry templates and Spanish support',
+      'Runs on your own Twilio, Vapi and OpenAI accounts, so you only pay for what you use',
+    ],
+  },
+  {
+    id: 'hr',
+    icon: Briefcase,
+    title: 'HR & people',
+    summary:
+      'A complete HR system for your own team, opened from the same login.',
+    points: [
+      'Employee records, departments, documents, roles and permissions',
+      'Attendance with check-in and check-out, biometric devices and a desktop activity agent',
+      'Shifts, shift swaps, late arrivals and leave with approvals and balances',
+      'Payroll with payslips, advances, loans, salary holds, expenses and earnings',
+      'Recruitment: job listings, candidate pipeline and AI resume screening',
+      'Performance reviews, reports and Excel exports, in your own time zone',
+      'Employees get their own sign-in; available on plans with the HR module',
+    ],
+  },
+  {
+    id: 'payments',
+    icon: Receipt,
+    title: 'Invoices & payments',
+    summary:
+      'Send invoices and get paid straight into your own account, by card, wallet, bank or cash.',
+    points: [
+      'Invoices and estimates with tax, discounts and coupons; customers accept estimates online',
+      'One link to pay: email it or share it on WhatsApp and SMS',
+      'Paddle, Stripe, PayPal, Square and Authorize.net, plus bank transfer, Payoneer and cash on delivery',
+      'Payment links for your website and social profiles, and gift cards',
+      'Real-time "payment received" alerts, receipts and partial payments',
+      'Cash on delivery confirmed from your own driver or field app through the API',
+      'Available on plans with invoicing & payments',
+    ],
+  },
+  {
+    id: 'stores',
+    icon: Store,
+    title: 'Online stores',
+    summary:
+      'A WooCommerce store designed, hosted and ready to sell in about a minute, or your existing store connected.',
+    points: [
+      'Six professional designs; AI writes your homepage, pages and starter products',
+      'Your own web address, plus your own domain with automatic SSL',
+      'Hosted, secured, updated and backed up nightly for you',
+      'Customers pay online with your OmniCore processors, or any WooCommerce payment plugin',
+      'Every order and customer flows into OmniCore with a real-time alert',
+      'Already on WooCommerce? Connect your store with an API key',
+      'Available on plans with online stores',
     ],
   },
   {
@@ -129,8 +199,9 @@ const groups: FeatureGroup[] = [
     summary:
       'Run several brands, or many client workspaces, from a single platform.',
     points: [
-      'Multiple brands per workspace, each with its own widget, inbox address, AI prompt and SLA',
+      'Multiple brands per workspace, each with its own widget, inbox address and AI prompt',
       'Fully isolated workspaces (tenants) for agencies and resellers',
+      'White-label reselling: your app name, logo, colours, custom domain, emails and chat widget, plus your own AI provider key',
       'Platform administration: manage workspaces, limits, suspensions and user accounts',
       'View any workspace as its owner for support and onboarding',
       'Platform-wide email settings for system notifications',
@@ -150,6 +221,20 @@ const groups: FeatureGroup[] = [
     ],
   },
   {
+    id: 'integrations',
+    icon: Plug,
+    title: 'Integrations & API',
+    summary:
+      'Connect OmniCore to your CRM, team chat, automations and your own code.',
+    points: [
+      'GoHighLevel app: two-way contact sync, and HighLevel SMS, email, WhatsApp and social messages answered from the OmniCore inbox',
+      'Slack, Microsoft Teams and Discord notifications for new chats, tickets and ratings',
+      'Signed real-time webhooks with automatic retries and a delivery log',
+      'REST API with scoped, expiring API keys for conversations, messages, tickets and contacts',
+      'Works with Zapier, Make and n8n',
+    ],
+  },
+  {
     id: 'security',
     icon: ShieldCheck,
     title: 'Security & hosting',
@@ -157,6 +242,7 @@ const groups: FeatureGroup[] = [
     points: [
       'Short-lived access tokens with httpOnly refresh cookies',
       'Strict CORS, security headers and signed, replay-protected billing webhooks',
+      'Detailed audit log of every change, sign-in and export, with IP address and CSV export',
       'Tenant-isolated data in PostgreSQL',
       'Logos, attachments and exports on Cloudflare R2 with time-limited links',
       'Runs on your own cloud (Oracle Cloud, any Linux VPS, or Docker)',

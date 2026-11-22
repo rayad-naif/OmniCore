@@ -35,6 +35,10 @@ DOMAIN="${DOMAIN:-}"                 # e.g. omnicore.irofficial.com (enables ngi
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"   # Let's Encrypt account email (needed for automatic HTTPS)
 RUN_USER="${RUN_USER:-ubuntu}"       # Non-root user that owns the app and runs PM2
 REPO_BRANCH="${REPO_BRANCH:-main}"
+CLOUDFLARE="${CLOUDFLARE:-true}"     # restore real visitor IPs from Cloudflare's proxy
+CF_ORIGIN_CERT="${CF_ORIGIN_CERT:-}" # path to Cloudflare Origin Certificate (PEM) — skips certbot
+CF_ORIGIN_KEY="${CF_ORIGIN_KEY:-}"   # path to its private key
+INSTALL_MONGODB="${INSTALL_MONGODB:-true}" # local MongoDB 8 for the HR module (HRMS_MONGODB_URI)
 NODE_MIN_MAJOR=24
 PNPM_MIN_MAJOR=10
 
@@ -101,6 +105,146 @@ load_env() {
     source <(grep -v '^#' "$env_file" | grep -v '^$')
     set +a
   fi
+}
+
+
+# ── nginx helpers (used by vps-install and deploy) ───────────────────────────
+
+# Restores the visitor's real IP when traffic arrives through Cloudflare's
+# proxy (orange cloud). Only requests from Cloudflare's published ranges are
+# trusted, so this is harmless when Cloudflare is not in front.
+write_cloudflare_realip() {
+  [[ "$CLOUDFLARE" == "true" ]] || return 0
+  local v4 v6 conf=/etc/nginx/conf.d/cloudflare-realip.conf
+  v4=$(curl -fsS --max-time 15 https://www.cloudflare.com/ips-v4 || true)
+  v6=$(curl -fsS --max-time 15 https://www.cloudflare.com/ips-v6 || true)
+  if [[ -z "$v4" ]]; then
+    warn "Could not download Cloudflare IP ranges — keeping existing $conf (if any)"
+    return 0
+  fi
+  {
+    echo "# Managed by deploy.sh — Cloudflare ranges fetched $(date -u +%F)"
+    for ip in $v4 $v6; do echo "set_real_ip_from $ip;"; done
+    echo "real_ip_header CF-Connecting-IP;"
+    echo "real_ip_recursive on;"
+  } > "$conf"
+  success "Cloudflare real-IP ranges written to $conf"
+}
+
+# Writes the OmniCore site. With CF_ORIGIN_CERT/CF_ORIGIN_KEY (Cloudflare Origin
+# Certificate) nginx terminates TLS itself; otherwise it listens on :80 and
+# certbot adds TLS afterwards.
+write_nginx_site() {
+  local server_name="${DOMAIN:-_}" tls_block="" listen_block="listen 80;"
+  if [[ -n "$CF_ORIGIN_CERT" && -n "$CF_ORIGIN_KEY" ]]; then
+    [[ -f "$CF_ORIGIN_CERT" && -f "$CF_ORIGIN_KEY" ]] || error "CF_ORIGIN_CERT / CF_ORIGIN_KEY files not found"
+    # "listen … ssl http2" works on the nginx shipped with Ubuntu 22.04 and 24.04.
+    listen_block="listen 443 ssl http2;"
+    [[ -f /proc/net/if_inet6 ]] && listen_block+="
+    listen [::]:443 ssl http2;"
+    tls_block="ssl_certificate     ${CF_ORIGIN_CERT};
+    ssl_certificate_key ${CF_ORIGIN_KEY};
+    ssl_protocols       TLSv1.2 TLSv1.3;"
+  fi
+
+  cat > /etc/nginx/sites-available/omnicore << NGINX
+$( [[ -n "$tls_block" ]] && cat << REDIR
+server {
+    listen 80;
+    $( [[ -f /proc/net/if_inet6 ]] && echo "listen [::]:80;" )
+    server_name ${server_name};
+    return 301 https://\$host\$request_uri;
+}
+REDIR
+)
+server {
+    ${listen_block}
+    server_name ${server_name};
+    ${tls_block}
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location /api/ {
+        proxy_pass         http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        client_max_body_size 50M;
+    }
+
+    # Customer payment pages (invoices, estimates, payment links) are served by the API.
+    location /pay/ {
+        proxy_pass         http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+
+    location = /dashboard {
+        return 301 /dashboard/;
+    }
+
+    # Hashed build assets: cache forever (safe behind Cloudflare's CDN).
+    location ^~ /dashboard/assets/ {
+        alias ${APP_DIR}/artifacts/dashboard/dist/public/assets/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location ^~ /assets/ {
+        root ${APP_DIR}/artifacts/marketing-site/dist/public;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+    }
+
+    # HR module front end
+    location = /hrms {
+        return 301 /hrms/;
+    }
+    location ^~ /hrms/assets/ {
+        alias ${APP_DIR}/artifacts/hrms/dist/assets/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location /hrms/ {
+        alias ${APP_DIR}/artifacts/hrms/dist/;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        try_files \$uri \$uri/ /hrms/index.html;
+    }
+
+    location /dashboard/ {
+        alias ${APP_DIR}/artifacts/dashboard/dist/public/;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        try_files \$uri \$uri/ /dashboard/index.html;
+    }
+
+    location / {
+        root ${APP_DIR}/artifacts/marketing-site/dist/public/;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        try_files \$uri \$uri.html \$uri/ =404;
+        error_page 404 /404.html;
+    }
+}
+NGINX
+
+  ln -sf /etc/nginx/sites-available/omnicore /etc/nginx/sites-enabled/omnicore
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t && systemctl reload nginx
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,6 +324,11 @@ cmd_build() {
   [[ -d artifacts/dashboard/dist ]] || error "Dashboard build failed — dist/ not found"
   success "Dashboard built → artifacts/dashboard/dist/ ($(du -sh artifacts/dashboard/dist | cut -f1))"
 
+  info "Building HR app (Vite)..."
+  pnpm --filter @workspace/hrms run build
+  [[ -d artifacts/hrms/dist ]] || error "HR app build failed — dist/ not found"
+  success "HR app built → artifacts/hrms/dist/ ($(du -sh artifacts/hrms/dist | cut -f1))"
+
   info "Building marketing site (Vite + SSR prerender)..."
   pnpm --filter @workspace/marketing-site run build
   [[ -d artifacts/marketing-site/dist ]] || error "Marketing site build failed — dist/ not found"
@@ -190,6 +339,7 @@ cmd_build() {
   echo ""
   echo "  API bundle:      artifacts/api-server/dist/index.mjs"
   echo "  Dashboard:       artifacts/dashboard/dist/"
+  echo "  HR app:          artifacts/hrms/dist/"
   echo "  Marketing site:  artifacts/marketing-site/dist/"
   echo ""
   echo "  Start production: node artifacts/api-server/dist/index.mjs"
@@ -322,6 +472,27 @@ cmd_vps_install() {
   fi
   success "PostgreSQL $(pg_lsclusters | tail -1 | awk '{print $1}')"
 
+  if [[ "$INSTALL_MONGODB" == "true" ]]; then
+    step "MongoDB 8 (HR module database, localhost only)"
+    if ! command -v mongod >/dev/null 2>&1; then
+      local codename
+      codename=$(lsb_release -cs)
+      # MongoDB publishes packages for jammy (22.04) and noble (24.04), amd64 + arm64 (OCI Ampere).
+      curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
+        gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+      echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${codename}/mongodb-org/8.0 multiverse" \
+        > /etc/apt/sources.list.d/mongodb-org-8.0.list
+      apt-get update -qq
+      apt-get install -y mongodb-org
+    fi
+    # Listen on localhost only; the API is the only client.
+    sed -i 's/^  bindIp: .*/  bindIp: 127.0.0.1/' /etc/mongod.conf 2>/dev/null || true
+    systemctl enable --now mongod
+    success "MongoDB $(mongod --version | head -1 | awk '{print $3}') on 127.0.0.1:27017"
+  else
+    info "Skipping MongoDB (INSTALL_MONGODB=false): set HRMS_MONGODB_URI to an external MongoDB to use the HR module"
+  fi
+
   step "Database: create omnicore user + database"
   DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 16)}"
   sudo -u postgres psql << SQL 2>/dev/null || warn "Database may already exist — skipping"
@@ -374,6 +545,10 @@ SQL
     set_env DATABASE_URL "postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}"
     set_env JWT_SECRET "$(openssl rand -hex 64)"
     set_env SESSION_SECRET "$(openssl rand -hex 32)"
+    set_env INTEGRATIONS_ENCRYPTION_KEY "$(openssl rand -hex 32)"
+    if [[ "$INSTALL_MONGODB" == "true" ]]; then
+      set_env HRMS_MONGODB_URI "mongodb://127.0.0.1:27017"
+    fi
     set_env PUBLIC_APP_URL "$public_url"
     set_env ALLOWED_ORIGINS "$public_url"
     set_env COOKIE_SECURE "$([[ -n "$DOMAIN" ]] && echo true || echo false)"
@@ -397,45 +572,8 @@ SQL
   success "Schema applied"
 
   step "nginx configuration"
-  local server_name="${DOMAIN:-_}"
-  cat > /etc/nginx/sites-available/omnicore << NGINX
-server {
-    listen 80;
-    server_name ${server_name};
-
-    location /api/ {
-        proxy_pass         http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade \$http_upgrade;
-        proxy_set_header   Connection "upgrade";
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 3600s;
-        client_max_body_size 50M;
-    }
-
-    location = /dashboard {
-        return 301 /dashboard/;
-    }
-
-    location /dashboard/ {
-        alias ${APP_DIR}/artifacts/dashboard/dist/public/;
-        try_files \$uri \$uri/ /dashboard/index.html;
-    }
-
-    location / {
-        root ${APP_DIR}/artifacts/marketing-site/dist/public/;
-        try_files \$uri \$uri.html \$uri/ =404;
-        error_page 404 /404.html;
-    }
-}
-NGINX
-
-  ln -sf /etc/nginx/sites-available/omnicore /etc/nginx/sites-enabled/omnicore
-  rm -f /etc/nginx/sites-enabled/default
-  nginx -t && systemctl reload nginx
+  write_cloudflare_realip
+  write_nginx_site
   success "nginx configured"
 
   step "Firewall (OCI iptables)"
@@ -492,8 +630,10 @@ EOF
   env PATH="$PATH" pm2 startup systemd -u "$RUN_USER" --hp "$run_home"
   success "PM2 configured with auto-start on boot (user: $RUN_USER)"
 
-  step "HTTPS (Let's Encrypt)"
-  if [[ -n "$DOMAIN" && -n "$CERTBOT_EMAIL" ]]; then
+  step "HTTPS"
+  if [[ -n "$CF_ORIGIN_CERT" ]]; then
+    success "TLS served with the Cloudflare Origin Certificate (set Cloudflare SSL mode to Full (strict))"
+  elif [[ -n "$DOMAIN" && -n "$CERTBOT_EMAIL" ]]; then
     if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" --redirect; then
       success "TLS certificate issued for $DOMAIN"
     else
@@ -626,6 +766,7 @@ cmd_help() {
   echo "  vps-install    Fresh Ubuntu VPS install (Node, Postgres, nginx, PM2)"
   echo "  seed-admin     Create a super admin account interactively"
   echo "  health         Check API health endpoint + database + PM2 status"
+  echo "  cloudflare-ips Refresh Cloudflare IP ranges used to restore visitor IPs (root)"
   echo "  help           Show this help message"
   echo ""
   echo "Environment overrides:"
@@ -636,6 +777,11 @@ cmd_help() {
   echo "  DB_PASSWORD    Database password (vps-install only)"
   echo "  PM2_APP_NAME   PM2 process name (default: omnicore-api)"
   echo "  REPO_URL       Git repository URL (vps-install only)"
+  echo "  DOMAIN         Public hostname, e.g. omnicore.irofficial.com (vps-install)"
+  echo "  CERTBOT_EMAIL  Let's Encrypt account email (vps-install)"
+  echo "  CF_ORIGIN_CERT Cloudflare Origin Certificate PEM path — TLS without certbot"
+  echo "  CF_ORIGIN_KEY  Private key for CF_ORIGIN_CERT"
+  echo "  CLOUDFLARE     true (default): trust CF-Connecting-IP from Cloudflare ranges"
   echo ""
   echo "Examples:"
   echo "  ./deploy.sh setup                          # First-time local setup"
@@ -662,6 +808,9 @@ case "$COMMAND" in
   vps-install)  cmd_vps_install ;;
   seed-admin)   cmd_seed_admin ;;
   health)       cmd_health ;;
+  cloudflare-ips)
+    [[ "$(id -u)" -eq 0 ]] || error "Run as root: sudo ./deploy.sh cloudflare-ips"
+    CLOUDFLARE=true write_cloudflare_realip && nginx -t && systemctl reload nginx ;;
   help|--help|-h) cmd_help ;;
   *)
     error "Unknown command: $COMMAND. Run './deploy.sh help' for usage."

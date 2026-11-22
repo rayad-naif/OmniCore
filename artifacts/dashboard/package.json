@@ -16,6 +16,7 @@
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
+    "@twilio/voice-sdk": "^2.19.0",
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

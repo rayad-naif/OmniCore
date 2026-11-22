@@ -22,6 +22,13 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { publicAppUrl } = require('./lib/env');
+const { ghlWebhookHandler } = require('./controllers/integrations.controller');
+const { isAgencyOrigin } = require('./lib/agencies');
+const {
+  auditMiddleware,
+  recordAudit,
+  startRetentionJob: startAuditRetentionJob,
+} = require('./lib/audit');
 
 // Injects the shared pg.Pool as req.db — consumed by CJS controllers via req.db.query()
 function attachDb(
@@ -35,15 +42,38 @@ function attachDb(
 
 const app: Express = express();
 
+// ── Reverse proxy trust (real client IPs) ─────────────────────────────────────
+// OCI: nginx on loopback (nginx itself restores the visitor IP from Cloudflare's
+// CF-Connecting-IP). Render/Docker: platform proxy on a private network.
+// Override with TRUST_PROXY (e.g. "1", "true", or a comma-separated CIDR list).
+{
+  const raw = (
+    process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal'
+  ).trim();
+  const value: boolean | number | string =
+    raw === 'true'
+      ? true
+      : raw === 'false'
+        ? false
+        : /^\d+$/.test(raw)
+          ? Number(raw)
+          : raw;
+  app.set('trust proxy', value);
+}
+
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
+// Default: only the app's own public origin (when known). Set ALLOWED_ORIGINS
+// to a comma-separated list for split frontend/API hosting, or "*" to allow any.
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-  : ['*'];
+  : publicAppUrl()
+    ? [publicAppUrl()]
+    : ['*'];
 
 app.use((req, res, next) => {
   // The embeddable widget is intentionally usable from customer websites
@@ -67,7 +97,11 @@ app.use((req, res, next) => {
           if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
             return callback(null, requestOrigin || true);
           }
-          return callback(null, false);
+          // Verified white-label domains of agencies.
+          isAgencyOrigin(requestOrigin)
+            .then((ok: boolean) => callback(null, ok ? requestOrigin : false))
+            .catch(() => callback(null, false));
+          return undefined;
         };
   cors({ origin, credentials: true })(req, res, next);
 });
@@ -183,11 +217,18 @@ async function applyPlanFeatures(
 
   type PlanShape = {
     is_free: boolean;
-    features: { ai_feature_enabled: boolean; smtp_feature_enabled: boolean };
+    features: {
+      ai_feature_enabled: boolean;
+      smtp_feature_enabled: boolean;
+      hrms_feature_enabled?: boolean;
+      payments_feature_enabled?: boolean;
+      stores_feature_enabled?: boolean;
+    };
     limits: {
       max_brands_allowed: number | null;
       max_agents_allowed: number | null;
       conversation_limit: number | null;
+      max_stores?: number | null;
     };
   };
 
@@ -209,6 +250,9 @@ async function applyPlanFeatures(
          conversation_limit   = 100,
          ai_feature_enabled   = false,
          smtp_feature_enabled = false,
+         hrms_feature_enabled = false,
+         payments_feature_enabled = false,
+         stores_feature_enabled = false,
          updated_at           = NOW()
        WHERE id = $1`,
       [tenantId],
@@ -223,6 +267,10 @@ async function applyPlanFeatures(
        conversation_limit   = $3,
        ai_feature_enabled   = $4,
        smtp_feature_enabled = $5,
+       hrms_feature_enabled = $7,
+       payments_feature_enabled = $8,
+       stores_feature_enabled = $9,
+       max_stores           = $10,
        updated_at           = NOW()
      WHERE id = $6`,
     [
@@ -232,6 +280,10 @@ async function applyPlanFeatures(
       row.features.ai_feature_enabled,
       row.features.smtp_feature_enabled,
       tenantId,
+      Boolean(row.features.hrms_feature_enabled),
+      Boolean(row.features.payments_feature_enabled),
+      Boolean(row.features.stores_feature_enabled),
+      row.limits.max_stores ?? 1,
     ],
   );
   logger.info({ tenantId, plan: plan || 'free' }, 'plan_features_applied');
@@ -407,11 +459,39 @@ app.post(
       > | null;
 
       if (!event) {
+        void recordAudit({
+          action: 'billing.paddle.signature_invalid',
+          category: 'security',
+          actorType: 'webhook',
+          actorName: 'Paddle',
+          outcome: 'denied',
+          summary: 'Rejected Paddle webhook with an invalid or stale signature',
+          req,
+        });
         logger.warn('paddle_webhook_signature_invalid');
         return res.status(400).json({ error: 'Invalid signature' });
       }
 
       logger.info({ eventType: event.event_type }, 'paddle_webhook_verified');
+      const evData = (event.data || {}) as Record<string, unknown>;
+      void recordAudit({
+        action: `billing.paddle.${String(event.event_type || 'event')}`,
+        category: 'billing',
+        actorType: 'webhook',
+        actorName: 'Paddle',
+        tenantId:
+          ((evData.custom_data as Record<string, string> | undefined)
+            ?.tenant_id as string) || null,
+        resourceType: 'subscription',
+        resourceId: (evData.subscription_id as string) || (evData.id as string),
+        summary: `Paddle ${String(event.event_type)} (${String(evData.status || '')})`,
+        metadata: {
+          eventId: event.event_id,
+          status: evData.status,
+          customerId: evData.customer_id,
+        },
+        req,
+      });
 
       try {
         await provisionTenantFromPaddleEvent(event);
@@ -722,6 +802,27 @@ async function provisionTenantFromPaddleEvent(
   }
 }
 
+// ── GoHighLevel webhooks (raw body for signature verification) ───────────────
+app.post(
+  '/api/integrations/ghl/webhook',
+  express.raw({ type: '*/*', limit: '2mb' }),
+  ghlWebhookHandler,
+);
+
+// ── Payment processor webhooks (raw body for signature verification) ─────────
+const paymentsPublic = require('./payments/public');
+app.use('/api/pay/webhooks', paymentsPublic.webhookRouter);
+// Customer pay pages (/pay/:token, /pay/l/:token) — strict CSP set per response.
+app.use('/pay', paymentsPublic.pageRouter);
+
+// ── Online stores: WooCommerce webhooks and the OmniCore Commerce plugin (raw body) ──
+const storesPublic = require('./stores/public');
+app.use('/api/stores', storesPublic.router);
+// Payments made for WooCommerce orders are reported back to the store.
+require('./payments/service').onPaymentEvent(
+  require('./stores/service').onPaymentEvent,
+);
+
 // ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
@@ -731,6 +832,10 @@ app.use(cookieParser());
 
 // ── Database pool injection (req.db) ──────────────────────────────────────────
 app.use(attachDb);
+
+// ── Audit trail (records every mutating API call + exports) ───────────────────
+app.use(auditMiddleware);
+startAuditRetentionJob();
 
 // ── Public checkout confirmation (webhook-independent onboarding) ─────────────
 // The marketing /checkout/success page calls this with the Paddle transaction
@@ -824,11 +929,81 @@ app.post(
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // Redirect root domain to the dashboard
-app.get('/', (req: express.Request, res: express.Response) => {
-  res.redirect(301, '/dashboard');
-});
+// (In SERVE_STATIC mode "/" is the marketing site instead.)
+if (process.env.SERVE_STATIC !== 'true') {
+  app.get('/', (req: express.Request, res: express.Response) => {
+    res.redirect(301, '/dashboard');
+  });
+}
 
 app.use('/api', router);
+
+// ── Single-service mode (Render / Docker / any PaaS without nginx) ────────────
+// SERVE_STATIC=true makes this process also serve the built dashboard at
+// /dashboard/ and the prerendered marketing site at /. On OCI, nginx does this.
+if (process.env.SERVE_STATIC === 'true') {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.resolve(process.env.STATIC_ROOT || process.cwd());
+  const dashboardDir = path.join(root, 'artifacts/dashboard/dist/public');
+  const marketingDir = path.join(root, 'artifacts/marketing-site/dist/public');
+  // The static sites load Paddle.js and fonts; nginx sends no CSP either.
+  const noCsp: express.RequestHandler = (_req, res, next) => {
+    res.removeHeader('Content-Security-Policy');
+    next();
+  };
+  const assetCache = {
+    setHeaders(res: express.Response, file: string) {
+      res.setHeader(
+        'Cache-Control',
+        /[\\/]assets[\\/]/.test(file)
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache',
+      );
+    },
+  };
+  // Express routing is not strict about trailing slashes, so check explicitly.
+  app.get('/dashboard', (req, res, next) =>
+    req.originalUrl.split('?')[0] === '/dashboard'
+      ? res.redirect(301, '/dashboard/')
+      : next(),
+  );
+  app.use(
+    '/dashboard',
+    noCsp,
+    express.static(dashboardDir, { index: 'index.html', ...assetCache }),
+  );
+  app.get(/^\/dashboard\/.*/, noCsp, (_req, res) =>
+    res.sendFile(path.join(dashboardDir, 'index.html')),
+  );
+  // HR module front end (artifacts/hrms) at /hrms/.
+  const hrmsDir = path.join(root, 'artifacts/hrms/dist');
+  app.get('/hrms', (req, res, next) =>
+    req.originalUrl.split('?')[0] === '/hrms'
+      ? res.redirect(301, '/hrms/')
+      : next(),
+  );
+  app.use(
+    '/hrms',
+    noCsp,
+    express.static(hrmsDir, { index: 'index.html', ...assetCache }),
+  );
+  app.get(/^\/hrms\/.*/, noCsp, (_req, res) =>
+    res.sendFile(path.join(hrmsDir, 'index.html')),
+  );
+  app.use(
+    noCsp,
+    express.static(marketingDir, { extensions: ['html'], ...assetCache }),
+  );
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+    const notFound = path.join(marketingDir, '404.html');
+    res.removeHeader('Content-Security-Policy');
+    if (fs.existsSync(notFound)) return res.status(404).sendFile(notFound);
+    return next();
+  });
+  logger.info({ root }, 'static_sites_enabled');
+}
 
 // ── Global error handler (4-arg signature required by Express) ────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
