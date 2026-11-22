@@ -45,6 +45,10 @@ const SKIP_PATHS = [
   // Voice provider callbacks are recorded as voice.* events by the voice module.
   /^\/api\/voice\/(webhooks|twilio|hooks|cron)\//,
   /^\/api\/auth\/(login|refresh)$/,
+  // HR desktop agent and biometric devices post continuously.
+  /^\/api\/hrms\/v1\/activity-logs\/(ingest|screenshots)/,
+  /^\/api\/hrms\/v1\/attendance\/biometric-webhook/,
+  /^\/api\/hrms\/v1\/auth\/refresh-token/,
 ];
 
 // Read-only routes that still matter for compliance (bulk data leaving the app).
@@ -171,7 +175,11 @@ function describeRoute(method, template) {
     );
   const named = parts.filter((p) => !p.startsWith(':'));
   const head =
-    named[0] === 'v1' || named[0] === 'super-admin' ? named[1] : named[0];
+    named[0] === 'hrms' && named[1] === 'v1'
+      ? `hrms_${named[2] || 'api'}`
+      : named[0] === 'v1' || named[0] === 'super-admin'
+        ? named[1]
+        : named[0];
   const resourceType = (head || 'api').replace(/-/g, '_').replace(/s$/, '');
   const verb = VERBS[method] || method.toLowerCase();
   const last = named[named.length - 1];
@@ -282,6 +290,8 @@ function auditMiddleware(req, res, next) {
       superAdmin = await isSuperAdminAgent(agent).catch(() => false);
     }
 
+    // Modules with their own sign-in (the HR app) describe the actor here.
+    const other = !agent && !apiKey ? req.auditActor : null;
     insert({
       tenantId:
         agent?.tenantId || apiKey?.tenantId || req.auditTenantId || null,
@@ -291,12 +301,14 @@ function auditMiddleware(req, res, next) {
           : 'agent'
         : apiKey
           ? 'api_key'
-          : path.startsWith('/api/widget')
-            ? 'visitor'
-            : 'anonymous',
-      actorId: agent?.id || apiKey?.id || null,
-      actorEmail: agent?.email || null,
-      actorName: agent?.name || apiKey?.name || null,
+          : other?.type
+            ? other.type
+            : path.startsWith('/api/widget')
+              ? 'visitor'
+              : 'anonymous',
+      actorId: agent?.id || apiKey?.id || other?.id || null,
+      actorEmail: agent?.email || other?.email || null,
+      actorName: agent?.name || apiKey?.name || other?.name || null,
       onBehalfOf: Boolean(agent?.workspaceOverride),
       action,
       resourceType,
