@@ -29,6 +29,7 @@ const SECTIONS = [
   'audit',
   'agency',
   'voice',
+  'hr',
 ];
 
 const obj = (properties, required = []) => ({

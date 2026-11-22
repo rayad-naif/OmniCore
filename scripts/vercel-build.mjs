@@ -42,10 +42,12 @@ run('pnpm --filter @workspace/dashboard run build', {
   BASE_PATH: '/dashboard/',
   VITE_API_URL: '/api',
 });
+run('pnpm --filter @workspace/hrms run build');
 
 const out = path.join(root, '.vercel/output');
 rmSync(out, { recursive: true, force: true });
 mkdirSync(path.join(out, 'static/dashboard'), { recursive: true });
+mkdirSync(path.join(out, 'static/hrms'), { recursive: true });
 cpSync(
   path.join(root, 'artifacts/marketing-site/dist/public'),
   path.join(out, 'static'),
@@ -56,6 +58,9 @@ cpSync(
   path.join(out, 'static/dashboard'),
   { recursive: true },
 );
+cpSync(path.join(root, 'artifacts/hrms/dist'), path.join(out, 'static/hrms'), {
+  recursive: true,
+});
 
 const immutable = { 'cache-control': 'public, max-age=31536000, immutable' };
 writeFileSync(
@@ -66,7 +71,7 @@ writeFileSync(
       routes: [
         { src: '^/api/(.*)$', dest: `${api}/api/$1` },
         {
-          src: '^/(dashboard/)?assets/(.*)$',
+          src: '^/(dashboard/|hrms/)?assets/(.*)$',
           headers: immutable,
           continue: true,
         },
@@ -75,8 +80,10 @@ writeFileSync(
           status: 301,
           headers: { Location: '/dashboard/' },
         },
+        { src: '^/hrms$', status: 301, headers: { Location: '/hrms/' } },
         { handle: 'filesystem' },
         { src: '^/dashboard/.*$', dest: '/dashboard/index.html' },
+        { src: '^/hrms/.*$', dest: '/hrms/index.html' },
         { src: '^/([^.]+?)/?$', dest: '/$1.html', check: true },
         { src: '^/.*$', status: 404, dest: '/404.html' },
       ],
