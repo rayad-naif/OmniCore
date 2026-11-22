@@ -130,6 +130,12 @@ const SCRIPT = String.raw`(function () {
     if (d.notes) card.appendChild(el('p', { class: 'muted' }, d.notes));
     c.appendChild(card);
 
+    if (d.return_url) {
+      var back = el('a', { class: 'muted', href: d.return_url }, (d.status === 'paid' || d.balance <= 0 || result) ? (d.return_label || 'Back to the store') + ' →' : '← ' + (d.return_label || 'Back to the store'));
+      back.style.display = 'inline-block'; back.style.marginTop = '12px';
+      card.appendChild(back);
+      if (result === 'paid' || result === 'processing') setTimeout(function () { location.href = d.return_url; }, 4000);
+    }
     if (d.status === 'void') { banner('err', 'This invoice was cancelled.'); return; }
     if (d.kind === 'estimate') return renderAccept(c, d);
     if (d.status === 'paid' || d.balance <= 0) { if (!result) banner('ok', 'This invoice is paid. Thank you!'); return; }

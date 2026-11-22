@@ -200,6 +200,43 @@ account, or by bank transfer, Payoneer or cash on delivery.
 (Integrations → API keys), then your driver or field app calls `GET /api/v1/payments?status=pending`
 and `POST /api/v1/payments/<id>/confirm` when the cash is collected.
 
+## 8d. Online stores (WooCommerce)
+
+Plans with **Online stores** add **Online Stores** to the sidebar.
+
+**Launch a store** (New store): give it a name and a web address (`yourname.<store
+domain>`), pick one of six designs (Boutique, Fresh market, Tech, Beauty, Home & living,
+Minimal), optionally your brand colour, and describe what you sell. If your plan includes
+AI, the homepage, About, FAQ and policy pages and your starter products are written for
+you; otherwise the design's example copy is used. Your store is usually live in about a
+minute, with WooCommerce, a shop page, cart, checkout and customer accounts.
+
+**Run it:** **Open store admin** signs you in to WordPress without a password. Add real
+products and photos, shipping rates (new stores start with free shipping) and anything
+else WordPress and WooCommerce offer, including other payment plugins.
+
+**Get paid:** customers choose **Pay online** at checkout and pay on your OmniCore payment
+page with the methods connected under Invoices & Payments (card processors, PayPal,
+bank transfer, cash on delivery, Payoneer). Bank transfers and cash on delivery wait for
+you to press Confirm in Invoices & Payments; the order then moves to Processing in your
+store automatically.
+
+**Orders:** every order appears in OmniCore (Online Stores → All orders, or a store's
+Orders tab) within seconds, its customer is added to Contacts, and you get a "New order"
+pop-up.
+
+**Your own domain** (Domain tab): enter it, add the DNS records shown, and it becomes the
+store's main address once it points to us. SSL is set up automatically.
+
+**Design tab:** switch design or brand colour, and optionally rewrite the pages; your
+products are kept. **Settings:** rename, pause (visitors see "temporarily unavailable"),
+show the emergency admin login, or delete (type DELETE to confirm).
+
+**Connect an existing WooCommerce store:** in your WordPress admin create a REST API key
+(WooCommerce → Settings → Advanced → REST API, Read/Write) and paste it under Connect
+existing store. Orders sync the same way. To offer OmniCore checkout there, download the
+plugin from the store's Payments tab, install it, and paste the connection key.
+
 ## 8b. Reverse DNS (platform super admins)
 
 Super Admin → **Reverse DNS** finds domains that point to a host or IP you watch, for

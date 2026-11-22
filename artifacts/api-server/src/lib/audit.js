@@ -48,6 +48,8 @@ const SKIP_PATHS = [
   // HR desktop agent and biometric devices post continuously.
   /^\/api\/hrms\/v1\/activity-logs\/(ingest|screenshots)/,
   /^\/api\/hrms\/v1\/attendance\/biometric-webhook/,
+  // WooCommerce webhooks and plugin calls (store orders are recorded in store_orders).
+  /^\/api\/stores\/(webhooks|plugin)\//,
   /^\/api\/hrms\/v1\/auth\/refresh-token/,
   /^\/api\/pay\/webhooks\//,
 ];

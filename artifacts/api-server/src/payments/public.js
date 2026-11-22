@@ -94,6 +94,16 @@ function publicDoc(d) {
     payment_terms: d.payment_terms,
     notes: d.notes,
     accepted_at: d.accepted_at,
+    // Invoices for online-store orders send the customer back to the store's order page.
+    return_url:
+      d.source === 'woocommerce' &&
+      /^https?:\/\//.test(d.source_ref?.return_url || '')
+        ? d.source_ref.return_url
+        : null,
+    return_label:
+      d.source === 'woocommerce'
+        ? `Back to ${d.source_ref?.store_name || 'the store'}`
+        : null,
   };
 }
 

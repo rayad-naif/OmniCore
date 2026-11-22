@@ -1,0 +1,14 @@
+{
+  "name": "@workspace/store-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runs on the store host: creates and manages WordPress + WooCommerce stores in Docker for OmniCore.",
+  "type": "module",
+  "main": "src/agent.mjs",
+  "scripts": {
+    "start": "node src/agent.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

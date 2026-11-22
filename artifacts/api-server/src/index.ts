@@ -9,6 +9,7 @@ const { startIntegrationWorkers } = require('./lib/integrations/dispatcher');
 const { startVoiceWorkers } = require('./voice/context');
 const { startHrmsWorkers } = require('./hrms');
 const { startRdnsWorker } = require('./rdns/scheduler');
+const { startStoresWorker } = require('./stores/worker');
 const { getIo } = require('./services/socket.service');
 
 /**
@@ -81,6 +82,7 @@ server.listen(port, () => {
   startHrmsWorkers({ io: getIo() });
   // Reverse DNS watchlist scheduler + forms crawler (RDNS_WORKER=false to disable).
   startRdnsWorker();
+  startStoresWorker();
   void startIntegrationWorkers().catch((err: unknown) =>
     logger.error({ err }, 'integration_workers_failed'),
   );

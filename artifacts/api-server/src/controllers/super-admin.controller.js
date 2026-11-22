@@ -92,6 +92,8 @@ async function notifyTenantAdmins(tenantId, subject, heading, message) {
         ADD COLUMN IF NOT EXISTS smtp_feature_enabled BOOLEAN NOT NULL DEFAULT true,
         ADD COLUMN IF NOT EXISTS hrms_feature_enabled BOOLEAN NOT NULL DEFAULT false,
         ADD COLUMN IF NOT EXISTS payments_feature_enabled BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS stores_feature_enabled BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS max_stores           INTEGER NOT NULL DEFAULT 1,
         ADD COLUMN IF NOT EXISTS conversation_limit   INTEGER NOT NULL DEFAULT 1000,
         ADD COLUMN IF NOT EXISTS plan                 TEXT    NOT NULL DEFAULT 'free'
     `);
@@ -133,6 +135,7 @@ router.get('/tenants', async (req, res, next) => {
         t.subscription_status, t.plan,
         t.max_brands_allowed, t.max_agents_allowed,
         t.ai_feature_enabled, t.smtp_feature_enabled, t.hrms_feature_enabled, t.payments_feature_enabled,
+        t.stores_feature_enabled, t.max_stores,
         t.conversation_limit, t.created_at,
         t.trial_ends_at, t.grace_period_ends_at, t.lock_notified_at,
         t.paddle_customer_id, t.paddle_subscription_id,
@@ -313,6 +316,8 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
       smtp_feature_enabled,
       hrms_feature_enabled,
       payments_feature_enabled,
+      stores_feature_enabled,
+      max_stores,
       conversation_limit,
     } = req.body || {};
 
@@ -354,6 +359,17 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
       updates.push(`payments_feature_enabled = $${i++}`);
       values.push(Boolean(payments_feature_enabled));
     }
+    if (stores_feature_enabled !== undefined) {
+      updates.push(`stores_feature_enabled = $${i++}`);
+      values.push(Boolean(stores_feature_enabled));
+    }
+    if (max_stores !== undefined) {
+      const val = parseInt(max_stores, 10);
+      if (isNaN(val) || val < 0 || val > 1000)
+        return res.status(400).json({ error: 'max_stores must be 0–1000' });
+      updates.push(`max_stores = $${i++}`);
+      values.push(val);
+    }
     if (conversation_limit !== undefined) {
       const val = parseInt(conversation_limit, 10);
       if (isNaN(val) || val < 1)
@@ -371,7 +387,7 @@ router.patch('/tenants/:id/limits', async (req, res, next) => {
     const { rows } = await pool.query(
       `UPDATE tenants SET ${updates.join(', ')}, updated_at = NOW()
        WHERE id = $${i}
-       RETURNING id, company_name, max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, payments_feature_enabled, conversation_limit`,
+       RETURNING id, company_name, max_brands_allowed, max_agents_allowed, ai_feature_enabled, smtp_feature_enabled, hrms_feature_enabled, payments_feature_enabled, stores_feature_enabled, max_stores, conversation_limit`,
       values,
     );
     if (!rows.length)

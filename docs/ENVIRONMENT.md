@@ -227,6 +227,37 @@ What a workspace needs from each processor:
 Which workspaces get invoicing is decided by plans (Super Admin → Billing → plan →
 "Invoicing & payments") or per workspace (Super Admin → Tenants → limits).
 
+## 7f. Online stores (WooCommerce)
+
+Workspaces on a plan with **Online stores** can launch a hosted WooCommerce store or
+connect an existing one (Online Stores in the sidebar). Hosted stores run on one or more
+**store servers**, separate VMs prepared with `deploy-store-host.sh` (see
+`docs/OCI_Deployment.md` §8) and registered in Super Admin → Online stores. Nothing has to
+be set on the OmniCore server for connected stores.
+
+| Variable               | Default          | Notes                                                                                                                                        |
+| ---------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_APP_URL`       | —                | Must be the public `https://` address: stores send webhooks and plugin calls to it, and customers pay on `/pay/…`.                           |
+| `STORES_CALLBACK_URL`  | `PUBLIC_APP_URL` | Only if stores must reach the API at a different address than browsers (e.g. a private network).                                             |
+| `STORES_WORKER`        | `true`           | Background jobs (store setup, domain checks, order sync, payment callbacks). Jobs are claimed with row locks, so several instances are safe. |
+| `CLOUDFLARE_API_TOKEN` | —                | Optional. With `CLOUDFLARE_ZONE_ID`, custom domains are added as Cloudflare for SaaS custom hostnames (Cloudflare issues the certificate).   |
+| `CLOUDFLARE_ZONE_ID`   | —                | The zone that serves the store domain; it needs Cloudflare for SaaS enabled with the store server's edge host as fallback origin.            |
+
+Without Cloudflare for SaaS, customers point their domain at the store server (A record
+to its IP, or CNAME to its edge host) and the server's Traefik gets a Let's Encrypt
+certificate automatically.
+
+On the store server (`/etc/omnicore-stores/agent.env`, written by the script):
+
+| Variable           | Default                   | Notes                                                                                    |
+| ------------------ | ------------------------- | ---------------------------------------------------------------------------------------- |
+| `AGENT_SECRET`     | generated                 | Shared with OmniCore (paste it when adding the server). Every agent call is HMAC-signed. |
+| `AGENT_ALLOW_IPS`  | `OMNICORE_IPS`            | Only these addresses may call the agent (also enforced in Traefik).                      |
+| `TLS_MODE`         | `acme-all` or `acme`      | `acme` when a Cloudflare origin certificate for `*.STORES_DOMAIN` is installed.          |
+| `STORE_MEMORY`     | `512m`                    | Memory limit per store container.                                                        |
+| `WP_IMAGE`         | `wordpress:php8.3-apache` | Current WordPress (new WooCommerce releases need it).                                    |
+| `BACKUP_KEEP_DAYS` | `14`                      | Nightly database + files backup per store, kept this many days.                          |
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |
