@@ -42,13 +42,10 @@ router.use(
   wrap(async (req, res, next) => {
     const ws = await svc.workspace(T(req));
     if (!ws?.enabled) {
-      return res
-        .status(403)
-        .json({
-          error:
-            "Invoicing & payments is not included in this workspace's plan.",
-          code: 'payments_disabled',
-        });
+      return res.status(403).json({
+        error: "Invoicing & payments is not included in this workspace's plan.",
+        code: 'payments_disabled',
+      });
     }
     return next();
   }),

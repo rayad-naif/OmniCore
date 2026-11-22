@@ -194,6 +194,39 @@ Not needed any more (from the standalone tool): `SECRET_KEY`, `ADMIN_USERNAME`,
 (it uses OmniCore's Postgres), `RUN_SCHEDULER_IN_PROCESS`, `CERTSPOTTER_API_TOKEN`
 (set it as the Certspotter key in the UI).
 
+## 7e. Invoicing and payments (workspaces' own customers)
+
+No extra service and no platform-wide keys: each workspace connects **its own**
+processor accounts in the dashboard (Invoices & Payments → Settings). Keys are stored
+encrypted with `INTEGRATIONS_ENCRYPTION_KEY` and never returned to the browser. This is
+separate from section 4, which is how workspaces pay **you**.
+
+Needed on the platform:
+
+- `PUBLIC_APP_URL` (section 2) must be the public `https://` address. Customer links
+  (`/pay/…`), processor return URLs and the webhook URLs that Stripe, Paddle and
+  Authorize.net call (`/api/pay/webhooks/<processor>/<workspace id>`) are built from it.
+- `/pay/` must reach the API. `deploy.sh` (nginx), `scripts/vercel-build.mjs` and the
+  single-service Render setup already route it.
+- Cloudflare: do not cache `/pay/*` or `/api/pay/*` (they send `Cache-Control: no-store`),
+  and keep Bot Fight Mode off for `/api/pay/webhooks/*` so processors are not challenged.
+
+What a workspace needs from each processor:
+
+| Method           | What to paste                                              | Confirmation                                                                                                                    |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Paddle           | API key (Paddle → Developer tools → Authentication)        | Webhook destination created automatically. In Paddle, approve your domain and set a default payment link (Checkout → settings). |
+| Stripe           | Secret key `sk_live_…` / `sk_test_…` (or a restricted key) | Webhook endpoint created automatically (`checkout.session.completed`).                                                          |
+| PayPal           | REST app client ID + secret, live or sandbox               | Captured when the customer returns from PayPal.                                                                                 |
+| Square           | Access token, optional location ID, production or sandbox  | Checked when the customer returns (Square payment link order).                                                                  |
+| Authorize.net    | API Login ID, Transaction Key, optional Signature Key      | Checked on return; with the Signature Key a webhook is also created automatically for instant confirmation.                     |
+| Payoneer         | Payment-request link and/or receiving details              | Manual: staff confirm the payment in the dashboard (or via REST API).                                                           |
+| Bank transfer    | Bank details shown to the customer                         | Manual, as above.                                                                                                               |
+| Cash on delivery | Instructions shown to the customer                         | Manual: the courier/cleaner/driver app confirms with an API key (`POST /api/v1/payments/:id/confirm`).                          |
+
+Which workspaces get invoicing is decided by plans (Super Admin → Billing → plan →
+"Invoicing & payments") or per workspace (Super Admin → Tenants → limits).
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |

@@ -70,6 +70,7 @@ writeFileSync(
       version: 3,
       routes: [
         { src: '^/api/(.*)$', dest: `${api}/api/$1` },
+        { src: '^/pay/(.*)$', dest: `${api}/pay/$1` },
         {
           src: '^/(dashboard/|hrms/)?assets/(.*)$',
           headers: immutable,

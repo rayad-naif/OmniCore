@@ -173,6 +173,33 @@ biometric terminals (paste the event URL with the key into the device) and an **
 agent key** for the desktop activity tracker. Replacing a key disconnects devices that
 still use the old one.
 
+## 8c. Invoices and payments
+
+Plans that include **Invoicing & payments** add **Invoices & Payments** to the sidebar.
+You get paid straight into your own Paddle, Stripe, PayPal, Square or Authorize.net
+account, or by bank transfer, Payoneer or cash on delivery.
+
+1. **Settings:** set your currency, invoice prefix, tax and the footer text, then
+   **Connect** each payment method you accept (paste the keys from that processor;
+   they are stored encrypted). Bank transfer, Payoneer and cash on delivery only need
+   the instructions your customers should see.
+2. **Invoices / Estimates:** add the customer, line items (save frequent ones under
+   **Products**), tax, a discount or a **coupon**, due date and notes. **Send** emails
+   the customer a link; **Copy link** gives you the same link for WhatsApp or SMS.
+   Customers can accept an estimate online; **Convert** turns it into an invoice.
+3. **Payment links:** a fixed price or "customer chooses the amount" link to put on
+   your website, social profiles or chat replies.
+4. **Gift cards:** issue a card with a code; customers use it on any invoice.
+5. **Payments:** every payment as it arrives (you also get a "Payment received" pop-up).
+   Bank transfers, Payoneer and cash on delivery wait here until you press **Confirm**
+   (or **Reject**). Card payments can be marked refunded after refunding them in the
+   processor. **Record payment** on an invoice logs cash or a cheque you received.
+6. **Customers:** totals per customer (invoiced, paid, outstanding).
+
+**Cash on delivery with your own app:** create an API key with the **write** scope
+(Integrations → API keys), then your driver or field app calls `GET /api/v1/payments?status=pending`
+and `POST /api/v1/payments/<id>/confirm` when the cash is collected.
+
 ## 8b. Reverse DNS (platform super admins)
 
 Super Admin → **Reverse DNS** finds domains that point to a host or IP you watch, for

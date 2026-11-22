@@ -440,11 +440,9 @@ const paySvc = require('../payments/service');
 const payGate = wrap(async (req, res, next) => {
   const ws = await paySvc.workspace(T(req));
   if (!ws?.enabled) {
-    return res
-      .status(403)
-      .json({
-        error: "Invoicing & payments is not included in this workspace's plan",
-      });
+    return res.status(403).json({
+      error: "Invoicing & payments is not included in this workspace's plan",
+    });
   }
   return next();
 });

@@ -34,6 +34,7 @@ export type Section =
   | 'agency'
   | 'voice'
   | 'hr'
+  | 'payments'
   | 'custom';
 export type StatusFilter = 'all' | Status;
 export type AuthView = 'login' | 'signup' | 'forgot' | 'reset';

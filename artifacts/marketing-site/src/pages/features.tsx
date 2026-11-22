@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Users,
   Briefcase,
+  Receipt,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -92,6 +93,22 @@ const groups: FeatureGroup[] = [
       'Recruitment: job listings, candidate pipeline and AI resume screening',
       'Performance reviews, reports and Excel exports, in your own time zone',
       'Employees get their own sign-in; available on plans with the HR module',
+    ],
+  },
+  {
+    id: 'payments',
+    icon: Receipt,
+    title: 'Invoices & payments',
+    summary:
+      'Send invoices and get paid straight into your own account, by card, wallet, bank or cash.',
+    points: [
+      'Invoices and estimates with tax, discounts and coupons; customers accept estimates online',
+      'One link to pay: email it or share it on WhatsApp and SMS',
+      'Paddle, Stripe, PayPal, Square and Authorize.net, plus bank transfer, Payoneer and cash on delivery',
+      'Payment links for your website and social profiles, and gift cards',
+      'Real-time "payment received" alerts, receipts and partial payments',
+      'Cash on delivery confirmed from your own driver or field app through the API',
+      'Available on plans with invoicing & payments',
     ],
   },
   {

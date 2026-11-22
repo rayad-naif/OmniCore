@@ -29,6 +29,15 @@ tickets, contacts, ratings, integrations and billing in one dashboard at /dashbo
   payroll with payslips, advances, loans and salary holds, expenses and earnings, recruitment (jobs,
   candidate pipeline, AI resume screening), performance reviews and reports. Employees have their own
   HR sign-in (link under HR → Links). Attendance uses the workspace time zone (Settings → Workspace).
+- Invoices & Payments (plans with invoicing): invoices and estimates (customer, line items from
+  Products, tax, discount or coupon, due date; Send emails a pay link, Copy link for WhatsApp/SMS;
+  customers accept estimates online, Convert turns one into an invoice), payment links (fixed or
+  customer-chosen amount), coupons, gift cards, Payments (every payment; bank transfer, Payoneer
+  and cash on delivery wait for Confirm or Reject; Record payment logs cash or cheques) and
+  Customers (invoiced, paid, outstanding). Settings: currency, prefixes, tax, footer, and Connect
+  for Paddle, Stripe, PayPal, Square, Authorize.net, Payoneer, bank transfer and cash on delivery
+  (money goes straight to the workspace's own account). Cash-on-delivery apps confirm payments
+  with an API key that has the write scope (POST /api/v1/payments/:id/confirm).
 - AI Call Center: an AI phone receptionist with Sales and Support agents on the workspace's own
   number (bring-your-own Twilio, Vapi and OpenAI keys). Tabs: Command Deck (live calls with
   real-time transcript; admins and supervisors can listen in, whisper instructions to the AI,

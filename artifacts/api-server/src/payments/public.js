@@ -284,11 +284,9 @@ router.post(
         ? Math.round(Number(req.body?.amount) || 0)
         : Number(l.amount);
     if (l.amount == null && l.min_amount && amount < Number(l.min_amount)) {
-      return res
-        .status(400)
-        .json({
-          error: `The minimum is ${money.format(l.min_amount, l.currency)}`,
-        });
+      return res.status(400).json({
+        error: `The minimum is ${money.format(l.min_amount, l.currency)}`,
+      });
     }
     if (req.body?.coupon) {
       const c = await svc.findCoupon(l.tenant_id, req.body.coupon, l.currency);

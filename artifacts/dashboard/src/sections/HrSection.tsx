@@ -40,7 +40,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard?.writeText(value);
+            navigator.clipboard?.writeText(value).catch(() => {});
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
           }}

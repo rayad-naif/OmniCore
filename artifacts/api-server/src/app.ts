@@ -803,7 +803,6 @@ app.post(
 );
 
 // ── Payment processor webhooks (raw body for signature verification) ─────────
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const paymentsPublic = require('./payments/public');
 app.use('/api/pay/webhooks', paymentsPublic.webhookRouter);
 // Customer pay pages (/pay/:token, /pay/l/:token) — strict CSP set per response.

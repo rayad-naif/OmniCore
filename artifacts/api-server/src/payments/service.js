@@ -627,8 +627,8 @@ async function applyTransaction(client, tx) {
       `UPDATE pay_invoices SET amount_paid = amount_paid + $3, updated_at = NOW(),
               status = CASE WHEN status IN ('draft') THEN 'sent' ELSE status END,
               paid_at = CASE WHEN amount_paid + $3 >= total THEN NOW() ELSE paid_at END
-        WHERE tenant_id = $1 AND id = $2 RETURNING *`,
-      [tx.tenant_id, tx.invoice_id, tx.amount],
+        WHERE tenant_id = $1 AND id = $2 AND currency = $4 RETURNING *`,
+      [tx.tenant_id, tx.invoice_id, tx.amount, money.normCurrency(tx.currency)],
     );
     if (rows[0] && Number(rows[0].amount_paid) >= Number(rows[0].total)) {
       await client.query(
