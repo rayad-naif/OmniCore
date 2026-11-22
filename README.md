@@ -3,6 +3,18 @@
 Multi-tenant SaaS omnichannel helpdesk and AI customer support platform.
 Agents manage tickets across web chat, email, and future channels in a unified inbox. Gemini 1.5 Flash powers AI replies, rephrasing, and RAG-based knowledge retrieval.
 
+## Documentation
+
+| Guide                                                        | For                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)                     | Render (testing), Vercel, Oracle Cloud + Cloudflare, Docker; connecting the domain |
+| [docs/OCI_Deployment.md](docs/OCI_Deployment.md)             | Step-by-step Oracle Cloud install, Paddle setup                                    |
+| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)                   | Every environment variable and the super admin setup                               |
+| [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)           | Architecture, repo map, where to edit what, recipes                                |
+| [docs/API_AND_INTEGRATIONS.md](docs/API_AND_INTEGRATIONS.md) | Webhooks, REST API v1, Slack/Teams/Discord, Zapier, GoHighLevel app                |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)                     | Workspace owners, admins and agents                                                |
+| [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md)                 | What is done, what is missing, suggested order                                     |
+
 ---
 
 ## Quick Start
@@ -37,7 +49,7 @@ cp .env.example .env
 | `JWT_SECRET`               | ✅       | Random 64+ character signing secret for access and refresh JWTs |
 | `SESSION_SECRET`           | optional | Session middleware secret when that middleware is enabled       |
 | `GEMINI_API_KEY`           | ✅       | Google AI Studio key for Gemini 1.5 Flash                       |
-| `R2_ACCOUNT_ID`            | ⚠️       | Cloudflare account ID (logo upload + PDF export)                |
+| `R2_ENDPOINT`              | ⚠️       | `https://<account-id>.r2.cloudflarestorage.com` (uploads, PDFs) |
 | `R2_ACCESS_KEY_ID`         | ⚠️       | Cloudflare R2 access key                                        |
 | `R2_SECRET_ACCESS_KEY`     | ⚠️       | Cloudflare R2 secret                                            |
 | `R2_BUCKET_NAME`           | ⚠️       | R2 bucket name                                                  |

@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/coverage/**',
       '**/.vite/**',
       '**/build/**',
+      '.vercel/**',
       '**/*.min.js',
       '.local/**',
       'artifacts/api-server/public/**',

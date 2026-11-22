@@ -25,7 +25,7 @@ import {
   TrendingUp, Award, MessageCircle, ThumbsUp, ChevronDown,
   Paperclip, Bold, Italic, List, AtSign, Smile,
   Brain, BookOpen, Link2, Webhook, Upload, FileText,
-  KeyRound,
+  KeyRound, Plug, ScrollText, PhoneCall,
 } from 'lucide-react'
 // @ts-ignore
 import { useAuth } from './context/AuthContext'
@@ -33,6 +33,12 @@ import TrialGateway from './components/TrialGateway'
 import { io, type Socket } from 'socket.io-client'
 import { BillingSection } from './sections/BillingSection'
 import { CsatSection } from './sections/CsatSection'
+import { AuditLogSection } from './sections/AuditLogSection'
+import { useBranding, getBranding, loadBrandingForUser } from './lib/branding'
+import { IntegrationsSection } from './sections/IntegrationsSection'
+import { AgencySection } from './sections/AgencySection'
+import { VoiceSection } from './sections/VoiceSection'
+import { CopilotPanel } from './components/CopilotPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Conversation {
@@ -607,9 +613,22 @@ function playChime() {
 // ─── Logo ─────────────────────────────────────────────────────────────────────
 function OmniLogo({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const s = size === 'sm' ? 'w-7 h-7' : 'w-9 h-9'
+  const brand = useBranding()
   return (
     <div className={`${s} bg-slate-900 rounded-xl flex items-center justify-center shadow-lg shadow-amber-900/20 ring-1 ring-amber-400/20 overflow-hidden`}>
-      <img src={omnicoreLogo} alt="OmniCore" className="w-[78%] h-[78%] object-contain" />
+      <img src={brand.logoUrl || omnicoreLogo} alt={brand.appName} className="w-[78%] h-[78%] object-contain" />
+    </div>
+  )
+}
+
+/** App name + tagline shown next to the logo (white-label aware). */
+function BrandName({ tagline, dark = true }: { tagline: string; dark?: boolean }) {
+  const brand = useBranding()
+  const isDefault = brand.appName === 'OmniCore'
+  return (
+    <div>
+      <p className={`${dark ? 'text-white' : ''} font-bold tracking-wide`}>{brand.appName}</p>
+      <p className="text-slate-500 text-xs">{isDefault ? `Atelier — ${tagline}` : brand.loginSubtitle || tagline}</p>
     </div>
   )
 }
@@ -635,7 +654,7 @@ function SignupPage({ onGoLogin }: { onGoLogin: (successMsg?: string) => void })
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Create your account</p></div></div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><BrandName tagline="Create your account" /></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Start for free</h1>
           <p className="text-slate-500 text-xs mb-5">Set up your team workspace in seconds</p>
@@ -676,7 +695,7 @@ function ForgotPasswordPage({ onGoLogin }: { onGoLogin: (msg?: string) => void }
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Password Reset</p></div></div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><BrandName tagline="Password Reset" /></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Forgot password?</h1>
           <p className="text-slate-500 text-xs mb-5">Enter your email and we'll send a reset link.</p>
@@ -722,7 +741,7 @@ function ResetPasswordPage({ token, onGoLogin }: { token: string; onGoLogin: (ms
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Set new password</p></div></div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><BrandName tagline="Set new password" /></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Set new password</h1>
           <p className="text-slate-500 text-xs mb-5">Choose a strong password (min 8 characters).</p>
@@ -757,7 +776,7 @@ function LoginPage({ onGoSignup, onGoForgot, successMsg }: { onGoSignup: () => v
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><div><p className="text-white font-bold tracking-wide">OmniCore</p><p className="text-slate-500 text-xs">Atelier — Agent Dashboard</p></div></div>
+        <div className="flex items-center gap-3 mb-8 justify-center"><OmniLogo /><BrandName tagline="Agent Dashboard" /></div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
           <h1 className="text-slate-100 text-lg font-semibold mb-1">Sign in</h1>
           <p className="text-slate-500 text-xs mb-5">Enter your agent credentials</p>
@@ -774,7 +793,7 @@ function LoginPage({ onGoSignup, onGoForgot, successMsg }: { onGoSignup: () => v
             </div>
             <button type="submit" disabled={submitting} className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">{submitting && <RefreshCw size={13} className="animate-spin" />}{submitting ? 'Signing in…' : 'Sign in'}</button>
           </form>
-          <div className="mt-4 pt-4 border-t border-slate-800 text-center"><button onClick={onGoSignup} className="text-xs text-sky-500 hover:text-sky-400 transition-colors">New to OmniCore? Create a free account →</button></div>
+          <div className="mt-4 pt-4 border-t border-slate-800 text-center"><button onClick={onGoSignup} className="text-xs text-sky-500 hover:text-sky-400 transition-colors">New to {getBranding().appName}? Create a free account →</button></div>
         </div>
       </div>
     </div>
@@ -2411,13 +2430,68 @@ function TeamSection() {
   )
 }
 
+// ─── Super Admin → Agencies ───────────────────────────────────────────────────
+interface AgencyRow { id: string; name: string; status: string; max_workspaces: number; workspaces: number; domains: string | null; members: string | null; created_at: string }
+function AgenciesPanel({ authFetch }: { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }) {
+  const [rows, setRows] = useState<AgencyRow[]>([])
+  const [form, setForm] = useState({ name: '', owner_email: '', max_workspaces: '25' })
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const load = useCallback(async () => {
+    const r = await authFetch('/api/super-admin/agencies')
+    if (r.ok) setRows(await r.json())
+  }, [authFetch])
+  useEffect(() => { void load() }, [load])
+  const patch = async (id: string, body: Record<string, unknown>) => {
+    const r = await authFetch(`/api/super-admin/agencies/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+    if (!r.ok) setMsg({ ok: false, text: (await r.json().catch(() => ({}))).error || `HTTP ${r.status}` })
+    void load()
+  }
+  return (
+    <div className="space-y-4">
+      {msg && <div className={`p-3 rounded-lg text-xs ${msg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{msg.text}</div>}
+      <form className="bg-white border border-slate-200 rounded-xl p-5 grid sm:grid-cols-4 gap-3 items-end" onSubmit={async e => {
+        e.preventDefault(); setMsg(null)
+        const r = await authFetch('/api/super-admin/agencies', { method: 'POST', body: JSON.stringify({ ...form, max_workspaces: Number(form.max_workspaces) }) })
+        if (!r.ok) return setMsg({ ok: false, text: (await r.json().catch(() => ({}))).error || `HTTP ${r.status}` })
+        setMsg({ ok: true, text: 'Agency created. The owner now sees “Agency” in their sidebar.' })
+        setForm({ name: '', owner_email: '', max_workspaces: '25' }); void load()
+      }}>
+        <label className="text-xs text-slate-600 sm:col-span-1">Agency name<input className="w-full h-9 px-3 mt-1 text-sm border border-slate-200 rounded-lg" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required /></label>
+        <label className="text-xs text-slate-600 sm:col-span-1">Owner email (existing user)<input type="email" className="w-full h-9 px-3 mt-1 text-sm border border-slate-200 rounded-lg" value={form.owner_email} onChange={e => setForm({ ...form, owner_email: e.target.value })} required /></label>
+        <label className="text-xs text-slate-600">Max client workspaces<input type="number" min={1} className="w-full h-9 px-3 mt-1 text-sm border border-slate-200 rounded-lg" value={form.max_workspaces} onChange={e => setForm({ ...form, max_workspaces: e.target.value })} /></label>
+        <button className="h-9 px-3 text-xs rounded-lg bg-sky-600 text-white font-medium">Create agency</button>
+        <p className="sm:col-span-4 text-[11px] text-slate-500">The owner's current workspace becomes the agency's home. They can then create client workspaces, set branding and custom domains, and use their own AI key.</p>
+      </form>
+      <div className="bg-white border border-slate-200 rounded-xl p-5 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-slate-400 text-left"><tr><th className="py-1">Agency</th><th>Staff</th><th>Workspaces</th><th>Domains</th><th>Status</th><th /></tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={6} className="py-4 text-slate-400">No agencies yet.</td></tr>}
+            {rows.map(a => (
+              <tr key={a.id} className="border-t border-slate-100">
+                <td className="py-2 pr-2 font-medium text-slate-800">{a.name}</td>
+                <td className="pr-2 text-slate-600">{a.members || '—'}</td>
+                <td className="pr-2">{a.workspaces} / <input type="number" min={1} defaultValue={a.max_workspaces} onBlur={e => Number(e.target.value) !== a.max_workspaces && void patch(a.id, { max_workspaces: Number(e.target.value) })} className="w-14 h-6 px-1 border border-slate-200 rounded" aria-label="Max workspaces" /></td>
+                <td className="pr-2 text-slate-600">{a.domains || '—'}</td>
+                <td className={`pr-2 ${a.status === 'active' ? 'text-emerald-600' : 'text-red-600'}`}>{a.status}</td>
+                <td className="text-right"><button className="h-7 px-2 text-xs rounded border border-slate-200" onClick={() => void patch(a.id, { status: a.status === 'active' ? 'suspended' : 'active' })}>{a.status === 'active' ? 'Suspend' : 'Activate'}</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Super Admin Section ──────────────────────────────────────────────────────
 function SuperAdminSection() {
   const api = useApi()
+  const { authFetch: saFetch } = useAuth() as { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }
   const [tenants, setTenants]         = useState<SANTenant[]>([])
   const [requests, setRequests]       = useState<UpgradeRequest[]>([])
   const [loading, setLoading]         = useState(true)
-  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing'>('tenants')
+  const [tab, setTab]                 = useState<'tenants' | 'requests' | 'super_admins' | 'platform_smtp' | 'user_accounts' | 'billing' | 'audit' | 'agencies'>('tenants')
   const [actionTenant, setAction]     = useState<SANTenant | null>(null)
   const [purgeTarget, setPurge]       = useState<SANTenant | null>(null)
   const [purgeConfirm, setPConf]      = useState('')
@@ -2699,6 +2773,8 @@ function SuperAdminSection() {
             <button onClick={() => setTab('user_accounts')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'user_accounts' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>User Accounts</button>
             <button onClick={() => setTab('platform_smtp')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'platform_smtp' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Platform Email</button>
             <button onClick={() => setTab('billing')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'billing' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Billing</button>
+            <button onClick={() => setTab('agencies')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'agencies' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Agencies</button>
+            <button onClick={() => setTab('audit')} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === 'audit' ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>Audit Log</button>
           </div>
 
           {loading ? <div className="flex items-center justify-center py-16 gap-2 text-slate-400"><RefreshCw size={16} className="animate-spin" /></div> : tab === 'tenants' ? (
@@ -2771,6 +2847,10 @@ function SuperAdminSection() {
             <UserAccountsPanel api={api} />
           ) : tab === 'billing' ? (
             <BillingPanel api={api} />
+          ) : tab === 'audit' ? (
+            <AuditLogSection authFetch={saFetch} scope="platform" tenants={tenants} />
+          ) : tab === 'agencies' ? (
+            <AgenciesPanel authFetch={saFetch} />
           ) : (
             <PlatformSmtpPanel api={api} />
           )}
@@ -4500,7 +4580,8 @@ function CannedResponsesSection() {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketOpen, recentActivity, onSelectConv, agent, onLogout, can }: {
+function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketOpen, recentActivity, onSelectConv, agent, onLogout, can, onOpenCustom }: {
+  onOpenCustom?: (link: { label: string; url: string }) => void
   active: Section; onNavigate: (s: Section) => void; unread: number; unassigned: number
   ticketUnread: number; ticketOpen: number
   recentActivity: Conversation[]; onSelectConv: (id: string) => void
@@ -4509,6 +4590,12 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
   can: (feature: string, level?: string) => boolean
 }) {
   const [bellOpen, setBellOpen] = useState(false)
+  const [isAgencyMember, setIsAgencyMember] = useState(false)
+  const sidebarBrand = useBranding()
+  const { authFetch: sidebarFetch } = useAuth() as { authFetch: (url: string, opts?: RequestInit) => Promise<Response> }
+  useEffect(() => {
+    sidebarFetch('/api/agency').then(r => setIsAgencyMember(r.ok)).catch(() => setIsAgencyMember(false))
+  }, [sidebarFetch])
   const bellRef = useRef<HTMLDivElement>(null)
   const totalNotifs = unread + unassigned
 
@@ -4521,23 +4608,29 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     return () => document.removeEventListener('mousedown', handler)
   }, [bellOpen])
 
-  const items: { key: Section; icon: React.ReactNode; label: string; feature?: string; superAdminOnly?: boolean }[] = [
+  const items: { key: Section; icon: React.ReactNode; label: string; feature?: string; superAdminOnly?: boolean; adminOnly?: boolean; agencyOnly?: boolean }[] = [
     { key: 'conversations', icon: <MessageSquare size={16} />, label: 'Inbox', feature: 'inbox' },
     { key: 'tickets',       icon: <Tag size={16} />,           label: 'Tickets', feature: 'inbox' },
     { key: 'contacts',        icon: <Users size={16} />,         label: 'Contacts', feature: 'contacts' },
     { key: 'canned_responses', icon: <Zap size={16} />,        label: 'Canned Responses', feature: 'inbox' },
     { key: 'csat',            icon: <BarChart2 size={16} />,   label: 'CSAT', feature: 'analytics' },
+    { key: 'voice',           icon: <PhoneCall size={16} />,   label: 'AI Call Center', feature: 'inbox' },
     { key: 'ai_training',   icon: <Brain size={16} />,         label: 'AI Training', feature: 'knowledge_base' },
     { key: 'smtp',          icon: <Mail size={16} />,          label: 'Email / SMTP', feature: 'settings' },
     { key: 'brands',        icon: <Building2 size={16} />,     label: 'Brands', feature: 'brands' },
     { key: 'team',          icon: <Users size={16} />,         label: 'Team', feature: 'team' },
     { key: 'billing',       icon: <CreditCard size={16} />,    label: 'Billing', feature: 'billing' },
+    { key: 'integrations',  icon: <Plug size={16} />,          label: 'Integrations', feature: 'settings' },
     { key: 'settings',      icon: <Settings size={16} />,      label: 'Settings', feature: 'settings' },
+    { key: 'audit',         icon: <ScrollText size={16} />,    label: 'Audit Log', adminOnly: true },
+    { key: 'agency',        icon: <Building size={16} />,      label: 'Agency', agencyOnly: true },
     { key: 'superadmin',    icon: <Shield size={16} />,        label: 'Super Admin', superAdminOnly: true },
   ]
 
   const visible = items.filter(i => {
     if (i.superAdminOnly) return agent?.isSuperAdmin
+    if (i.agencyOnly) return isAgencyMember
+    if (i.adminOnly) return agent?.role === 'admin' || agent?.isSuperAdmin
     if (i.feature) return can(i.feature, 'read')
     return true
   })
@@ -4546,7 +4639,7 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
     <div className="flex flex-col w-52 h-full bg-slate-900 text-white shrink-0">
       <div className="flex items-center gap-2 px-4 py-5 border-b border-slate-800">
         <OmniLogo size="sm" />
-        <div className="min-w-0 flex-1"><p className="text-sm font-bold tracking-wide leading-none">OmniCore</p><p className="text-[10px] text-slate-500 mt-0.5">Atelier</p></div>
+        <div className="min-w-0 flex-1"><p className="text-sm font-bold tracking-wide leading-none truncate">{getBranding().appName}</p><p className="text-[10px] text-slate-500 mt-0.5">{getBranding().appName === 'OmniCore' ? 'Atelier' : 'Support desk'}</p></div>
         <div className="relative shrink-0" ref={bellRef}>
           <button
             onClick={() => setBellOpen(o => !o)}
@@ -4628,6 +4721,19 @@ function Sidebar({ active, onNavigate, unread, unassigned, ticketUnread, ticketO
             )}
           </button>
         ))}
+        {(sidebarBrand.customLinks || []).map(link => (
+          link.openIn === 'tab' ? (
+            <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer"
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white">
+              <Link2 size={16} /><span className="truncate">{link.label}</span>
+            </a>
+          ) : (
+            <button key={link.url} onClick={() => onOpenCustom?.(link)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white">
+              <Link2 size={16} /><span className="truncate">{link.label}</span>
+            </button>
+          )
+        ))}
       </nav>
       <div className="px-2 py-3 border-t border-slate-800">
         <div className="px-3 py-2 mb-1">
@@ -4688,6 +4794,13 @@ function Dashboard() {
     if (agent?.isSuperAdmin) api.listSANTenants().then(setTenantList).catch(() => {})
   }, [agent?.isSuperAdmin]) // eslint-disable-line
 
+  useEffect(() => {
+    if (agent) void loadBrandingForUser(authFetch)
+  }, [agent?.id]) // eslint-disable-line
+
+  const brand = useBranding()
+  const [customLink, setCustomLink] = useState<{ label: string; url: string } | null>(null)
+
   const enterWorkspace = useCallback((t: SANTenant) => {
     setWorkspaceOverride({ tenantId: t.id, name: t.company_name })
     setSection('conversations')
@@ -4745,7 +4858,7 @@ function Dashboard() {
     // Retry forever (default) — a capped attempt count made the socket give up
     // permanently when the API server restarted, silently killing all real-time
     // updates (toasts, live messages) until the next token refresh remount.
-    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'] })
+    const socket: Socket = io({ path: '/api/socket.io', auth: { agentToken: accessToken }, transports: ['websocket', 'polling'], tryAllTransports: true })
     socketRef.current = socket
     // Keep auth fresh on every reconnect attempt so a retry that happens after
     // a token refresh doesn't fail with AUTH_FAILED on the stale token.
@@ -5041,10 +5154,10 @@ function Dashboard() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSidebar(false)} />
-          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} /></div>
+          <div className="absolute left-0 top-0 bottom-0 z-50"><Sidebar active={section} onNavigate={s => { setSection(s); setSidebar(false) }} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={id => { handleSelectConversation(id); setSidebar(false) }} agent={agent} onLogout={logout} can={can} onOpenCustom={l => { setCustomLink(l); setSection('custom'); setSidebar(false) }} /></div>
         </div>
       )}
-      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} /></div>
+      <div className="hidden lg:flex"><Sidebar active={section} onNavigate={setSection} unread={totalUnread} unassigned={totalUnassigned} ticketUnread={ticketUnread} ticketOpen={ticketOpen} recentActivity={recentActivity} onSelectConv={handleSelectConversation} agent={agent} onLogout={logout} can={can} onOpenCustom={l => { setCustomLink(l); setSection('custom'); setSidebar(false) }} /></div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 lg:hidden">
@@ -5053,6 +5166,17 @@ function Dashboard() {
           {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">{totalUnread}</span>}
         </div>
 
+        {!agent?.isSuperAdmin && workspaceOverride && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-50 border-b border-amber-200">
+            <span className="flex items-center gap-2 text-xs font-medium text-amber-800 min-w-0">
+              <Eye size={13} className="shrink-0" />
+              <span className="truncate">Viewing client workspace: <span className="font-semibold">{workspaceOverride.name}</span></span>
+            </span>
+            <button onClick={() => { setWorkspaceOverride(null); setSection('agency') }} className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md transition-colors shrink-0">
+              <X size={12} /> Back to agency
+            </button>
+          </div>
+        )}
         {agent?.isSuperAdmin && (
           workspaceOverride ? (
             <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-50 border-b border-amber-200">
@@ -5104,10 +5228,23 @@ function Dashboard() {
           {section === 'brands'      && <BrandsSection />}
           {section === 'billing'     && <BillingSection api={api} />}
           {section === 'settings'    && <SettingsSection />}
+          {section === 'integrations' && <IntegrationsSection authFetch={authFetch} tenantId={workspaceOverride?.tenantId ?? agent?.tenantId ?? ''} />}
+          {section === 'audit'       && <AuditLogSection authFetch={authFetch} scope="workspace" />}
+          {section === 'custom' && customLink && (
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-4 py-2 border-b border-slate-200 bg-white text-xs text-slate-600 flex justify-between"><span className="font-medium">{customLink.label}</span><a href={customLink.url} target="_blank" rel="noopener noreferrer" className="text-sky-600">Open in new tab</a></div>
+              <iframe title={customLink.label} src={customLink.url} className="flex-1 w-full border-0 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" referrerPolicy="strict-origin-when-cross-origin" />
+            </div>
+          )}
+          {section === 'voice'       && <VoiceSection authFetch={authFetch} role={agent?.role || 'agent'} />}
+          {section === 'agency'      && <AgencySection authFetch={authFetch} onOpenWorkspace={(id, name) => { setWorkspaceOverride({ tenantId: id, name }); setSection('conversations') }} />}
           {section === 'team'        && <TeamSection />}
           {section === 'superadmin'  && <SuperAdminSection />}
         </div>
       </div>
+
+      {/* Built-in AI assistant (knows the product, performs tasks with approval) */}
+      <CopilotPanel authFetch={authFetch} section={section} onOpenSection={(s) => setSection(s as Section)} />
 
       {/* Trial / lock gateway overlay — renders above everything else */}
       <TrialGateway
@@ -5143,8 +5280,8 @@ function Dashboard() {
         }}
       />
 
-      {/* Floating WhatsApp button */}
-      <a
+      {/* Floating WhatsApp button (platform support; hidden under an agency's white label) */}
+      {!brand.agencyId && <a
         href="https://wa.me/923294816780"
         target="_blank"
         rel="noopener noreferrer"
@@ -5155,7 +5292,7 @@ function Dashboard() {
         <svg viewBox="0 0 24 24" width="28" height="28" fill="#fff" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
         </svg>
-      </a>
+      </a>}
     </div>
   )
 }

@@ -12,6 +12,8 @@ import {
   Library,
   Mail,
   MessageCircle,
+  PhoneCall,
+  Plug,
   ShieldCheck,
   Users,
 } from 'lucide-react';
@@ -37,7 +39,7 @@ const groups: FeatureGroup[] = [
       'Live updates over WebSockets: new messages, assignments and status changes appear instantly',
       'Open, Pending, AI-handled and Closed views with full-text search across names, emails and messages',
       'Turn any conversation into a ticket with priority, or let visitors file tickets from the widget',
-      'Round-robin auto-assignment with per-brand SLA targets and automatic escalation of breaches',
+      'Automatic round-robin or least-busy assignment when the AI hands a conversation to your team',
       'File and image attachments for agents and visitors',
       'Edit or delete sent messages, assign owners and set priority in one click',
       'Auto-close idle conversations after a configurable period',
@@ -56,6 +58,23 @@ const groups: FeatureGroup[] = [
       'Detects when a visitor asks for a person and hands over with full context',
       'Conversation summaries for agents picking up a thread',
       'Agent copilot: rephrase any draft in the tone you choose',
+      'Built-in assistant for your team that explains every feature and performs tasks for you, always with your approval',
+    ],
+  },
+  {
+    id: 'voice',
+    icon: PhoneCall,
+    title: 'AI call center',
+    summary:
+      'AI phone agents that answer, qualify, book and follow up, with your team in control.',
+    points: [
+      'AI receptionist that hands callers to Sales (quotes and booking) or Support agents, or to a person',
+      'Books real appointments in your HighLevel calendar and moves the opportunity to the right stage',
+      'Live Command Deck: listen in, whisper to the AI, or take over the call from your browser',
+      'Every call graded for quality, sentiment and outcome, and synced to the CRM contact',
+      'Speed-to-lead: new leads called back within seconds, within your calling hours',
+      'Text follow-ups, keyword alerts, ROI reports, industry templates and Spanish support',
+      'Runs on your own Twilio, Vapi and OpenAI accounts, so you only pay for what you use',
     ],
   },
   {
@@ -129,8 +148,9 @@ const groups: FeatureGroup[] = [
     summary:
       'Run several brands, or many client workspaces, from a single platform.',
     points: [
-      'Multiple brands per workspace, each with its own widget, inbox address, AI prompt and SLA',
+      'Multiple brands per workspace, each with its own widget, inbox address and AI prompt',
       'Fully isolated workspaces (tenants) for agencies and resellers',
+      'White-label reselling: your app name, logo, colours, custom domain, emails and chat widget, plus your own AI provider key',
       'Platform administration: manage workspaces, limits, suspensions and user accounts',
       'View any workspace as its owner for support and onboarding',
       'Platform-wide email settings for system notifications',
@@ -150,6 +170,20 @@ const groups: FeatureGroup[] = [
     ],
   },
   {
+    id: 'integrations',
+    icon: Plug,
+    title: 'Integrations & API',
+    summary:
+      'Connect OmniCore to your CRM, team chat, automations and your own code.',
+    points: [
+      'GoHighLevel app: two-way contact sync, and HighLevel SMS, email, WhatsApp and social messages answered from the OmniCore inbox',
+      'Slack, Microsoft Teams and Discord notifications for new chats, tickets and ratings',
+      'Signed real-time webhooks with automatic retries and a delivery log',
+      'REST API with scoped, expiring API keys for conversations, messages, tickets and contacts',
+      'Works with Zapier, Make and n8n',
+    ],
+  },
+  {
     id: 'security',
     icon: ShieldCheck,
     title: 'Security & hosting',
@@ -157,6 +191,7 @@ const groups: FeatureGroup[] = [
     points: [
       'Short-lived access tokens with httpOnly refresh cookies',
       'Strict CORS, security headers and signed, replay-protected billing webhooks',
+      'Detailed audit log of every change, sign-in and export, with IP address and CSV export',
       'Tenant-isolated data in PostgreSQL',
       'Logos, attachments and exports on Cloudflare R2 with time-limited links',
       'Runs on your own cloud (Oracle Cloud, any Linux VPS, or Docker)',

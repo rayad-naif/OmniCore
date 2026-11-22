@@ -3,11 +3,15 @@
 .agents
 .cache
 .local
+.vercel
 node_modules
 **/node_modules
 **/dist
 **/.tsbuildinfo
+coverage
+attached_assets
+docs
+zipFile.zip
 .env
 .env.*
 !.env.example
-coverage

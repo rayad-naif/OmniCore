@@ -28,7 +28,12 @@ export type Section =
   | 'ai_training'
   | 'smtp'
   | 'contacts'
-  | 'canned_responses';
+  | 'canned_responses'
+  | 'audit'
+  | 'integrations'
+  | 'agency'
+  | 'voice'
+  | 'custom';
 export type StatusFilter = 'all' | Status;
 export type AuthView = 'login' | 'signup' | 'forgot' | 'reset';
 

@@ -9,13 +9,12 @@
 
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
+const { sslFor } = require('./dbSsl');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === 'production'
-      ? { rejectUnauthorized: true }
-      : false,
+  // See lib/dbSsl.js: local/private hosts skip TLS, public hosts verify it.
+  ssl: sslFor(),
   max: 20,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,

@@ -72,6 +72,31 @@ function pickInitialStatus(tenantId) {
 // ── GET /api/widget/health ────────────────────────────────────────────────────
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
+// ── GET /api/widget/branding?brandId= ─────────────────────────────────────────
+// White-label: the agency's app name for the "Powered by" footer, or hide it.
+router.get('/branding', async (req, res) => {
+  try {
+    const brandId = String(req.query.brandId || '');
+    if (!/^[0-9a-f-]{36}$/i.test(brandId))
+      return res.json({ appName: 'OmniCore', hidePoweredBy: false });
+    const { rows } = await pool.query(
+      'SELECT tenant_id FROM brands WHERE id = $1',
+      [brandId],
+    );
+    const { brandingForTenant } = require('../lib/agencies');
+    const { branding } = rows[0]
+      ? await brandingForTenant(rows[0].tenant_id)
+      : { branding: null };
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.json({
+      appName: branding?.appName || 'OmniCore',
+      hidePoweredBy: Boolean(branding?.hidePoweredBy),
+    });
+  } catch {
+    return res.json({ appName: 'OmniCore', hidePoweredBy: false });
+  }
+});
+
 // ── GET /api/widget/brand-logo ────────────────────────────────────────────────
 router.get('/brand-logo', (_req, res) => {
   const logoPath = path.resolve(__dirname, 'brand-logo.jpg');
