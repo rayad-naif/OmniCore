@@ -532,10 +532,12 @@ router.post('/knowledge-base/upload-pdf', async (req, res, next) => {
     if (!data)
       return res.status(400).json({ error: 'data (base64 PDF) is required' });
 
-    const pdfParse = require('pdf-parse');
+    const { pdfText } = require('../lib/pdfText');
     const buffer = Buffer.from(data, 'base64');
-    const parsed = await pdfParse(buffer);
-    const text = (parsed.text || '').trim().slice(0, 20000);
+    const text = (await pdfText(buffer))
+      .replace(/\n-- \d+ of \d+ --\n?/g, '\n')
+      .trim()
+      .slice(0, 20000);
 
     if (!text || text.length < 10)
       return res.status(422).json({ error: 'Could not extract text from PDF' });

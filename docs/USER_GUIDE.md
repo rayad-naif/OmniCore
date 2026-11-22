@@ -145,6 +145,51 @@ agent (quotes and booking into your HighLevel calendar) or **Support** agent
 After each call the AI grades it (score, sentiment, outcome, summary, next steps,
 coaching) and updates the HighLevel contact (fields, transcript note, tags, opportunity stage).
 
+## 8a. HR (employees, attendance, leave, payroll, hiring)
+
+Plans that include the **HR module** add an **HR** item to the sidebar. Admins click
+**Open HR** to work in the HR app without another password (it opens in a new tab).
+
+**First steps (HR admin):**
+
+1. Set your workspace time zone (Settings → Workspace). Attendance, shifts and late
+   marks use it.
+2. In HR: add **Departments**, **Shift types** and **Employees**. Each employee gets an
+   email with their sign-in details and the employee sign-in link.
+3. Assign shifts (Shift assignments) and, if you use them, set up payroll details,
+   leave balances and roles/permissions.
+
+**Employees** sign in at the link shown under HR → Links (`/hrms/login?w=…`) with email
+and password, check in and out, request leave and late arrivals, swap shifts, see their
+payslips and profile. Someone who works for two companies on the platform chooses which
+one after signing in.
+
+**Managers and HR** approve leave and late requests, review attendance and performance,
+run payroll (payslips as PDF, Excel exports), track expenses and earnings, and manage
+recruitment (job listings, candidate pipeline, AI resume screening when your plan has AI).
+
+**Devices** (HR → Devices and agents, admins only): create a **device key** for Hikvision
+biometric terminals (paste the event URL with the key into the device) and an **activity
+agent key** for the desktop activity tracker. Replacing a key disconnects devices that
+still use the old one.
+
+## 8b. Reverse DNS (platform super admins)
+
+Super Admin → **Reverse DNS** finds domains that point to a host or IP you watch, for
+example every custom domain that CNAMEs to a white-label platform's host name.
+
+1. **Watchlist**: add a CNAME target (`whitelabel.example.com`) or an IP. It is checked
+   continuously; badges show each source's progress (active, finished, rate limited,
+   error). **Rescan** walks every source again now; pause or remove targets any time.
+2. **Domains found**: everything discovered, searchable, with a CSV export.
+3. **Forms found**: pages of those domains that have a form, with its purpose (contact,
+   careers, newsletter, login, search) and field names. CSV export.
+4. **Quick search**: a one-off lookup that is not saved (3 pages per source).
+5. **Sources & API keys**: switch sources on or off, set how many requests per hour each
+   may receive, and add keys for SecurityTrails and DNSDB (paid) or Certspotter (higher
+   free limit). Keys are encrypted.
+6. **Activity log**: what the scheduler and crawler did, including rate limits and errors.
+
 ## 9. Agencies (white-label reselling)
 
 Agencies resell the platform under their own brand, like GoHighLevel's agency mode.

@@ -16,6 +16,7 @@ import {
   Plug,
   ShieldCheck,
   Users,
+  Briefcase,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -75,6 +76,22 @@ const groups: FeatureGroup[] = [
       'Speed-to-lead: new leads called back within seconds, within your calling hours',
       'Text follow-ups, keyword alerts, ROI reports, industry templates and Spanish support',
       'Runs on your own Twilio, Vapi and OpenAI accounts, so you only pay for what you use',
+    ],
+  },
+  {
+    id: 'hr',
+    icon: Briefcase,
+    title: 'HR & people',
+    summary:
+      'A complete HR system for your own team, opened from the same login.',
+    points: [
+      'Employee records, departments, documents, roles and permissions',
+      'Attendance with check-in and check-out, biometric devices and a desktop activity agent',
+      'Shifts, shift swaps, late arrivals and leave with approvals and balances',
+      'Payroll with payslips, advances, loans, salary holds, expenses and earnings',
+      'Recruitment: job listings, candidate pipeline and AI resume screening',
+      'Performance reviews, reports and Excel exports, in your own time zone',
+      'Employees get their own sign-in; available on plans with the HR module',
     ],
   },
   {

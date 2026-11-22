@@ -23,6 +23,12 @@ tickets, contacts, ratings, integrations and billing in one dashboard at /dashbo
 - Tickets: conversations marked as tickets, with ticket numbers and priority. Created by
   converting a chat, by the widget's offline form, by email, by the REST API or from GoHighLevel.
 - Contacts: everyone who contacted the workspace, with their conversation history; CSV export.
+- HR (plans with the HR module): sidebar → HR → Open HR opens the HR app in a new tab with single
+  sign-on. It covers employees, departments, shift types and assignments, attendance (check-in/out,
+  biometric devices, desktop activity agent), leave and late requests with approvals, shift swaps,
+  payroll with payslips, advances, loans and salary holds, expenses and earnings, recruitment (jobs,
+  candidate pipeline, AI resume screening), performance reviews and reports. Employees have their own
+  HR sign-in (link under HR → Links). Attendance uses the workspace time zone (Settings → Workspace).
 - AI Call Center: an AI phone receptionist with Sales and Support agents on the workspace's own
   number (bring-your-own Twilio, Vapi and OpenAI keys). Tabs: Command Deck (live calls with
   real-time transcript; admins and supervisors can listen in, whisper instructions to the AI,

@@ -630,6 +630,40 @@ async function sendSystemEmail({
 }
 
 /**
+ * Send a fully rendered email on behalf of a workspace (used by the HR
+ * module): the workspace's own SMTP when it has one, otherwise platform SMTP.
+ * Returns false (and logs) when no mail server is configured.
+ */
+async function sendWorkspaceEmail({
+  tenantId,
+  to,
+  subject,
+  html,
+  text,
+  fromName,
+}) {
+  if (!to) return false;
+  let cfg = null;
+  if (tenantId) cfg = await getTenantSmtpConfig(tenantId).catch(() => null);
+  if (!cfg) cfg = await getPlatformSmtpConfig();
+  if (!cfg) {
+    logger.info({ to, subject }, 'workspace_email_no_smtp_skipped');
+    return false;
+  }
+  await buildTransporter(cfg).sendMail({
+    from: fromName
+      ? { name: fromName, address: fromAddress(cfg) }
+      : fromAddress(cfg),
+    to,
+    subject,
+    html,
+    text,
+  });
+  logger.info({ to, subject, tenantId }, 'workspace_email_sent');
+  return true;
+}
+
+/**
  * Verify platform SMTP and send a test email.
  * Throws (with descriptive message) on error — used by the test endpoint.
  */
@@ -785,6 +819,7 @@ module.exports = {
   sendSmtpTestEmail,
   getPlatformSmtpConfig,
   sendSystemEmail,
+  sendWorkspaceEmail,
   sendPlatformSmtpTestEmail,
   sendAgentInviteEmail,
   sendAccountUpdateEmail,

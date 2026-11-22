@@ -38,6 +38,7 @@ REPO_BRANCH="${REPO_BRANCH:-main}"
 CLOUDFLARE="${CLOUDFLARE:-true}"     # restore real visitor IPs from Cloudflare's proxy
 CF_ORIGIN_CERT="${CF_ORIGIN_CERT:-}" # path to Cloudflare Origin Certificate (PEM) — skips certbot
 CF_ORIGIN_KEY="${CF_ORIGIN_KEY:-}"   # path to its private key
+INSTALL_MONGODB="${INSTALL_MONGODB:-true}" # local MongoDB 8 for the HR module (HRMS_MONGODB_URI)
 NODE_MIN_MAJOR=24
 PNPM_MIN_MAJOR=10
 
@@ -195,6 +196,23 @@ server {
         add_header X-Content-Type-Options nosniff always;
     }
 
+    # HR module front end
+    location = /hrms {
+        return 301 /hrms/;
+    }
+    location ^~ /hrms/assets/ {
+        alias ${APP_DIR}/artifacts/hrms/dist/assets/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location /hrms/ {
+        alias ${APP_DIR}/artifacts/hrms/dist/;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        try_files \$uri \$uri/ /hrms/index.html;
+    }
+
     location /dashboard/ {
         alias ${APP_DIR}/artifacts/dashboard/dist/public/;
         add_header Cache-Control "no-cache";
@@ -296,6 +314,11 @@ cmd_build() {
   [[ -d artifacts/dashboard/dist ]] || error "Dashboard build failed — dist/ not found"
   success "Dashboard built → artifacts/dashboard/dist/ ($(du -sh artifacts/dashboard/dist | cut -f1))"
 
+  info "Building HR app (Vite)..."
+  pnpm --filter @workspace/hrms run build
+  [[ -d artifacts/hrms/dist ]] || error "HR app build failed — dist/ not found"
+  success "HR app built → artifacts/hrms/dist/ ($(du -sh artifacts/hrms/dist | cut -f1))"
+
   info "Building marketing site (Vite + SSR prerender)..."
   pnpm --filter @workspace/marketing-site run build
   [[ -d artifacts/marketing-site/dist ]] || error "Marketing site build failed — dist/ not found"
@@ -306,6 +329,7 @@ cmd_build() {
   echo ""
   echo "  API bundle:      artifacts/api-server/dist/index.mjs"
   echo "  Dashboard:       artifacts/dashboard/dist/"
+  echo "  HR app:          artifacts/hrms/dist/"
   echo "  Marketing site:  artifacts/marketing-site/dist/"
   echo ""
   echo "  Start production: node artifacts/api-server/dist/index.mjs"
@@ -438,6 +462,27 @@ cmd_vps_install() {
   fi
   success "PostgreSQL $(pg_lsclusters | tail -1 | awk '{print $1}')"
 
+  if [[ "$INSTALL_MONGODB" == "true" ]]; then
+    step "MongoDB 8 (HR module database, localhost only)"
+    if ! command -v mongod >/dev/null 2>&1; then
+      local codename
+      codename=$(lsb_release -cs)
+      # MongoDB publishes packages for jammy (22.04) and noble (24.04), amd64 + arm64 (OCI Ampere).
+      curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
+        gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+      echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${codename}/mongodb-org/8.0 multiverse" \
+        > /etc/apt/sources.list.d/mongodb-org-8.0.list
+      apt-get update -qq
+      apt-get install -y mongodb-org
+    fi
+    # Listen on localhost only; the API is the only client.
+    sed -i 's/^  bindIp: .*/  bindIp: 127.0.0.1/' /etc/mongod.conf 2>/dev/null || true
+    systemctl enable --now mongod
+    success "MongoDB $(mongod --version | head -1 | awk '{print $3}') on 127.0.0.1:27017"
+  else
+    info "Skipping MongoDB (INSTALL_MONGODB=false): set HRMS_MONGODB_URI to an external MongoDB to use the HR module"
+  fi
+
   step "Database: create omnicore user + database"
   DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 16)}"
   sudo -u postgres psql << SQL 2>/dev/null || warn "Database may already exist — skipping"
@@ -491,6 +536,9 @@ SQL
     set_env JWT_SECRET "$(openssl rand -hex 64)"
     set_env SESSION_SECRET "$(openssl rand -hex 32)"
     set_env INTEGRATIONS_ENCRYPTION_KEY "$(openssl rand -hex 32)"
+    if [[ "$INSTALL_MONGODB" == "true" ]]; then
+      set_env HRMS_MONGODB_URI "mongodb://127.0.0.1:27017"
+    fi
     set_env PUBLIC_APP_URL "$public_url"
     set_env ALLOWED_ORIGINS "$public_url"
     set_env COOKIE_SECURE "$([[ -n "$DOMAIN" ]] && echo true || echo false)"

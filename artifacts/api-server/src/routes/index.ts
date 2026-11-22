@@ -73,6 +73,14 @@ const voiceRoutes: {
   publicRouter: IRouter;
 } = require('../voice/routes');
 
+const hrmsModule: {
+  hrmsRouter: () => IRouter;
+} = require('../hrms');
+const hrmsAdmin: {
+  superAdminRouter: IRouter;
+} = require('../hrms/admin.routes');
+const rdnsRouter: IRouter = require('../rdns/routes');
+
 const router: IRouter = Router();
 
 // ── Health (unauthenticated) ──────────────────────────────────────────────────
@@ -108,10 +116,16 @@ router.use('/copilot', copilotRouter);
 router.use('/voice', voiceRoutes.publicRouter);
 router.use('/voice', voiceRoutes.router);
 
+// HR module (ported GHL-HRMS): own sign-in, plan-gated per workspace.
+router.use('/hrms', hrmsModule.hrmsRouter());
+
 router.use('/audit-logs', auditRoutes.workspaceRouter);
 // Must precede the general super-admin router so its guard handles these paths.
 router.use('/super-admin/audit-logs', auditRoutes.platformRouter);
 router.use('/super-admin/agencies', agencyRoutes.adminRouter);
+router.use('/super-admin/hrms', hrmsAdmin.superAdminRouter);
+// Reverse DNS tool (ported reverse-dns-tool): platform super admins only.
+router.use('/super-admin/rdns', rdnsRouter);
 router.use('/super-admin', superAdminRouter);
 router.use('/contacts', contactsRouter);
 router.use('/canned-responses', cannedResponsesRouter);

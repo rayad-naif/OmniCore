@@ -49,10 +49,10 @@ most needs.
 
 ## 4. Requested items still blocked
 
-| Item                                                 | Status                                                                                              |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **HRMS** (super admin manages, plan-gated for users) | Code not accessible: `GHL-HRMS-main.zip` is only on your PC. Push it to GitHub or share the folder. |
-| **Reverse DNS tool** (super admin only)              | Same: `reverse-dns-toolzip.zip` is only on your PC.                                                 |
+| Item                                                 | Status                                                                                                                 |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **HRMS** (super admin manages, plan-gated for users) | Done: HR module (`/hrms/`), plan switch "HR module", Super Admin → HR. Finance pages still assume PKR/USD (see below). |
+| **Reverse DNS tool** (super admin only)              | Done: Super Admin → Reverse DNS.                                                                                       |
 
 ## 5. Repository hygiene to fix before launch
 
@@ -70,5 +70,11 @@ most needs.
 1. Section 5 (security and honesty items) before any public launch.
 2. P1 automations + SLA, P2 tags/custom fields: the most-asked helpdesk features.
 3. W1–W3 (rebilling, agency plans, snapshots) to make the agency offer complete.
-4. HRMS and Reverse DNS once their code is available.
-5. P4 2FA/SSO, P5 data tools before selling to larger companies.
+4. Next phases requested: InvoiceNow + client payment processors, native versions of the
+   GoHighLevel apps (LEAF affiliates, LoyaltyLoop, App Package, Customizer), the dashboard
+   redesign, and WooCommerce store building/hosting (to be scoped).
+5. HR follow-ups: the expenses/earnings and finance pages of the HR app still use PKR and a
+   USD→PKR rate from the original company; make the currency a workspace setting before
+   selling HR outside Pakistan. HR in-app notification links point to paths that do not
+   exist in the HR app (inherited); fix when touching notifications.
+6. P4 2FA/SSO, P5 data tools before selling to larger companies.

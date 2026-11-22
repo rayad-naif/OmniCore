@@ -217,7 +217,11 @@ async function applyPlanFeatures(
 
   type PlanShape = {
     is_free: boolean;
-    features: { ai_feature_enabled: boolean; smtp_feature_enabled: boolean };
+    features: {
+      ai_feature_enabled: boolean;
+      smtp_feature_enabled: boolean;
+      hrms_feature_enabled?: boolean;
+    };
     limits: {
       max_brands_allowed: number | null;
       max_agents_allowed: number | null;
@@ -243,6 +247,7 @@ async function applyPlanFeatures(
          conversation_limit   = 100,
          ai_feature_enabled   = false,
          smtp_feature_enabled = false,
+         hrms_feature_enabled = false,
          updated_at           = NOW()
        WHERE id = $1`,
       [tenantId],
@@ -257,6 +262,7 @@ async function applyPlanFeatures(
        conversation_limit   = $3,
        ai_feature_enabled   = $4,
        smtp_feature_enabled = $5,
+       hrms_feature_enabled = $7,
        updated_at           = NOW()
      WHERE id = $6`,
     [
@@ -266,6 +272,7 @@ async function applyPlanFeatures(
       row.features.ai_feature_enabled,
       row.features.smtp_feature_enabled,
       tenantId,
+      Boolean(row.features.hrms_feature_enabled),
     ],
   );
   logger.info({ tenantId, plan: plan || 'free' }, 'plan_features_applied');
@@ -943,6 +950,21 @@ if (process.env.SERVE_STATIC === 'true') {
   );
   app.get(/^\/dashboard\/.*/, noCsp, (_req, res) =>
     res.sendFile(path.join(dashboardDir, 'index.html')),
+  );
+  // HR module front end (artifacts/hrms) at /hrms/.
+  const hrmsDir = path.join(root, 'artifacts/hrms/dist');
+  app.get('/hrms', (req, res, next) =>
+    req.originalUrl.split('?')[0] === '/hrms'
+      ? res.redirect(301, '/hrms/')
+      : next(),
+  );
+  app.use(
+    '/hrms',
+    noCsp,
+    express.static(hrmsDir, { index: 'index.html', ...assetCache }),
+  );
+  app.get(/^\/hrms\/.*/, noCsp, (_req, res) =>
+    res.sendFile(path.join(hrmsDir, 'index.html')),
   );
   app.use(
     noCsp,

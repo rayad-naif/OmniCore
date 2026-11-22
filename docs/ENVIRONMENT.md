@@ -149,6 +149,51 @@ voice keys. Vapi and Twilio call back to `PUBLIC_APP_URL/api/voice/...`, so
 | `CALL_RETENTION_DAYS`      | `365`         | Call records older than this are deleted.                                                       |
 | `CRON_SECRET`              | —             | Optional. Lets an external scheduler call `/api/voice/cron/sweep` (useful on hosts that sleep). |
 
+## 7c. HR module
+
+The HR app (employees, attendance and shifts, leave, payroll, recruitment,
+performance, expenses) keeps its data in **MongoDB**: one database per workspace
+(`hrms_<workspace id>`) on a shared connection. Without `HRMS_MONGODB_URI` the rest
+of OmniCore works normally and HR pages say the module is not set up.
+
+Which workspaces get HR is decided by plans (Super Admin → Billing → plan → "HR
+module") or per workspace (Super Admin → Tenants → limits, or Super Admin → HR).
+Uploaded HR files use the R2 bucket from section 5 (or the server disk without R2),
+and HR emails use the workspace's SMTP, falling back to Platform SMTP.
+
+| Variable                 | Default           | Notes                                                                                                         |
+| ------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `HRMS_MONGODB_URI`       | —                 | `mongodb://127.0.0.1:27017` on OCI (`deploy.sh` installs MongoDB 8), or a MongoDB Atlas `mongodb+srv://` URL. |
+| `HRMS_MONGODB_POOL_SIZE` | `10`              | Connections shared by all workspaces.                                                                         |
+| `HRMS_DB_PREFIX`         | `hrms_`           | Database name prefix.                                                                                         |
+| `HRMS_JWT_SECRET`        | from `JWT_SECRET` | Optional separate signing key for HR sessions (derived from `JWT_SECRET` when unset).                         |
+| `HRMS_ACCESS_TOKEN_TTL`  | `12h`             | HR access token lifetime (refreshed automatically).                                                           |
+| `HRMS_REFRESH_TOKEN_TTL` | `30d`             | HR "stay signed in" lifetime.                                                                                 |
+| `HRMS_UPLOAD_DIR`        | `uploads/hrms`    | Where HR files go when R2 is not configured.                                                                  |
+| `HRMS_WORKER`            | `true`            | `false` on extra API replicas (the hourly attendance sweep also uses a database lease).                       |
+
+Not needed any more (from the standalone HRMS): `MONGODB_URI`, `REDIS_URL` for HR,
+`CLOUDINARY_*`, `IMAGEKIT_*`, `SMTP_*`, `ACTIVITY_LOG_API_KEY`, `HIKVISION_WEBHOOK_SECRET`
+(device and agent keys are per workspace, created in the dashboard under HR),
+`VITE_GEMINI_API_KEY` (AI runs on the server with `GEMINI_API_KEY`), `BUSINESS_TIME_ZONE`
+(each workspace's own time zone is used).
+
+## 7d. Reverse DNS tool (super admin)
+
+Runs inside the API; no extra service or database. Source API keys (SecurityTrails,
+DNSDB, Certspotter) are entered in Super Admin → Reverse DNS → Sources and stored
+encrypted with `INTEGRATIONS_ENCRYPTION_KEY`.
+
+| Variable            | Default | Notes                                                                    |
+| ------------------- | ------- | ------------------------------------------------------------------------ |
+| `RDNS_WORKER`       | `true`  | `false` turns the watchlist scheduler and forms crawler off on a server. |
+| `RDNS_TICK_SECONDS` | `5`     | How often due sources and crawl jobs are checked.                        |
+
+Not needed any more (from the standalone tool): `SECRET_KEY`, `ADMIN_USERNAME`,
+`ADMIN_PASSWORD` (OmniCore super admins sign in instead), `DATABASE_URL` for the tool
+(it uses OmniCore's Postgres), `RUN_SCHEDULER_IN_PROCESS`, `CERTSPOTTER_API_TOKEN`
+(set it as the Certspotter key in the UI).
+
 ## 8. Audit log
 
 | Variable                   | Default | Notes                                              |

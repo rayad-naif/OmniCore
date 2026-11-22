@@ -16,11 +16,11 @@ services:
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_VERSION
-        value: "24"
+        value: '24'
       - key: NODE_ENV
         value: production
       - key: SERVE_STATIC
-        value: "true"
+        value: 'true'
       - key: DATABASE_URL
         fromDatabase:
           name: omnicore-db
@@ -32,7 +32,7 @@ services:
       - key: INTEGRATIONS_ENCRYPTION_KEY
         generateValue: true
       - key: COOKIE_SECURE
-        value: "true"
+        value: 'true'
       - key: BILLING_PROVIDER
         value: paddle
       - key: PADDLE_ENVIRONMENT
@@ -46,6 +46,10 @@ services:
       - key: SUPER_ADMIN_PASSWORD # first boot only; min 12 chars; remove after signing in
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+      # HR module database (optional). A free MongoDB Atlas cluster works for
+      # testing: mongodb+srv://user:pass@cluster0.xxxx.mongodb.net
+      - key: HRMS_MONGODB_URI
         sync: false
       - key: PADDLE_API_KEY
         sync: false
