@@ -1,17 +1,25 @@
 'use strict';
 
+/** Variables the API cannot run without. */
+const REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
+
 /**
  * verifyEnv — call once at process start before any server setup.
- * Exits with code 1 if any required variable is absent.
+ * Exits with code 1 if a required variable is absent. Without GEMINI_API_KEY the
+ * API still starts: platform AI features are off (agencies can use their own key).
  */
-function verifyEnv() {
-  const required = ['DATABASE_URL', 'JWT_SECRET', 'GEMINI_API_KEY'];
-  for (const key of required) {
-    if (!process.env[key]) {
-      console.error(`FATAL: Missing environment variable: ${key}`);
-      process.exit(1);
-    }
+function verifyEnv(env = process.env, exit = (code) => process.exit(code)) {
+  const missing = REQUIRED.filter((key) => !env[key]);
+  for (const key of missing) {
+    console.error(`FATAL: Missing environment variable: ${key}`);
   }
+  if (missing.length) return exit(1);
+  if (!env.GEMINI_API_KEY) {
+    console.warn(
+      'GEMINI_API_KEY is not set: AI replies, the assistant and AI store content are off until it is.',
+    );
+  }
+  return true;
 }
 
 /**
